@@ -7,18 +7,18 @@ import scipy.io as io
 import json
 from scipy.io import savemat
 
-# Preprocess UCF-QNRF dataset
+# Tiền xử lý bộ dữ liệu UCF-QNRF: chuẩn hóa ảnh và annotation về định dạng huấn luyện.
 def process_ucf_qnrf(data_root, down_size=1536):
 
     def load_data(img_gt_path, down_size):
-        # load image and annotation
+        # Đọc ảnh và annotation gốc từ đĩa làm đầu vào cho bước tiền xử lý.
         img_path, gt_path = img_gt_path
         img = cv2.imread(img_path)
         img = Image.fromarray(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
         anno = io.loadmat(gt_path)
         points = anno["annPoints"]
 
-        # scale image and annotation
+        # Thay đổi kích thước ảnh và đồng bộ tọa độ annotation theo cùng tỉ lệ.
         maxH = maxW = down_size
         img_w, img_h = img.size
         fw, fh = img_w / maxW, img_h / maxH
@@ -34,7 +34,7 @@ def process_ucf_qnrf(data_root, down_size=1536):
 
     splits = ["Train", "Test"]
     for split in splits:
-        # get image list
+        # Lấy danh sách ảnh cần xử lý trong split hiện tại để lặp tiền xử lý.
         img_list = os.listdir(f"{data_root}/{split}")
         img_list = [img for img in img_list if ".jpg" in img]
         gt_list = {}
@@ -47,13 +47,13 @@ def process_ucf_qnrf(data_root, down_size=1536):
             gt_path = gt_list[img_path]
             img, points, anno = load_data((img_path, gt_path), down_size)
 
-            # new data path
+            # Tạo hoặc xác định đường dẫn dữ liệu đầu ra sau tiền xử lý.
             new_img_path = img_path.replace(data_root, new_data_root)
             new_gt_path = gt_list[img_path].replace(data_root, new_data_root)
             save_dir = '/'.join(new_img_path.split('/')[:-1])
             os.makedirs(save_dir, exist_ok=True)
 
-            # save data
+            # Lưu dữ liệu đã tiền xử lý để tái sử dụng ở giai đoạn train/eval.
             img.save(new_img_path, quality=img_quality)
             anno["annPoints"] = points
             savemat(new_gt_path, anno)
@@ -61,11 +61,11 @@ def process_ucf_qnrf(data_root, down_size=1536):
             print("save to ", new_img_path)
 
 
-# Preprocess JHU-Crowd++ dataset
+# Tiền xử lý bộ dữ liệu JHU-Crowd++: đồng bộ kích thước ảnh và nhãn điểm.
 def process_jhu_crowd(data_root, down_size=2048):
 
     def load_data(img_gt_path, down_size):
-        # load image and annotation
+        # Đọc ảnh và annotation gốc từ đĩa làm đầu vào cho bước tiền xử lý.
         img_path, gt_path = img_gt_path
         img = cv2.imread(img_path)
         img = Image.fromarray(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
@@ -77,7 +77,7 @@ def process_jhu_crowd(data_root, down_size=2048):
         else:
             points = np.empty((0,2))
 
-        # scale image and annotation
+        # Thay đổi kích thước ảnh và đồng bộ tọa độ annotation theo cùng tỉ lệ.
         img_w, img_h = img.size
         max_h = max_w = down_size
         fw, fh = img_w / max_w, img_h / max_h
@@ -90,7 +90,7 @@ def process_jhu_crowd(data_root, down_size=2048):
     img_quality = 100   # image quality
     splits = ["train", "val", "test"]
     for split in splits:
-        # get image list
+        # Lấy danh sách ảnh cần xử lý trong split hiện tại để lặp tiền xử lý.
         img_list = os.listdir(f"{data_root}/{split}/images")
         img_list = [img for img in img_list if ".jpg" in img]
         gt_list = {}
@@ -99,12 +99,12 @@ def process_jhu_crowd(data_root, down_size=2048):
             gt_list[img_path] = f"{data_root}/{split}/gt/{img_name}".replace("jpg", "txt")
         img_list = sorted(list(gt_list.keys()))
 
-        # new data path
+        # Tạo hoặc xác định đường dẫn dữ liệu đầu ra sau tiền xử lý.
         new_data_root = f"./data/JHU_Crowd_{down_size}"
         os.makedirs(f"{new_data_root}/{split}/images", exist_ok=True)
         os.makedirs(f"{new_data_root}/{split}/gt", exist_ok=True)
 
-        # copy image list
+        # Sao chép danh sách ảnh sang thư mục đích để giữ cấu trúc split nhất quán.
         img_label = f"{data_root}/{split}/image_labels.txt"
         new_img_label = f"{new_data_root}/{split}/image_labels.txt"
         shutil.copyfile(img_label, new_img_label)
@@ -116,10 +116,10 @@ def process_jhu_crowd(data_root, down_size=2048):
             new_img_path = img_path.replace(data_root, new_data_root)
             new_gt_path = gt_list[img_path].replace(data_root, new_data_root)
             
-            # save image
+            # Lưu ảnh đã tiền xử lý (đã scale/chuẩn hóa) vào thư mục đích để dùng cho train/eval.
             img.save(new_img_path, quality=img_quality)
 
-            # save annotation
+            # Lưu annotation sau biến đổi để luôn đồng bộ với ảnh đã xử lý.
             with open(new_gt_path, 'w') as file:
                 for line, point in zip(lines, points):
                     line_split = line.split(' ')
@@ -131,11 +131,11 @@ def process_jhu_crowd(data_root, down_size=2048):
             print("save to ", new_img_path)
 
 
-# Preprocess NWPU-Crowd dataset
+# Tiền xử lý bộ dữ liệu NWPU-Crowd: tạo dữ liệu đầu vào sạch cho train/eval.
 def process_nwpu_crowd(data_root, down_size=2048):
 
     def load_data(img_gt_path, down_size):
-        # load image and annotation
+        # Đọc ảnh và annotation gốc từ đĩa làm đầu vào cho bước tiền xử lý.
         img_path, gt_path = img_gt_path
         img = cv2.imread(img_path)
         img = Image.fromarray(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))    
@@ -144,7 +144,7 @@ def process_nwpu_crowd(data_root, down_size=2048):
         if len(points) == 0:
             points = np.empty((0,2))
 
-        # scale image and annotation
+        # Thay đổi kích thước ảnh và đồng bộ tọa độ annotation theo cùng tỉ lệ.
         img_w, img_h = img.size
         max_h = max_w = down_size
         fw, fh = img_w / max_w, img_h / max_h
@@ -170,7 +170,7 @@ def process_nwpu_crowd(data_root, down_size=2048):
     img_quality = 100
     splits = ["train", "val", "test"]
     for split in splits:
-        # get image list
+        # Lấy danh sách ảnh cần xử lý trong split hiện tại để lặp tiền xử lý.
         list_name = f"{data_root}/{split}.txt"
         list_file = open(list_name, 'r')
         img_list = list_file.readlines()
@@ -182,7 +182,7 @@ def process_nwpu_crowd(data_root, down_size=2048):
             gt_list[img_path] = dotmap_path
         img_list = sorted(list(gt_list.keys()))
         
-        # new data path
+        # Tạo hoặc xác định đường dẫn dữ liệu đầu ra sau tiền xử lý.
         new_data_root = f"./data/NWPU-Crowd_{down_size}"
         os.makedirs(f"{new_data_root}/images", exist_ok=True)
         os.makedirs(f"{new_data_root}/jsons", exist_ok=True)
@@ -198,10 +198,10 @@ def process_nwpu_crowd(data_root, down_size=2048):
             new_img_path = img_path.replace(data_root, new_data_root)
             new_gt_path = gt_list[img_path].replace(data_root, new_data_root)
             
-            # save image
+            # Lưu ảnh đã tiền xử lý (đã scale/chuẩn hóa) vào thư mục đích để dùng cho train/eval.
             img.save(new_img_path, quality=img_quality)
 
-            # save annotation
+            # Lưu annotation sau biến đổi để luôn đồng bộ với ảnh đã xử lý.
             if split != 'test':
                 anno['points'] = points.tolist()
                 with open(new_gt_path, 'w') as f:
@@ -212,7 +212,7 @@ def process_nwpu_crowd(data_root, down_size=2048):
 
 if __name__ == '__main__':
 
-    # UCF_QNRF | JHU_Crowd | NWPU_Crowd
+    # Các lựa chọn dataset hợp lệ: UCF_QNRF, JHU_Crowd hoặc NWPU_Crowd.
     dataset = "UCF_QNRF"
     data_root = "your_data_path"
     

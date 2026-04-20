@@ -47,16 +47,16 @@ def visualization(samples, targets, pred, vis_dir, split_map=None):
         sample = pil_to_tensor(sample.convert('RGB')).numpy() * 255
         sample_vis = sample.transpose([1, 2, 0])[:, :, ::-1].astype(np.uint8).copy()
 
-        # draw ground-truth points (red)
+        # Vẽ các điểm ground-truth màu đỏ để làm mốc so sánh với kết quả dự đoán.
         size = 2
         for t in gts[idx]:
             sample_vis = cv2.circle(sample_vis, (int(t[1]), int(t[0])), size, (0, 0, 255), -1)
 
-        # draw predictions (green)
+        # Vẽ các điểm dự đoán màu xanh để quan sát trực quan chất lượng đếm.
         for p in pred[idx]:
             sample_vis = cv2.circle(sample_vis, (int(p[1]), int(p[0])), size, (0, 255, 0), -1)
         
-        # draw split map
+        # Vẽ bản đồ phân tách vùng sparse/dense để kiểm tra quyết định của quadtree splitter.
         if split_map is not None:
             imgH, imgW = sample_vis.shape[:2]
             split_map = (split_map * 255).astype(np.uint8)
@@ -64,9 +64,9 @@ def visualization(samples, targets, pred, vis_dir, split_map=None):
             split_map = cv2.resize(split_map, (imgW, imgH), interpolation=cv2.INTER_NEAREST)
             sample_vis = split_map * 0.9 + sample_vis
         
-        # save image
+        # Lưu ảnh trực quan hóa ra đĩa để phục vụ debug, báo cáo và đối chiếu mô hình.
         if vis_dir is not None:
-            # eliminate invalid area
+            # Loại bỏ vùng padding/không hợp lệ trước khi lưu ảnh để kết quả hiển thị chính xác hơn.
             imgH, imgW = masks.shape[-2:]
             valid_area = torch.where(~masks[idx])
             valid_h, valid_w = valid_area[0][-1], valid_area[1][-1]
@@ -76,7 +76,7 @@ def visualization(samples, targets, pred, vis_dir, split_map=None):
             cv2.imwrite(os.path.join(vis_dir, '{}_gt{}_pred{}.jpg'.format(name, len(gts[idx]), len(pred[idx]))), sample_vis)
 
 
-# training
+# Bắt đầu giai đoạn huấn luyện: cập nhật tham số mô hình dựa trên dữ liệu và hàm mất mát.
 def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
                     data_loader: Iterable, optimizer: torch.optim.Optimizer,
                     device: torch.device, epoch: int, max_norm: float = 0):
@@ -96,7 +96,7 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
                                         criterion=criterion, targets=targets)
         loss_dict, weight_dict, losses = outputs['loss_dict'], outputs['weight_dict'], outputs['losses']
 
-        # reduce losses over all GPUs for logging purposes
+        # Đồng bộ và giảm các giá trị loss giữa nhiều GPU để log phản ánh đúng toàn bộ tiến trình.
         loss_dict_reduced = utils.reduce_dict(loss_dict)
         loss_dict_reduced_unscaled = {f'{k}_unscaled': v
                                       for k, v in loss_dict_reduced.items()}
@@ -120,13 +120,13 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
         metric_logger.update(loss=loss_value, **loss_dict_reduced_scaled, **loss_dict_reduced_unscaled)
         metric_logger.update(lr=optimizer.param_groups[0]["lr"])
     
-    # gather the stats from all processes
+    # Thu thập thống kê từ mọi tiến trình phân tán rồi mới tính giá trị tổng hợp cuối cùng.
     metric_logger.synchronize_between_processes()
     print("Averaged stats:", metric_logger)
     return {k: meter.global_avg for k, meter in metric_logger.meters.items()}
 
 
-# evaluation
+# Thực hiện giai đoạn đánh giá: chỉ suy luận và đo chất lượng mà không cập nhật trọng số.
 @torch.no_grad()
 def evaluate(model, data_loader, device, epoch=0, vis_dir=None):
     model.eval()
@@ -142,21 +142,21 @@ def evaluate(model, data_loader, device, epoch=0, vis_dir=None):
         samples = samples.to(device)
         img_h, img_w = samples.tensors.shape[-2:]
 
-        # inference
+        # Chạy suy luận để lấy đầu ra dự đoán từ mô hình mà không cập nhật tham số.
         outputs = model(samples, test=True, targets=targets)
         outputs_scores = torch.nn.functional.softmax(outputs['pred_logits'], -1)[:, :, 1][0]
         outputs_points = outputs['pred_points'][0]
         outputs_offsets = outputs['pred_offsets'][0]
         
-        # process predicted points
+        # Hậu xử lý điểm dự đoán (lọc, đổi thang đo) trước khi tính metric hoặc trực quan hóa.
         predict_cnt = len(outputs_scores)
         gt_cnt = targets[0]['points'].shape[0]
 
-        # compute error
+        # Tính sai số giữa dự đoán và ground-truth để đánh giá chất lượng mô hình.
         mae = abs(predict_cnt - gt_cnt)
         mse = (predict_cnt - gt_cnt) * (predict_cnt - gt_cnt)
 
-        # record results
+        # Ghi lại kết quả từng mẫu/từng batch để tổng hợp thống kê cuối cùng.
         results = {}
         toTensor = lambda x: torch.tensor(x).float().cuda()
         results['mae'], results['mse'] = toTensor(mae), toTensor(mse)
@@ -165,13 +165,13 @@ def evaluate(model, data_loader, device, epoch=0, vis_dir=None):
         results_reduced = utils.reduce_dict(results)
         metric_logger.update(mae=results_reduced['mae'], mse=results_reduced['mse'])
 
-        # visualize predictions
+        # Trực quan hóa dự đoán lên ảnh để kiểm tra định tính vùng đúng/sai của mô hình.
         if vis_dir: 
             points = [[point[0]*img_h, point[1]*img_w] for point in outputs_points]     # recover to actual points
             split_map = (outputs['split_map_raw'][0].detach().cpu().squeeze(0) > 0.5).float().numpy()
             visualization(samples, targets, [points], vis_dir, split_map=split_map)
     
-    # gather the stats from all processes
+    # Thu thập thống kê từ mọi tiến trình phân tán rồi mới tính giá trị tổng hợp cuối cùng.
     metric_logger.synchronize_between_processes()
     results = {k: meter.global_avg for k, meter in metric_logger.meters.items()}
     results['mse'] = np.sqrt(results['mse'])

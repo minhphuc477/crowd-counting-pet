@@ -129,7 +129,7 @@ class PositionEmbeddingFourier(nn.Module):
 def build_position_encoding(args):
     N_steps = args.hidden_dim // 2
     if args.position_embedding in ('v2', 'sine'):
-        # TODO find a better way of exposing other arguments
+        # TODO: Cần tìm cách thiết kế truyền tham số linh hoạt hơn để mở rộng dễ dàng và giảm ràng buộc cứng trong API.
         position_embedding = PositionEmbeddingSine(N_steps, normalize=True)
     elif args.position_embedding in ('v3', 'learned'):
         position_embedding = PositionEmbeddingLearned(N_steps)

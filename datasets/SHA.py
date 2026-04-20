@@ -19,7 +19,7 @@ class SHA(Dataset):
         self.prefix = prefix
         self.img_list = os.listdir(f"{data_root}/{prefix}/images")
 
-        # get image and ground-truth list
+        # Khởi tạo danh sách ảnh và ground-truth để truy xuất dữ liệu theo chỉ số.
         self.gt_list = {}
         for img_name in self.img_list:
             img_path = f"{data_root}/{prefix}/images/{img_name}"  
@@ -52,38 +52,38 @@ class SHA(Dataset):
     def __getitem__(self, index):
         assert index <= len(self), 'index range error'
 
-        # load image and gt points
+        # Nạp ảnh và tập điểm ground-truth tương ứng cho từng mẫu.
         img_path = self.img_list[index]
         gt_path = self.gt_list[img_path]
         img, points = load_data((img_path, gt_path), self.train)
         points = points.astype(float)
 
-        # image transform
+        # Áp dụng chuỗi biến đổi ảnh chuẩn trước khi đưa vào mô hình.
         if self.transform is not None:
             img = self.transform(img)
         img = torch.Tensor(img)
 
-        # random scale
+        # Scale ngẫu nhiên để tăng đa dạng dữ liệu và cải thiện khả năng tổng quát hóa.
         if self.train:
             scale_range = [0.8, 1.2]           
             min_size = min(img.shape[1:])
             scale = random.uniform(*scale_range)
             
-            # interpolation
+            # Nội suy tọa độ/đặc trưng để giữ tính liên tục khi thay đổi kích thước.
             if scale * min_size > self.patch_size:  
                 img = torch.nn.functional.upsample_bilinear(img.unsqueeze(0), scale_factor=scale).squeeze(0)
                 points *= scale
 
-        # random crop patch
+        # Cắt patch ngẫu nhiên để tăng cường dữ liệu và giảm quá khớp.
         if self.train:
             img, points = random_crop(img, points, patch_size=self.patch_size)
 
-        # random flip
+        # Lật ảnh ngẫu nhiên để giúp mô hình bền vững với biến đổi hình học.
         if random.random() > 0.5 and self.train and self.flip:
             img = torch.flip(img, dims=[2])
             points[:, 1] = self.patch_size - points[:, 1]
 
-        # target
+        # Xây dựng cấu trúc target chuẩn hóa để tính loss và huấn luyện mô hình ổn định.
         target = {}
         target['points'] = torch.Tensor(points)
         target['labels'] = torch.ones([points.shape[0]]).long()
@@ -110,20 +110,20 @@ def random_crop(img, points, patch_size=256):
     patch_h = patch_size
     patch_w = patch_size
     
-    # random crop
+    # Chọn vùng crop ngẫu nhiên rồi cập nhật điểm tương ứng trong patch.
     start_h = random.randint(0, img.size(1) - patch_h) if img.size(1) > patch_h else 0
     start_w = random.randint(0, img.size(2) - patch_w) if img.size(2) > patch_w else 0
     end_h = start_h + patch_h
     end_w = start_w + patch_w
     idx = (points[:, 0] >= start_h) & (points[:, 0] <= end_h) & (points[:, 1] >= start_w) & (points[:, 1] <= end_w)
 
-    # clip image and points
+    # Cắt biên ảnh và lọc điểm ngoài vùng hợp lệ sau khi crop.
     result_img = img[:, start_h:end_h, start_w:end_w]
     result_points = points[idx]
     result_points[:, 0] -= start_h
     result_points[:, 1] -= start_w
     
-    # resize to patchsize
+    # Resize patch về kích thước chuẩn để thống nhất batch đầu vào.
     imgH, imgW = result_img.shape[-2:]
     fH, fW = patch_h/imgH, patch_w/imgW
     result_img = torch.nn.functional.interpolate(result_img.unsqueeze(0), (patch_h, patch_w)).squeeze(0)

@@ -44,25 +44,25 @@ class HungarianMatcher(nn.Module):
         """
         bs, num_queries = outputs["pred_logits"].shape[:2]
 
-        # flatten to compute the cost matrices in a batch
+        # Làm phẳng tensor để tính ma trận chi phí cho cả batch một cách vector hóa.
         out_prob = outputs["pred_logits"].flatten(0, 1).softmax(-1)  # [batch_size * num_queries, 2]
         out_points = outputs["pred_points"].flatten(0, 1)  # [batch_size * num_queries, 2]
 
-        # concat target labels and points
+        # Nối nhãn lớp và tọa độ điểm đích để thuận tiện tính cost/matching đồng thời.
         tgt_ids = torch.cat([v["labels"] for v in targets])
         tgt_points = torch.cat([v["points"] for v in targets])
 
-        # compute the classification cost, i.e., - prob[target class]
+        # Tính chi phí phân lớp (xấp xỉ -xác suất lớp đích) cho thuật toán matching.
         cost_class = -out_prob[:, tgt_ids]
 
-        # compute the L2 cost between points
+        # Tính chi phí hồi quy theo khoảng cách L2 giữa điểm dự đoán và điểm ground-truth.
         img_h, img_w = outputs['img_shape']
         out_points_abs = out_points.clone()
         out_points_abs[:,0] *= img_h
         out_points_abs[:,1] *= img_w
         cost_point = torch.cdist(out_points_abs, tgt_points, p=2)
 
-        # final cost matrix
+        # Tạo ma trận chi phí cuối cùng làm đầu vào cho Hungarian matching.
         C = self.cost_point * cost_point + self.cost_class * cost_class
         C = C.view(bs, num_queries, -1).cpu()
 
