@@ -15,7 +15,7 @@ def get_args_parser():
 
     # Nhóm tham số mô hình: cấu hình kiến trúc chính và các siêu tham số cốt lõi.
     # - Tham số cho backbone dùng để trích xuất đặc trưng thị giác ở nhiều mức.
-    parser.add_argument('--backbone', default='convnextv2_large', type=str,
+    parser.add_argument('--backbone', default='convnextv2_nano', type=str,
                         help="Name of the ConvNeXt V2 backbone to use")
     parser.add_argument('--position_embedding', default='sine', type=str, choices=('sine', 'learned', 'fourier'),
                         help="Type of positional embedding to use on top of the image features")
