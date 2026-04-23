@@ -24,8 +24,8 @@ def get_args_parser():
 
     # Nhóm tham số huấn luyện: tốc độ học, số epoch, lịch giảm learning rate và clipping.
     parser.add_argument('--lr', default=1e-4, type=float)
-    parser.add_argument('--lr_backbone', default=1e-5, type=float)
-    parser.add_argument('--batch_size', default=8, type=int)
+    parser.add_argument('--lr_backbone', default=5e-6, type=float)
+    parser.add_argument('--batch_size', default=2, type=int)
     parser.add_argument('--weight_decay', default=1e-4, type=float)
     parser.add_argument('--epochs', default=1500, type=int)
     parser.add_argument('--clip_max_norm', default=0.1, type=float,
@@ -33,7 +33,7 @@ def get_args_parser():
 
     # Nhóm tham số mô hình: cấu hình kiến trúc chính và các siêu tham số cốt lõi.
     # - Tham số cho backbone dùng để trích xuất đặc trưng thị giác ở nhiều mức.
-    parser.add_argument('--backbone', default='convnextv2_tiny', type=str,
+    parser.add_argument('--backbone', default='convnextv2_large', type=str,
                         help="Name of the ConvNeXt V2 backbone to use")
     parser.add_argument('--position_embedding', default='sine', type=str, choices=('sine', 'learned', 'fourier'),
                         help="Type of positional embedding to use on top of the image features")

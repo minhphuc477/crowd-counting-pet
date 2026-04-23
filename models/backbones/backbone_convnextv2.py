@@ -132,4 +132,4 @@ def build_backbone_convnextv2(args):
 
 
 if __name__ == '__main__':
-    Backbone_ConvNeXtV2('convnextv2_tiny', True)
+    Backbone_ConvNeXtV2('convnextv2_large', True)
