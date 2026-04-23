@@ -107,7 +107,7 @@ class BasePETCount(nn.Module):
         v_idx = valid_div > 0
         query_embed_win = query_embed_win[:, v_idx]
         query_feats_win = query_feats_win[:, v_idx]
-        points_queries_win = points_queries_win[:, v_idx].reshape(-1, 2)
+        points_queries_win = points_queries_win.to(v_idx.device)[:, v_idx].reshape(-1, 2)
     
         return query_embed_win, points_queries_win, query_feats_win, v_idx
     
@@ -139,7 +139,7 @@ class BasePETCount(nn.Module):
         # Chuẩn hóa tọa độ điểm truy vấn theo kích thước ảnh để tránh phụ thuộc độ phân giải tuyệt đối.
         img_shape = samples.tensors.shape[-2:]
         img_h, img_w = img_shape
-        points_queries = points_queries.float().cuda()
+        points_queries = points_queries.float().to(hs.device)
         points_queries[:, 0] /= img_h
         points_queries[:, 1] /= img_w
 
@@ -583,7 +583,7 @@ def build_pet(args):
 
     # Khởi tạo toàn bộ mô hình theo cấu hình hiện tại để sẵn sàng cho huấn luyện hoặc suy luận.
     num_classes = 1
-    backbone = build_backbone_vgg(args)
+    backbone = build_backbone(args)
     model = PET(
         backbone,
         num_classes=num_classes,

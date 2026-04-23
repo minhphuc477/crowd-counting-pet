@@ -20,8 +20,8 @@ def get_args_parser():
 
     # Nhóm tham số mô hình: cấu hình kiến trúc chính và các siêu tham số cốt lõi.
     # - Tham số cho backbone dùng để trích xuất đặc trưng thị giác ở nhiều mức.
-    parser.add_argument('--backbone', default='vgg16_bn', type=str,
-                        help="Name of the convolutional backbone to use")
+    parser.add_argument('--backbone', default='convnextv2_tiny', type=str,
+                        help="Name of the ConvNeXt V2 backbone to use")
     parser.add_argument('--position_embedding', default='sine', type=str, choices=('sine', 'learned', 'fourier'),
                         help="Type of positional embedding to use on top of the image features")
     # - Tham số cho transformer encoder/decoder để mô hình hóa quan hệ không gian-ngữ cảnh.
@@ -107,7 +107,7 @@ def main(args):
             checkpoint = torch.hub.load_state_dict_from_url(
                 args.resume, map_location='cpu', check_hash=True)
         else:
-            checkpoint = torch.load(args.resume, map_location='cpu')
+            checkpoint = torch.load(args.resume, map_location='cpu', weights_only=False)
         model_without_ddp.load_state_dict(checkpoint['model'])        
         cur_epoch = checkpoint['epoch'] if 'epoch' in checkpoint else 0
     

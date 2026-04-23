@@ -141,6 +141,7 @@ def evaluate(model, data_loader, device, epoch=0, vis_dir=None):
     for samples, targets in metric_logger.log_every(data_loader, print_freq, header):
         samples = samples.to(device)
         img_h, img_w = samples.tensors.shape[-2:]
+        metric_device = samples.tensors.device
 
         # Chạy suy luận để lấy đầu ra dự đoán từ mô hình mà không cập nhật tham số.
         outputs = model(samples, test=True, targets=targets)
@@ -158,7 +159,7 @@ def evaluate(model, data_loader, device, epoch=0, vis_dir=None):
 
         # Ghi lại kết quả từng mẫu/từng batch để tổng hợp thống kê cuối cùng.
         results = {}
-        toTensor = lambda x: torch.tensor(x).float().cuda()
+        toTensor = lambda x: torch.tensor(x, device=metric_device).float()
         results['mae'], results['mse'] = toTensor(mae), toTensor(mse)
         metric_logger.update(mae=results['mae'], mse=results['mse'])
 
