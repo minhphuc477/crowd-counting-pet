@@ -489,6 +489,16 @@ class SetCriterion(nn.Module):
         if 'points_queries' in sanitized_outputs:
             sanitized_outputs['points_queries'] = sanitized_outputs['points_queries'].float()
         return sanitized_outputs
+
+    @staticmethod
+    def _move_indices_to_device(indices, device):
+        return [
+            (
+                src.to(device=device, dtype=torch.int64),
+                tgt.to(device=device, dtype=torch.int64),
+            )
+            for src, tgt in indices
+        ]
     
     def loss_labels(self, outputs, targets, indices, num_points, log=True, **kwargs):
         """
@@ -594,14 +604,24 @@ class SetCriterion(nn.Module):
 
     def _get_src_permutation_idx(self, indices):
         # Hoán vị tensor dự đoán theo chỉ số matching để căn hàng với target tương ứng.
-        batch_idx = torch.cat([torch.full_like(src, i) for i, (src, _) in enumerate(indices)])
-        src_idx = torch.cat([src for (src, _) in indices])
+        src_tensors = [src for (src, _) in indices if src.numel() > 0]
+        if not src_tensors:
+            device = indices[0][0].device if indices else torch.device('cpu')
+            empty = torch.empty(0, dtype=torch.int64, device=device)
+            return empty, empty
+        batch_idx = torch.cat([torch.full_like(src, i) for i, (src, _) in enumerate(indices) if src.numel() > 0])
+        src_idx = torch.cat(src_tensors)
         return batch_idx, src_idx
 
     def _get_tgt_permutation_idx(self, indices):
         # Hoán vị target theo chỉ số matching để so khớp đúng với dự đoán.
-        batch_idx = torch.cat([torch.full_like(tgt, i) for i, (_, tgt) in enumerate(indices)])
-        tgt_idx = torch.cat([tgt for (_, tgt) in indices])
+        tgt_tensors = [tgt for (_, tgt) in indices if tgt.numel() > 0]
+        if not tgt_tensors:
+            device = indices[0][1].device if indices else torch.device('cpu')
+            empty = torch.empty(0, dtype=torch.int64, device=device)
+            return empty, empty
+        batch_idx = torch.cat([torch.full_like(tgt, i) for i, (_, tgt) in enumerate(indices) if tgt.numel() > 0])
+        tgt_idx = torch.cat(tgt_tensors)
         return batch_idx, tgt_idx
 
     def get_loss(self, loss, outputs, targets, indices, num_points, **kwargs):
@@ -621,7 +641,8 @@ class SetCriterion(nn.Module):
         """
         # Lấy kết quả matching giữa output lớp cuối và ground-truth để tính loss chính xác.
         outputs = self._sanitize_outputs(outputs)
-        indices = self.matcher(outputs, targets)
+        match_device = next(iter(outputs.values())).device
+        indices = self._move_indices_to_device(self.matcher(outputs, targets), match_device)
 
         # Tính số điểm mục tiêu trung bình trên toàn bộ tiến trình để chuẩn hóa thang loss.
         num_points = sum(len(t["labels"]) for t in targets)
