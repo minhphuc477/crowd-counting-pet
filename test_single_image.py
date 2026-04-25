@@ -8,6 +8,7 @@ import torchvision.transforms as standard_transforms
 
 import util.misc as utils
 from models import build_model
+from models.backbones import resolve_convnextv2_backbone_name
 
 
 def get_args_parser():
@@ -162,11 +163,25 @@ def main(args):
 
     # Khởi tạo toàn bộ mô hình theo cấu hình hiện tại để sẵn sàng cho huấn luyện hoặc suy luận.
     device = torch.device(args.device)
+
+    resume_checkpoint = None
+    if args.resume:
+        if args.resume.startswith('https'):
+            resume_checkpoint = torch.hub.load_state_dict_from_url(
+                args.resume, map_location='cpu', check_hash=True)
+        else:
+            resume_checkpoint = torch.load(args.resume, map_location='cpu', weights_only=False)
+        if 'args' in resume_checkpoint and hasattr(resume_checkpoint['args'], 'backbone'):
+            args.backbone = resume_checkpoint['args'].backbone
+
+    if args.backbone == 'auto':
+        args.backbone = resolve_convnextv2_backbone_name(args.backbone)
+
     model, criterion = build_model(args)
     model.to(device)
 
     # Nạp trọng số pretrained để suy luận/đánh giá với mô hình đã huấn luyện.
-    checkpoint = torch.load(args.resume, map_location='cpu', weights_only=False)        
+    checkpoint = resume_checkpoint if resume_checkpoint is not None else torch.load(args.resume, map_location='cpu', weights_only=False)
     model.load_state_dict(checkpoint['model'])
     
     # Thực hiện giai đoạn đánh giá: chỉ suy luận và đo chất lượng mà không cập nhật trọng số.

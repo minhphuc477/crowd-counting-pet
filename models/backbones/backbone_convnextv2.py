@@ -2,15 +2,58 @@
 Backbone modules for ConvNeXt V2.
 """
 from typing import Dict
+import importlib
 import warnings
 
-import timm
 import torch
 import torch.nn.functional as F
 from torch import nn
 
 from util.misc import NestedTensor
 from ..position_encoding import build_position_encoding
+
+
+CONVNEXTV2_VARIANTS = (
+    'convnextv2_nano',
+    'convnextv2_small',
+    'convnextv2_base',
+    'convnextv2_large',
+)
+
+
+def resolve_convnextv2_backbone_name(name: str) -> str:
+    """
+    Resolve the ConvNeXt V2 backbone name.
+    """
+    if name != 'auto':
+        if name not in CONVNEXTV2_VARIANTS:
+            raise ValueError(f'Unsupported ConvNeXt V2 backbone: {name}')
+        return name
+
+    if not torch.cuda.is_available():
+        return 'convnextv2_nano'
+
+    total_memory_gb = torch.cuda.get_device_properties(torch.cuda.current_device()).total_memory / (1024 ** 3)
+    if total_memory_gb >= 24:
+        return 'convnextv2_large'
+    if total_memory_gb >= 14:
+        return 'convnextv2_base'
+    if total_memory_gb >= 8:
+        return 'convnextv2_small'
+    return 'convnextv2_nano'
+
+
+def get_convnextv2_training_defaults(backbone_name: str):
+    """
+    Conservative batch-size and learning-rate defaults for a resolved ConvNeXt V2 backbone.
+    """
+    if backbone_name == 'convnextv2_large':
+        return 1, 1.25e-5, 1.25e-6
+    if backbone_name == 'convnextv2_base':
+        return 2, 2.5e-5, 2.5e-6
+    if backbone_name == 'convnextv2_small':
+        return 4, 5e-5, 5e-6
+    return 8, 1e-4, 1e-5
 
 
 class ConvNeXtV2FPN(nn.Module):
@@ -83,6 +126,8 @@ class Backbone_ConvNeXtV2(BackboneBase_ConvNeXtV2):
         if not name.startswith('convnextv2_'):
             raise ValueError(f'Unsupported ConvNeXt V2 backbone: {name}')
 
+        timm = importlib.import_module('timm')
+
         try:
             backbone = timm.create_model(
                 name,
@@ -90,7 +135,7 @@ class Backbone_ConvNeXtV2(BackboneBase_ConvNeXtV2):
                 features_only=True,
                 out_indices=(0, 1, 2, 3),
             )
-        except Exception as exc:
+        except (RuntimeError, OSError) as exc:
             if not pretrained:
                 raise
             warnings.warn(
@@ -108,26 +153,30 @@ class Backbone_ConvNeXtV2(BackboneBase_ConvNeXtV2):
         super().__init__(backbone, num_channels, return_interm_layers)
 
 
-class Joiner(nn.Sequential):
+class Joiner(nn.Module):
     def __init__(self, backbone, position_embedding):
-        super().__init__(backbone, position_embedding)
+        super().__init__()
+        self.backbone = backbone
+        self.position_embedding = position_embedding
+        self.num_channels = backbone.num_channels
 
     def forward(self, tensor_list: NestedTensor):
-        xs = self[0](tensor_list)
+        xs = self.backbone(tensor_list)
         out: Dict[str, NestedTensor] = {}
         pos = {}
         for name, x in xs.items():
             out[name] = x
             # Mã hóa vị trí không gian nhằm giữ lại cấu trúc hình học khi đưa đặc trưng vào transformer.
-            pos[name] = self[1](x).to(x.tensors.dtype)
+            pos[name] = self.position_embedding(x).to(x.tensors.dtype)
         return out, pos
 
 
 def build_backbone_convnextv2(args):
     position_embedding = build_position_encoding(args)
-    backbone = Backbone_ConvNeXtV2(args.backbone, True)
+    backbone_name = resolve_convnextv2_backbone_name(args.backbone)
+    args.backbone = backbone_name
+    backbone = Backbone_ConvNeXtV2(backbone_name, True)
     model = Joiner(backbone, position_embedding)
-    model.num_channels = backbone.num_channels
     return model
 
 

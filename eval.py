@@ -13,6 +13,7 @@ from datasets import build_dataset
 import util.misc as utils
 from engine import evaluate
 from models import build_model
+from models.backbones import resolve_convnextv2_backbone_name
 
 
 def get_args_parser():
@@ -78,6 +79,19 @@ def main(args):
     np.random.seed(seed)
     random.seed(seed)
 
+    resume_checkpoint = None
+    if args.resume:
+        if args.resume.startswith('https'):
+            resume_checkpoint = torch.hub.load_state_dict_from_url(
+                args.resume, map_location='cpu', check_hash=True)
+        else:
+            resume_checkpoint = torch.load(args.resume, map_location='cpu', weights_only=False)
+        if 'args' in resume_checkpoint and hasattr(resume_checkpoint['args'], 'backbone'):
+            args.backbone = resume_checkpoint['args'].backbone
+
+    if args.backbone == 'auto':
+        args.backbone = resolve_convnextv2_backbone_name(args.backbone)
+
     # Khởi tạo toàn bộ mô hình theo cấu hình hiện tại để sẵn sàng cho huấn luyện hoặc suy luận.
     model, criterion = build_model(args)
     model.to(device)
@@ -101,13 +115,11 @@ def main(args):
     data_loader_val = DataLoader(dataset_val, 1, sampler=sampler_val,
                                  drop_last=False, collate_fn=utils.collate_fn, num_workers=args.num_workers)
 
+    cur_epoch = 0
+
     # Nạp trọng số pretrained để suy luận/đánh giá với mô hình đã huấn luyện.
-    if args.resume:
-        if args.resume.startswith('https'):
-            checkpoint = torch.hub.load_state_dict_from_url(
-                args.resume, map_location='cpu', check_hash=True)
-        else:
-            checkpoint = torch.load(args.resume, map_location='cpu', weights_only=False)
+    if resume_checkpoint is not None:
+        checkpoint = resume_checkpoint
         model_without_ddp.load_state_dict(checkpoint['model'])        
         cur_epoch = checkpoint['epoch'] if 'epoch' in checkpoint else 0
     

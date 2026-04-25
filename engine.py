@@ -4,6 +4,7 @@ Train and eval functions used in main.py
 import math
 import os
 import sys
+from contextlib import nullcontext
 from typing import Iterable
 import numpy as np
 import cv2
@@ -79,22 +80,34 @@ def visualization(samples, targets, pred, vis_dir, split_map=None):
 # Bắt đầu giai đoạn huấn luyện: cập nhật tham số mô hình dựa trên dữ liệu và hàm mất mát.
 def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
                     data_loader: Iterable, optimizer: torch.optim.Optimizer,
-                    device: torch.device, epoch: int, max_norm: float = 0):
+                    device: torch.device, epoch: int, max_norm: float = 0,
+                    use_amp: bool = False, accum_iter: int = 1, scaler=None):
     model.train()
     criterion.train()
     metric_logger = utils.MetricLogger(delimiter="  ")
     metric_logger.add_meter('lr', utils.SmoothedValue(window_size=1, fmt='{value:.6f}'))
     header = 'Epoch: [{}]'.format(epoch)
     print_freq = 10
+    accum_iter = max(1, int(accum_iter))
+    optimizer.zero_grad(set_to_none=True)
+    data_loader_length = len(data_loader) if hasattr(data_loader, '__len__') else None
 
-    for samples, targets in metric_logger.log_every(data_loader, print_freq, header):
+    for step, (samples, targets) in enumerate(metric_logger.log_every(data_loader, print_freq, header)):
         samples = samples.to(device)
         targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
         gt_points = [target['points'] for target in targets]
+        should_step = ((step + 1) % accum_iter == 0)
+        if data_loader_length is not None and step + 1 == data_loader_length:
+            should_step = True
 
-        outputs = model(samples, epoch=epoch, train=True, 
-                                        criterion=criterion, targets=targets)
-        loss_dict, weight_dict, losses = outputs['loss_dict'], outputs['weight_dict'], outputs['losses']
+        sync_context = model.no_sync if hasattr(model, 'no_sync') and not should_step else nullcontext
+
+        with sync_context():
+            with torch.autocast(device_type=device.type, dtype=torch.float16,
+                                enabled=use_amp and device.type == 'cuda'):
+                outputs = model(samples, epoch=epoch, train=True,
+                                criterion=criterion, targets=targets)
+                loss_dict, weight_dict, losses = outputs['loss_dict'], outputs['weight_dict'], outputs['losses']
 
         # Đồng bộ và giảm các giá trị loss giữa nhiều GPU để log phản ánh đúng toàn bộ tiến trình.
         loss_dict_reduced = utils.reduce_dict(loss_dict)
@@ -105,17 +118,30 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
         losses_reduced_scaled = sum(loss_dict_reduced_scaled.values())
 
         loss_value = losses_reduced_scaled.item()
+        loss_to_backward = losses_reduced_scaled / accum_iter
 
         if not math.isfinite(loss_value):
             print("Loss is {}, stopping training".format(loss_value))
             print(loss_dict_reduced)
             sys.exit(1)
-        
-        optimizer.zero_grad()
-        losses.backward()
-        if max_norm > 0:
-            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm)
-        optimizer.step()
+
+        if use_amp and scaler is not None:
+            scaler.scale(loss_to_backward).backward()
+        else:
+            loss_to_backward.backward()
+
+        if should_step:
+            if max_norm > 0:
+                if use_amp and scaler is not None:
+                    scaler.unscale_(optimizer)
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm)
+
+            if use_amp and scaler is not None:
+                scaler.step(optimizer)
+                scaler.update()
+            else:
+                optimizer.step()
+            optimizer.zero_grad(set_to_none=True)
 
         metric_logger.update(loss=loss_value, **loss_dict_reduced_scaled, **loss_dict_reduced_unscaled)
         metric_logger.update(lr=optimizer.param_groups[0]["lr"])

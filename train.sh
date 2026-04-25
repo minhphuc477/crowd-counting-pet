@@ -1,10 +1,13 @@
 CUDA_VISIBLE_DEVICES='0' \
-python -m torch.distributed.launch \
+torchrun \
+    --standalone \
     --nproc_per_node=1 \
-    --master_port=10001 \
-    --use_env main.py \
-    --lr=0.0001 \
-    --backbone="vgg16_bn" \
+    main.py \
+    --backbone="auto" \
+    --target_mae=50 \
+    --search_trials=6 \
+    --search_epochs=8 \
+    --search_eval_freq=1 \
     --ce_loss_coef=1.0 \
     --point_loss_coef=5.0 \
     --eos_coef=0.5 \
@@ -15,5 +18,5 @@ python -m torch.distributed.launch \
     --dropout=0.0 \
     --epochs=1500 \
     --dataset_file="SHA" \
-    --eval_freq=5 \
+    --eval_freq=1 \
     --output_dir='pet_model'
