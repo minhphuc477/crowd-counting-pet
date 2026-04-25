@@ -171,7 +171,7 @@ def build_model_state(args, device, total_epochs):
     ]
     optimizer = torch.optim.AdamW(param_dicts, lr=args.lr,
                                   weight_decay=args.weight_decay)
-    lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, total_epochs)
+    lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs, eta_min=1e-7)
     return model, criterion, model_without_ddp, optimizer, lr_scheduler, n_parameters
 
 
