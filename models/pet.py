@@ -360,18 +360,30 @@ class PET(nn.Module):
         split_map = torch.nan_to_num(self.quadtree_splitter(encode_src), nan=0.5, posinf=1.0, neginf=0.0)
         split_map_dense = F.interpolate(split_map, (ds_h, ds_w)).reshape(bs, -1)
         split_map_sparse = 1 - F.interpolate(split_map, (sp_h, sp_w)).reshape(bs, -1)
+        run_sparse = 'train' in kwargs or (split_map_sparse > 0.5).sum() > 0
+        run_dense = 'train' in kwargs or (split_map_dense > 0.5).sum() > 0
+        sparse_div = split_map_sparse.reshape(bs, sp_h, sp_w)
+        dense_div = split_map_dense.reshape(bs, ds_h, ds_w)
+
+        if 'train' not in kwargs and not run_sparse and not run_dense:
+            if split_map_sparse.max() >= split_map_dense.max():
+                run_sparse = True
+                sparse_div = torch.ones_like(sparse_div)
+            else:
+                run_dense = True
+                dense_div = torch.ones_like(dense_div)
         
         # Chạy forward cho tầng quadtree mức 0 ở nhánh sparse để lấy dự đoán thưa.
-        if 'train' in kwargs or (split_map_sparse > 0.5).sum() > 0:
-            kwargs['div'] = split_map_sparse.reshape(bs, sp_h, sp_w)
+        if run_sparse:
+            kwargs['div'] = sparse_div
             kwargs['dec_win_size'] = [16, 8]
             outputs_sparse = self.quadtree_sparse(samples, features, context_info, **kwargs)
         else:
             outputs_sparse = None
         
         # Chạy forward cho tầng quadtree mức 1 ở nhánh dense để tinh chỉnh vùng đông.
-        if 'train' in kwargs or (split_map_dense > 0.5).sum() > 0:
-            kwargs['div'] = split_map_dense.reshape(bs, ds_h, ds_w)
+        if run_dense:
+            kwargs['div'] = dense_div
             kwargs['dec_win_size'] = [8, 4]
             outputs_dense = self.quadtree_dense(samples, features, context_info, **kwargs)
         else:
@@ -398,6 +410,18 @@ class PET(nn.Module):
         outputs = self.pet_forward(samples, features, pos, **kwargs)
         out_dense, out_sparse = outputs['dense'], outputs['sparse']
         thrs = 0.5  # inference threshold        
+
+        if out_sparse is None and out_dense is None:
+            empty_pred = torch.empty((1, 0, 2), device=samples.tensors.device, dtype=samples.tensors.dtype)
+            return {
+                'pred_logits': empty_pred,
+                'pred_points': empty_pred,
+                'pred_offsets': empty_pred,
+                'img_shape': samples.tensors.shape[-2:],
+                'points_queries': torch.empty((0, 2), device=samples.tensors.device, dtype=samples.tensors.dtype),
+                'pq_stride': self.quadtree_sparse.pq_stride,
+                'split_map_raw': outputs['split_map_raw'],
+            }
         
         # Xử lý các truy vấn điểm nhánh sparse trước khi kết hợp vào đầu ra chung.
         if outputs['sparse'] is not None:
