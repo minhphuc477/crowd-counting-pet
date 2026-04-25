@@ -195,30 +195,31 @@ def sample_search_config(args, backbone_candidates, trial=None, rng=None):
 
     if trial is not None:
         backbone = trial.suggest_categorical('backbone', backbone_candidates)
-    else:
-        backbone = rng.choice(backbone_candidates)
-
-    base_batch_size, base_lr, base_lr_backbone = get_convnextv2_training_defaults(backbone)
-    batch_candidates = sorted({max(1, base_batch_size // 2), base_batch_size})
-    if base_batch_size == 1:
-        batch_candidates.append(2)
-    accum_candidates = [1, 2, 4]
-    if base_batch_size <= 2:
-        accum_candidates.append(8)
-    accum_candidates = sorted(set(accum_candidates))
-    amp_candidates = [False]
-    if not args.disable_amp and torch.cuda.is_available():
-        amp_candidates = [True, False]
-
-    if trial is not None:
-        batch_size = trial.suggest_categorical('batch_size', batch_candidates)
-        accum_iter = trial.suggest_categorical('accum_iter', accum_candidates)
-        lr = trial.suggest_float('lr', base_lr / 4.0, base_lr * 4.0, log=True)
-        lr_backbone = trial.suggest_float('lr_backbone', base_lr_backbone / 4.0, base_lr_backbone * 4.0, log=True)
+        max_batch_size, base_lr, base_lr_backbone = get_convnextv2_training_defaults(backbone)
+        batch_size = trial.suggest_categorical('batch_size', [1, 2, 4, 8])
+        batch_size = min(batch_size, max_batch_size)
+        accum_iter = trial.suggest_categorical('accum_iter', [1, 2, 4, 8])
+        lr = trial.suggest_float('lr', 1e-5, 5e-4, log=True)
+        lr_backbone = trial.suggest_float('lr_backbone', 1e-6, 5e-5, log=True)
         weight_decay = trial.suggest_float('weight_decay', 1e-6, 1e-3, log=True)
         clip_max_norm = trial.suggest_categorical('clip_max_norm', [0.05, 0.1, 0.2])
-        use_amp = trial.suggest_categorical('use_amp', amp_candidates)
+        use_amp = False
+        if not args.disable_amp and torch.cuda.is_available():
+            use_amp = trial.suggest_categorical('use_amp', [False, True])
     else:
+        backbone = rng.choice(backbone_candidates)
+        max_batch_size, base_lr, base_lr_backbone = get_convnextv2_training_defaults(backbone)
+        batch_candidates = sorted({max(1, max_batch_size // 2), max_batch_size})
+        if max_batch_size == 1:
+            batch_candidates.append(2)
+        accum_candidates = [1, 2, 4]
+        if max_batch_size <= 2:
+            accum_candidates.append(8)
+        accum_candidates = sorted(set(accum_candidates))
+        amp_candidates = [False]
+        if not args.disable_amp and torch.cuda.is_available():
+            amp_candidates = [True, False]
+
         batch_size = rng.choice(batch_candidates)
         accum_iter = rng.choice(accum_candidates)
         lr = random_log_uniform(rng, base_lr / 4.0, base_lr * 4.0)
