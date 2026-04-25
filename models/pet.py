@@ -488,8 +488,15 @@ class SetCriterion(nn.Module):
             den_sort = torch.sort(den)[1]
             img_ds_idx = den_sort[:len(den_sort)//2]
             img_sp_idx = den_sort[len(den_sort)//2:]
-            pt_ds_idx = torch.cat([torch.where(idx[0] == bs_id)[0] for bs_id in img_ds_idx])
-            pt_sp_idx = torch.cat([torch.where(idx[0] == bs_id)[0] for bs_id in img_sp_idx])
+
+            def _cat_or_empty(index_groups):
+                flat_indices = [torch.where(idx[0] == bs_id)[0] for bs_id in index_groups]
+                if flat_indices:
+                    return torch.cat(flat_indices)
+                return idx[0].new_zeros((0,))
+
+            pt_ds_idx = _cat_or_empty(img_ds_idx)
+            pt_sp_idx = _cat_or_empty(img_sp_idx)
 
             # Áp dụng giám sát kép cho cả ảnh sparse và dense để mô hình học cân bằng.
             eps = 1e-5
