@@ -15,7 +15,7 @@ from torch.utils.data import DataLoader, DistributedSampler
 
 import util.misc as utils
 from datasets import build_dataset
-from engine import evaluate, train_one_epoch
+from engine import NonFiniteTrainingError, evaluate, train_one_epoch
 from models import build_model
 from models.backbones import get_convnextv2_training_defaults, resolve_convnextv2_backbone_name
 
@@ -382,8 +382,13 @@ def run_hyperparameter_search(args, device, dataset_train, dataset_val, output_d
                 output_dir=None, run_log_name=None, resume_checkpoint=None,
                 save_checkpoints=False, eval_freq=args.search_eval_freq, search_trial=trial
             )
-        except RuntimeError as exc:
-            if 'out of memory' in str(exc).lower():
+        except (NonFiniteTrainingError, RuntimeError, ValueError) as exc:
+            exc_message = str(exc).lower()
+            if (
+                'out of memory' in exc_message
+                or 'non-finite loss' in exc_message
+                or 'invalid numeric entries' in exc_message
+            ):
                 if device.type == 'cuda':
                     torch.cuda.empty_cache()
                 result = {'best_mae': float('inf'), 'best_epoch': -1, 'n_parameters': 0}
@@ -495,4 +500,7 @@ def main(args):
 if __name__ == '__main__':
     cli_parser = argparse.ArgumentParser('PET training and evaluation script', parents=[get_args_parser()])
     cli_args = cli_parser.parse_args()
-    main(cli_args)
+    try:
+        main(cli_args)
+    finally:
+        utils.cleanup_distributed_mode()

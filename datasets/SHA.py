@@ -71,7 +71,12 @@ class SHA(Dataset):
             
             # Nội suy tọa độ/đặc trưng để giữ tính liên tục khi thay đổi kích thước.
             if scale * min_size > self.patch_size:  
-                img = torch.nn.functional.upsample_bilinear(img.unsqueeze(0), scale_factor=scale).squeeze(0)
+                img = torch.nn.functional.interpolate(
+                    img.unsqueeze(0),
+                    scale_factor=scale,
+                    mode='bilinear',
+                    align_corners=False,
+                ).squeeze(0)
                 points *= scale
 
         # Cắt patch ngẫu nhiên để tăng cường dữ liệu và giảm quá khớp.

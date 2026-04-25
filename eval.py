@@ -134,4 +134,7 @@ def main(args):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser('PET evaluation script', parents=[get_args_parser()])
     args = parser.parse_args()
-    main(args)
+    try:
+        main(args)
+    finally:
+        utils.cleanup_distributed_mode()

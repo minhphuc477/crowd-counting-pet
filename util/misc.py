@@ -410,3 +410,8 @@ def init_distributed_mode(args):
                                          world_size=args.world_size, rank=args.rank)
     torch.distributed.barrier()
     setup_for_distributed(args.rank == 0)
+
+
+def cleanup_distributed_mode():
+    if is_dist_avail_and_initialized():
+        dist.destroy_process_group()

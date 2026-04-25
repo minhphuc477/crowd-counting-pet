@@ -46,7 +46,7 @@ class BasePETCount(nn.Module):
         # Sinh tập điểm truy vấn ban đầu theo lưới để quét không gian ảnh một cách hệ thống.
         shift_x = ((torch.arange(0, shape[1]) + 0.5) * stride).long()
         shift_y = ((torch.arange(0, shape[0]) + 0.5) * stride).long()
-        shift_y, shift_x = torch.meshgrid(shift_y, shift_x)
+        shift_y, shift_x = torch.meshgrid(shift_y, shift_x, indexing='ij')
         points_queries = torch.vstack([shift_y.flatten(), shift_x.flatten()]).permute(1,0) # 2xN --> Nx2
         h, w = shift_x.shape
 
@@ -78,7 +78,7 @@ class BasePETCount(nn.Module):
         # Sinh các điểm truy vấn theo bước stride hiện tại để chuẩn bị cho bước truy xuất đặc trưng.
         shift_x = ((torch.arange(0, shape[1]) + 0.5) * stride).long()
         shift_y = ((torch.arange(0, shape[0]) + 0.5) * stride).long()
-        shift_y, shift_x = torch.meshgrid(shift_y, shift_x)
+        shift_y, shift_x = torch.meshgrid(shift_y, shift_x, indexing='ij')
         points_queries = torch.vstack([shift_y.flatten(), shift_x.flatten()]).permute(1,0) # 2xN --> Nx2
         h, w = shift_x.shape
 
@@ -132,9 +132,14 @@ class BasePETCount(nn.Module):
         """
         Crowd prediction
         """
-        outputs_class = self.class_embed(hs)
+        outputs_class = torch.nan_to_num(self.class_embed(hs), nan=0.0, posinf=20.0, neginf=-20.0)
         # Chuẩn hóa tọa độ/giá trị về khoảng [0, 1] để ổn định huấn luyện và dễ so sánh giữa ảnh.
-        outputs_offsets = (self.coord_embed(hs).sigmoid() - 0.5) * 2.0
+        outputs_offsets = torch.nan_to_num(
+            (self.coord_embed(hs).sigmoid() - 0.5) * 2.0,
+            nan=0.0,
+            posinf=1.0,
+            neginf=-1.0,
+        )
 
         # Chuẩn hóa tọa độ điểm truy vấn theo kích thước ảnh để tránh phụ thuộc độ phân giải tuyệt đối.
         img_shape = samples.tensors.shape[-2:]
@@ -148,7 +153,7 @@ class BasePETCount(nn.Module):
             outputs_offsets[...,0] /= (img_h / 256)
             outputs_offsets[...,1] /= (img_w / 256)
 
-        outputs_points = outputs_offsets[-1] + points_queries
+        outputs_points = torch.nan_to_num(outputs_offsets[-1] + points_queries, nan=0.0, posinf=2.0, neginf=-1.0)
         out = {'pred_logits': outputs_class[-1], 'pred_points': outputs_points, 'img_shape': img_shape, 'pred_offsets': outputs_offsets[-1]}
     
         out['points_queries'] = points_queries
@@ -211,20 +216,56 @@ class PET(nn.Module):
         self.quadtree_sparse = BasePETCount(backbone, num_classes, quadtree_layer='sparse', args=args, transformer=transformer)
         self.quadtree_dense = BasePETCount(backbone, num_classes, quadtree_layer='dense', args=args, transformer=transformer)
 
+    @staticmethod
+    def _prepare_outputs_for_loss(outputs):
+        prepared_outputs = dict(outputs)
+        if 'pred_logits' in prepared_outputs:
+            prepared_outputs['pred_logits'] = torch.nan_to_num(
+                prepared_outputs['pred_logits'].float(),
+                nan=0.0,
+                posinf=20.0,
+                neginf=-20.0,
+            )
+        if 'pred_points' in prepared_outputs:
+            prepared_outputs['pred_points'] = torch.nan_to_num(
+                prepared_outputs['pred_points'].float(),
+                nan=0.0,
+                posinf=2.0,
+                neginf=-1.0,
+            )
+        if 'pred_offsets' in prepared_outputs:
+            prepared_outputs['pred_offsets'] = torch.nan_to_num(
+                prepared_outputs['pred_offsets'].float(),
+                nan=0.0,
+                posinf=1.0,
+                neginf=-1.0,
+            )
+        if 'points_queries' in prepared_outputs:
+            prepared_outputs['points_queries'] = prepared_outputs['points_queries'].float()
+        return prepared_outputs
+
+    @staticmethod
+    def _collect_target_density(targets, device):
+        density_values = [target['density'].reshape(-1)[0] for target in targets]
+        return torch.stack(density_values).to(device=device, dtype=torch.float32)
+
     def compute_loss(self, outputs, criterion, targets, epoch, samples):
         """
         Compute loss, including:
             - point query loss (Eq. (3) in the paper)
             - quadtree splitter loss (Eq. (4) in the paper)
         """
-        output_sparse, output_dense = outputs['sparse'], outputs['dense']
+        output_sparse = self._prepare_outputs_for_loss(outputs['sparse'])
+        output_dense = self._prepare_outputs_for_loss(outputs['dense'])
         weight_dict = criterion.weight_dict
         warmup_ep = 5
+        split_map_sparse = outputs['split_map_sparse'].float()
+        split_map_dense = outputs['split_map_dense'].float()
 
         # Tính tổng loss cho các nhánh để tối ưu mô hình theo mục tiêu huấn luyện đã định nghĩa.
         if epoch >= warmup_ep:
-            loss_dict_sparse = criterion(output_sparse, targets, div=outputs['split_map_sparse'])
-            loss_dict_dense = criterion(output_dense, targets, div=outputs['split_map_dense'])
+            loss_dict_sparse = criterion(output_sparse, targets, div=split_map_sparse)
+            loss_dict_dense = criterion(output_dense, targets, div=split_map_dense)
         else:
             loss_dict_sparse = criterion(output_sparse, targets)
             loss_dict_dense = criterion(output_dense, targets)
@@ -252,7 +293,7 @@ class PET(nn.Module):
         weight_dict.update(weight_dict_dense)
 
         # Tính loss cho bộ tách quadtree nhằm học quyết định chia vùng hiệu quả.
-        den = torch.tensor([target['density'] for target in targets])   # crowd density
+        den = self._collect_target_density(targets, outputs['split_map_raw'].device)   # crowd density
         bs = len(den)
         ds_idx = den < 2 * self.quadtree_sparse.pq_stride   # dense regions index
         ds_div = outputs['split_map_raw'][ds_idx]
@@ -316,7 +357,7 @@ class PET(nn.Module):
         bs, _, src_h, src_w = src.shape
         sp_h, sp_w = src_h, src_w
         ds_h, ds_w = int(src_h * 2), int(src_w * 2)
-        split_map = self.quadtree_splitter(encode_src)        
+        split_map = torch.nan_to_num(self.quadtree_splitter(encode_src), nan=0.5, posinf=1.0, neginf=0.0)
         split_map_dense = F.interpolate(split_map, (ds_h, ds_w)).reshape(bs, -1)
         split_map_sparse = 1 - F.interpolate(split_map, (sp_h, sp_w)).reshape(bs, -1)
         
@@ -415,6 +456,39 @@ class SetCriterion(nn.Module):
         empty_weight[0] = self.eos_coef    # coefficient for non-object background points
         self.register_buffer('empty_weight', empty_weight)
         self.div_thrs_dict = {8: 0.0, 4:0.5}
+
+    @staticmethod
+    def _collect_target_density(targets, device):
+        density_values = [target['density'].reshape(-1)[0] for target in targets]
+        return torch.stack(density_values).to(device=device, dtype=torch.float32)
+
+    @staticmethod
+    def _sanitize_outputs(outputs):
+        sanitized_outputs = dict(outputs)
+        if 'pred_logits' in sanitized_outputs:
+            sanitized_outputs['pred_logits'] = torch.nan_to_num(
+                sanitized_outputs['pred_logits'].float(),
+                nan=0.0,
+                posinf=20.0,
+                neginf=-20.0,
+            )
+        if 'pred_points' in sanitized_outputs:
+            sanitized_outputs['pred_points'] = torch.nan_to_num(
+                sanitized_outputs['pred_points'].float(),
+                nan=0.0,
+                posinf=2.0,
+                neginf=-1.0,
+            )
+        if 'pred_offsets' in sanitized_outputs:
+            sanitized_outputs['pred_offsets'] = torch.nan_to_num(
+                sanitized_outputs['pred_offsets'].float(),
+                nan=0.0,
+                posinf=1.0,
+                neginf=-1.0,
+            )
+        if 'points_queries' in sanitized_outputs:
+            sanitized_outputs['points_queries'] = sanitized_outputs['points_queries'].float()
+        return sanitized_outputs
     
     def loss_labels(self, outputs, targets, indices, num_points, log=True, **kwargs):
         """
@@ -431,7 +505,7 @@ class SetCriterion(nn.Module):
         # Tính thành phần loss phân lớp cho truy vấn điểm hoặc bản đồ tách vùng.
         if 'div' in kwargs:
             # Lấy chỉ số ảnh thuộc nhóm sparse/dense để áp dụng loss theo từng loại mẫu.
-            den = torch.tensor([target['density'] for target in targets])
+            den = self._collect_target_density(targets, src_logits.device)
             den_sort = torch.sort(den)[1]
             ds_idx = den_sort[:len(den_sort)//2]
             sp_idx = den_sort[len(den_sort)//2:]
@@ -484,7 +558,7 @@ class SetCriterion(nn.Module):
 
         if 'div' in kwargs:
             # Tách chỉ số mẫu theo sparse/dense để xử lý loss theo từng nhánh.
-            den = torch.tensor([target['density'] for target in targets])
+            den = self._collect_target_density(targets, src_points.device)
             den_sort = torch.sort(den)[1]
             img_ds_idx = den_sort[:len(den_sort)//2]
             img_sp_idx = den_sort[len(den_sort)//2:]
@@ -546,6 +620,7 @@ class SetCriterion(nn.Module):
                       The expected keys in each dict depends on the losses applied, see each loss' doc
         """
         # Lấy kết quả matching giữa output lớp cuối và ground-truth để tính loss chính xác.
+        outputs = self._sanitize_outputs(outputs)
         indices = self.matcher(outputs, targets)
 
         # Tính số điểm mục tiêu trung bình trên toàn bộ tiến trình để chuẩn hóa thang loss.

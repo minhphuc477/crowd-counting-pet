@@ -3,7 +3,6 @@ Train and eval functions used in main.py
 """
 import math
 import os
-import sys
 from contextlib import nullcontext
 from typing import Iterable
 import numpy as np
@@ -15,6 +14,10 @@ import torch.nn.functional as F
 
 import util.misc as utils
 from util.misc import NestedTensor
+
+
+class NonFiniteTrainingError(RuntimeError):
+    pass
 
 
 class DeNormalize(object):
@@ -121,9 +124,12 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
         loss_to_backward = losses_reduced_scaled / accum_iter
 
         if not math.isfinite(loss_value):
-            print("Loss is {}, stopping training".format(loss_value))
-            print(loss_dict_reduced)
-            sys.exit(1)
+            optimizer.zero_grad(set_to_none=True)
+            raise NonFiniteTrainingError(
+                "non-finite loss at epoch {} step {}: {} | reduced_losses={}".format(
+                    epoch, step, loss_value, loss_dict_reduced
+                )
+            )
 
         if use_amp and scaler is not None:
             scaler.scale(loss_to_backward).backward()
