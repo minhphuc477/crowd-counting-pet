@@ -269,30 +269,37 @@ class PET(nn.Module):
         split_map_sparse = outputs['split_map_sparse'].float()
         split_map_dense = outputs['split_map_dense'].float()
 
-        def _soft_count(branch_outputs):
+        def _soft_count(branch_outputs, branch_mask=None, mask_threshold=0.5):
             if branch_outputs is None or 'pred_logits' not in branch_outputs:
                 return None
             count_scores = torch.softmax(branch_outputs['pred_logits'].float(), -1)[..., 1]
             batch_size = len(targets)
             if count_scores.dim() == 1:
                 count_scores = count_scores.unsqueeze(0)
-            if count_scores.shape[0] == batch_size:
-                return count_scores.sum(dim=1)
-            if count_scores.shape[1] == batch_size:
-                return count_scores.sum(dim=0)
-            return count_scores.reshape(batch_size, -1).sum(dim=1)
+            count_scores = count_scores.reshape(batch_size, -1)
+            if branch_mask is not None:
+                mask = (branch_mask > mask_threshold).reshape(batch_size, -1).to(
+                    device=count_scores.device,
+                    dtype=count_scores.dtype,
+                )
+                count_scores = count_scores * mask
+            return count_scores.sum(dim=1)
 
-        gt_counts = torch.tensor([float(len(target['points'])) for target in targets], device=split_map_sparse.device, dtype=torch.float32)
+        gt_counts = torch.tensor(
+            [float(len(target['points'])) for target in targets],
+            device=split_map_sparse.device,
+            dtype=torch.float32,
+        )
         count_loss = output_sparse['pred_logits'].sum() * 0.0
-        sparse_count = _soft_count(output_sparse)
-        dense_count = _soft_count(output_dense)
-        count_losses = []
-        if sparse_count is not None:
-            count_losses.append(F.smooth_l1_loss(sparse_count, gt_counts, reduction='mean'))
-        if dense_count is not None:
-            count_losses.append(F.smooth_l1_loss(dense_count, gt_counts, reduction='mean'))
-        if count_losses:
-            count_loss = sum(count_losses) / len(count_losses)
+        if self.count_loss_coef > 0:
+            sparse_count = _soft_count(output_sparse, split_map_sparse)
+            dense_count = _soft_count(output_dense, split_map_dense)
+            combined_count = 0.0
+            if sparse_count is not None:
+                combined_count = combined_count + sparse_count
+            if dense_count is not None:
+                combined_count = combined_count + dense_count
+            count_loss = F.smooth_l1_loss(combined_count, gt_counts, reduction='mean')
 
         # Tính tổng loss cho các nhánh để tối ưu mô hình theo mục tiêu huấn luyện đã định nghĩa.
         if epoch >= warmup_ep:
@@ -484,12 +491,12 @@ class PET(nn.Module):
         output_names = out_sparse.keys() if out_sparse is not None else out_dense.keys()
         for name in list(output_names):
             if 'pred' in name:
-                if index_dense is None:
-                    div_out[name] = out_sparse[name][index_sparse].unsqueeze(0)
-                elif index_sparse is None:
-                    div_out[name] = out_dense[name][index_dense].unsqueeze(0)
+                if out_dense is None:
+                    div_out[name] = out_sparse[name].unsqueeze(0)
+                elif out_sparse is None:
+                    div_out[name] = out_dense[name].unsqueeze(0)
                 else:
-                    div_out[name] = torch.cat([out_sparse[name][index_sparse].unsqueeze(0), out_dense[name][index_dense].unsqueeze(0)], dim=1)
+                    div_out[name] = torch.cat([out_sparse[name].unsqueeze(0), out_dense[name].unsqueeze(0)], dim=1)
             else:
                 div_out[name] = out_sparse[name] if out_sparse is not None else out_dense[name]
         div_out['split_map_raw'] = outputs['split_map_raw']

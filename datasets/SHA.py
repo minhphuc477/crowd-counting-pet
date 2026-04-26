@@ -50,7 +50,7 @@ class SHA(Dataset):
         return self.nSamples
 
     def __getitem__(self, index):
-        assert index <= len(self), 'index range error'
+        assert index < len(self), 'index range error'
 
         # Nạp ảnh và tập điểm ground-truth tương ứng cho từng mẫu.
         img_path = self.img_list[index]
@@ -86,7 +86,7 @@ class SHA(Dataset):
         # Lật ảnh ngẫu nhiên để giúp mô hình bền vững với biến đổi hình học.
         if random.random() > 0.5 and self.train and self.flip:
             img = torch.flip(img, dims=[2])
-            points[:, 1] = self.patch_size - points[:, 1]
+            points[:, 1] = (img.shape[2] - 1) - points[:, 1]
 
         # Xây dựng cấu trúc target chuẩn hóa để tính loss và huấn luyện mô hình ổn định.
         target = {}
@@ -120,7 +120,7 @@ def random_crop(img, points, patch_size=256):
     start_w = random.randint(0, img.size(2) - patch_w) if img.size(2) > patch_w else 0
     end_h = start_h + patch_h
     end_w = start_w + patch_w
-    idx = (points[:, 0] >= start_h) & (points[:, 0] <= end_h) & (points[:, 1] >= start_w) & (points[:, 1] <= end_w)
+    idx = (points[:, 0] >= start_h) & (points[:, 0] < end_h) & (points[:, 1] >= start_w) & (points[:, 1] < end_w)
 
     # Cắt biên ảnh và lọc điểm ngoài vùng hợp lệ sau khi crop.
     result_img = img[:, start_h:end_h, start_w:end_w]
@@ -131,7 +131,12 @@ def random_crop(img, points, patch_size=256):
     # Resize patch về kích thước chuẩn để thống nhất batch đầu vào.
     imgH, imgW = result_img.shape[-2:]
     fH, fW = patch_h/imgH, patch_w/imgW
-    result_img = torch.nn.functional.interpolate(result_img.unsqueeze(0), (patch_h, patch_w)).squeeze(0)
+    result_img = torch.nn.functional.interpolate(
+        result_img.unsqueeze(0),
+        (patch_h, patch_w),
+        mode='bilinear',
+        align_corners=False,
+    ).squeeze(0)
     result_points[:, 0] *= fH
     result_points[:, 1] *= fW
     return result_img, result_points

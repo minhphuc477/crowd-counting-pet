@@ -5,7 +5,14 @@ from .backbone_convnextv2 import (
 )
 from .backbone_vgg import build_backbone_vgg
 
-build_backbone = build_backbone_convnextv2
+
+def build_backbone(args):
+    backbone_name = getattr(args, 'backbone', 'vgg16_bn')
+    if backbone_name == 'auto' or backbone_name.startswith('convnextv2_'):
+        return build_backbone_convnextv2(args)
+    if backbone_name.startswith('vgg'):
+        return build_backbone_vgg(args)
+    raise ValueError(f'Unsupported backbone: {backbone_name}')
 
 __all__ = [
     'build_backbone',

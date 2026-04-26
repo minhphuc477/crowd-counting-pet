@@ -16,8 +16,8 @@ def get_args_parser():
 
     # Nhóm tham số mô hình: cấu hình kiến trúc chính và các siêu tham số cốt lõi.
     # - Tham số cho backbone dùng để trích xuất đặc trưng thị giác ở nhiều mức.
-    parser.add_argument('--backbone', default='convnextv2_nano', type=str,
-                        help="Name of the ConvNeXt V2 backbone to use")
+    parser.add_argument('--backbone', default='vgg16_bn', type=str,
+                        help="Name of the backbone to use")
     parser.add_argument('--position_embedding', default='sine', type=str, choices=('sine', 'learned', 'fourier'),
                         help="Type of positional embedding to use on top of the image features")
     # - Tham số cho transformer encoder/decoder để mô hình hóa quan hệ không gian-ngữ cảnh.
@@ -172,9 +172,8 @@ def main(args):
             resume_checkpoint = torch.hub.load_state_dict_from_url(
                 args.resume, map_location='cpu', check_hash=True)
         else:
-            resume_checkpoint = torch.load(args.resume, map_location='cpu', weights_only=False)
-        if 'args' in resume_checkpoint and hasattr(resume_checkpoint['args'], 'backbone'):
-            args.backbone = resume_checkpoint['args'].backbone
+            resume_checkpoint = utils.load_checkpoint(args.resume, map_location='cpu')
+        utils.restore_args_from_checkpoint(args, resume_checkpoint)
         if 'best_threshold' in resume_checkpoint:
             args.inference_threshold = resume_checkpoint['best_threshold']
 
@@ -185,7 +184,7 @@ def main(args):
     model.to(device)
 
     # Nạp trọng số pretrained để suy luận/đánh giá với mô hình đã huấn luyện.
-    checkpoint = resume_checkpoint if resume_checkpoint is not None else torch.load(args.resume, map_location='cpu', weights_only=False)
+    checkpoint = resume_checkpoint if resume_checkpoint is not None else utils.load_checkpoint(args.resume, map_location='cpu')
     model.load_state_dict(checkpoint['model'])
     
     # Thực hiện giai đoạn đánh giá: chỉ suy luận và đo chất lượng mà không cập nhật trọng số.

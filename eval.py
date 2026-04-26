@@ -21,8 +21,8 @@ def get_args_parser():
 
     # Nhóm tham số mô hình: cấu hình kiến trúc chính và các siêu tham số cốt lõi.
     # - Tham số cho backbone dùng để trích xuất đặc trưng thị giác ở nhiều mức.
-    parser.add_argument('--backbone', default='auto', type=str,
-                        help="Name of the ConvNeXt V2 backbone to use")
+    parser.add_argument('--backbone', default='vgg16_bn', type=str,
+                        help="Name of the backbone to use")
     parser.add_argument('--position_embedding', default='sine', type=str, choices=('sine', 'learned', 'fourier'),
                         help="Type of positional embedding to use on top of the image features")
     # - Tham số cho transformer encoder/decoder để mô hình hóa quan hệ không gian-ngữ cảnh.
@@ -64,7 +64,7 @@ def get_args_parser():
     parser.add_argument('--inference_threshold', default=0.5, type=float)
     parser.add_argument('--threshold_sweep', action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument('--threshold_min', default=0.30, type=float)
-    parser.add_argument('--threshold_max', default=0.70, type=float)
+    parser.add_argument('--threshold_max', default=0.95, type=float)
     parser.add_argument('--threshold_step', default=0.025, type=float)
     parser.add_argument('--deterministic', action=argparse.BooleanOptionalAction, default=True)
 
@@ -103,9 +103,8 @@ def main(args):
             resume_checkpoint = torch.hub.load_state_dict_from_url(
                 args.resume, map_location='cpu', check_hash=True)
         else:
-            resume_checkpoint = torch.load(args.resume, map_location='cpu', weights_only=False)
-        if 'args' in resume_checkpoint and hasattr(resume_checkpoint['args'], 'backbone'):
-            args.backbone = resume_checkpoint['args'].backbone
+            resume_checkpoint = utils.load_checkpoint(args.resume, map_location='cpu')
+        utils.restore_args_from_checkpoint(args, resume_checkpoint)
         if 'best_threshold' in resume_checkpoint and not args.threshold_sweep:
             args.inference_threshold = resume_checkpoint['best_threshold']
 

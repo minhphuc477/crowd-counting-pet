@@ -24,6 +24,18 @@ except ImportError:
     optuna = None
 
 
+RESUME_ARG_FIELDS = utils.CHECKPOINT_MODEL_ARG_FIELDS + (
+    'lr',
+    'lr_backbone',
+    'batch_size',
+    'weight_decay',
+    'clip_max_norm',
+    'accum_iter',
+    'use_amp',
+    'eval_freq',
+)
+
+
 def get_args_parser():
     arg_parser = argparse.ArgumentParser('Set Point Query Transformer', add_help=False)
 
@@ -38,8 +50,8 @@ def get_args_parser():
 
     # Nhóm tham số mô hình: cấu hình kiến trúc chính và các siêu tham số cốt lõi.
     # - Tham số cho backbone dùng để trích xuất đặc trưng thị giác ở nhiều mức.
-    arg_parser.add_argument('--backbone', default='auto', type=str,
-                        help="Name of the ConvNeXt V2 backbone to use")
+    arg_parser.add_argument('--backbone', default='vgg16_bn', type=str,
+                        help="Name of the backbone to use")
     arg_parser.add_argument('--position_embedding', default='sine', type=str, choices=('sine', 'learned', 'fourier'),
                         help="Type of positional embedding to use on top of the image features")
     # - Tham số cho transformer encoder/decoder để mô hình hóa quan hệ không gian-ngữ cảnh.
@@ -81,13 +93,13 @@ def get_args_parser():
                         help='start epoch')
     arg_parser.add_argument('--num_workers', default=2, type=int)
     arg_parser.add_argument('--eval_freq', default=5, type=int)
-    arg_parser.add_argument('--target_mae', default=40.0, type=float,
-                        help='stop early once validation MAE reaches this target')
+    arg_parser.add_argument('--target_mae', default=math.inf, type=float,
+                        help='stop early once validation MAE reaches this target; default disables early stopping')
     arg_parser.add_argument('--patch_size', default=256, type=int,
                         help='training crop size for SHA')
     arg_parser.add_argument('--inference_threshold', default=0.5, type=float,
                         help='confidence threshold used to count predicted points at inference')
-    arg_parser.add_argument('--threshold_sweep', action=argparse.BooleanOptionalAction, default=True,
+    arg_parser.add_argument('--threshold_sweep', action=argparse.BooleanOptionalAction, default=False,
                         help='sweep validation count thresholds and keep the best one instead of using a fixed threshold')
     arg_parser.add_argument('--threshold_min', default=0.30, type=float,
                         help='minimum threshold value to consider during validation sweep')
@@ -97,15 +109,15 @@ def get_args_parser():
                         help='step size for validation threshold sweep')
     arg_parser.add_argument('--deterministic', action=argparse.BooleanOptionalAction, default=True,
                         help='enable deterministic training and data loading')
-    arg_parser.add_argument('--split_warmup_epochs', default=1, type=int,
+    arg_parser.add_argument('--split_warmup_epochs', default=5, type=int,
                         help='epochs to wait before enabling quadtree splitter loss')
-    arg_parser.add_argument('--count_loss_coef', default=0.01, type=float,
+    arg_parser.add_argument('--count_loss_coef', default=0.0, type=float,
                         help='weight for the soft count consistency loss')
     arg_parser.add_argument('--accum_iter', default=1, type=int,
                         help='gradient accumulation steps')
     arg_parser.add_argument('--disable_amp', action='store_true',
                         help='disable automatic mixed precision even on CUDA')
-    arg_parser.add_argument('--search_trials', default=4, type=int,
+    arg_parser.add_argument('--search_trials', default=0, type=int,
                         help='number of hyperparameter-search trials to run before final training; 0 disables search')
     arg_parser.add_argument('--search_epochs', default=8, type=int,
                         help='epochs per hyperparameter-search trial')
@@ -178,13 +190,6 @@ def apply_rtx_5070_ti_profile(args, device):
     args.dim_feedforward = max(args.dim_feedforward, 768)
     args.dec_layers = max(args.dec_layers, 3)
     args.accum_iter = max(args.accum_iter, 2)
-    args.patch_size = max(getattr(args, 'patch_size', 256), 384)
-    args.inference_threshold = 0.45
-    args.eval_freq = 1
-    args.target_mae = min(args.target_mae, 40.0)
-    args.split_warmup_epochs = min(getattr(args, 'split_warmup_epochs', 1), 1)
-    args.count_loss_coef = max(float(getattr(args, 'count_loss_coef', 0.01)), 0.01)
-    args.search_trials = max(args.search_trials, 6)
     args.use_amp = should_use_amp(args, device)
     args.enc_win_list = [(32, 16), (32, 16), (16, 8), (16, 8), (8, 4)]
     args.dec_win_sizes = {
@@ -208,8 +213,6 @@ def resolve_auto_tuning_defaults(args, device):
                 'sparse': [16, 8],
                 'dense': [8, 4],
             })
-        args.eval_freq = 1
-        args.search_trials = max(args.search_trials, 4)
         args.accum_iter = 2 if args.batch_size <= 2 else max(1, args.accum_iter)
         args.use_amp = should_use_amp(args, device)
         print('[auto_tune] backbone=%s batch_size=%s lr=%s lr_backbone=%s accum_iter=%s amp=%s search_trials=%s' % (
@@ -218,8 +221,8 @@ def resolve_auto_tuning_defaults(args, device):
     else:
         args.accum_iter = max(1, args.accum_iter)
         args.use_amp = should_use_amp(args, device)
-        args.split_warmup_epochs = getattr(args, 'split_warmup_epochs', 1)
-        args.count_loss_coef = getattr(args, 'count_loss_coef', 0.01)
+        args.split_warmup_epochs = getattr(args, 'split_warmup_epochs', 5)
+        args.count_loss_coef = getattr(args, 'count_loss_coef', 0.0)
 
 
 def build_dataloaders(dataset_train, dataset_val, args):
@@ -374,7 +377,7 @@ def run_training(args, device, dataset_train, dataset_val, total_epochs, output_
             best_epoch = checkpoint.get('best_epoch', best_epoch)
             best_threshold = checkpoint.get('best_threshold', best_threshold)
             args.inference_threshold = best_threshold
-        if best_mae <= args.target_mae:
+        if math.isfinite(args.target_mae) and best_mae <= args.target_mae:
             print('[auto_tune] resume checkpoint already meets target_mae=%.2f (best_mae=%.2f); stopping.' % (
                 args.target_mae, best_mae
             ))
@@ -471,7 +474,7 @@ def run_training(args, device, dataset_train, dataset_val, total_epochs, output_
                     'best_threshold': best_threshold,
                 }, output_dir / 'best_checkpoint.pth')
 
-            if mae <= args.target_mae:
+            if math.isfinite(args.target_mae) and mae <= args.target_mae:
                 print('[auto_tune] target_mae=%.2f reached with mae=%.2f; stopping early.' % (
                     args.target_mae, mae
                 ))
@@ -591,15 +594,8 @@ def main(args):
             resume_checkpoint = torch.hub.load_state_dict_from_url(
                 args.resume, map_location='cpu', check_hash=True)
         else:
-            resume_checkpoint = torch.load(args.resume, map_location='cpu', weights_only=False)
-        if 'args' in resume_checkpoint:
-            checkpoint_args = resume_checkpoint['args']
-            if hasattr(checkpoint_args, 'backbone'):
-                args.backbone = checkpoint_args.backbone
-            if hasattr(checkpoint_args, 'batch_size'):
-                args.batch_size = checkpoint_args.batch_size
-            if hasattr(checkpoint_args, 'lr_backbone'):
-                args.lr_backbone = checkpoint_args.lr_backbone
+            resume_checkpoint = utils.load_checkpoint(args.resume, map_location='cpu')
+        utils.restore_args_from_checkpoint(args, resume_checkpoint, fields=RESUME_ARG_FIELDS)
         if 'best_threshold' in resume_checkpoint:
             args.inference_threshold = resume_checkpoint['best_threshold']
 

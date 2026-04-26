@@ -3,6 +3,7 @@ Misc functions, including distributed helpers.
 
 Mostly copy-paste from torchvision references.
 """
+import copy
 import os
 import subprocess
 import time
@@ -24,6 +25,48 @@ if float(torchvision.__version__.split(".")[1]) < 7.0:
 
 def _distributed_device():
     return torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+
+CHECKPOINT_MODEL_ARG_FIELDS = (
+    'backbone',
+    'position_embedding',
+    'dec_layers',
+    'dim_feedforward',
+    'hidden_dim',
+    'dropout',
+    'nheads',
+    'set_cost_class',
+    'set_cost_point',
+    'ce_loss_coef',
+    'point_loss_coef',
+    'eos_coef',
+    'patch_size',
+    'split_warmup_epochs',
+    'count_loss_coef',
+    'enc_win_list',
+    'dec_win_sizes',
+)
+
+
+def load_checkpoint(path, map_location='cpu'):
+    try:
+        return torch.load(path, map_location=map_location, weights_only=False)
+    except TypeError:
+        return torch.load(path, map_location=map_location)
+
+
+def restore_args_from_checkpoint(args, checkpoint, fields=None):
+    checkpoint_args = checkpoint.get('args') if isinstance(checkpoint, dict) else None
+    if checkpoint_args is None:
+        return args
+
+    if fields is None:
+        fields = CHECKPOINT_MODEL_ARG_FIELDS
+
+    for field in fields:
+        if hasattr(checkpoint_args, field):
+            setattr(args, field, copy.deepcopy(getattr(checkpoint_args, field)))
+    return args
 
 
 class SmoothedValue(object):
