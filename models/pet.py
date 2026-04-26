@@ -1,6 +1,8 @@
 """
 PET model and criterion classes
 """
+import math
+
 import torch
 import torch.nn.functional as F
 from torch import nn
@@ -23,12 +25,89 @@ class BasePETCount(nn.Module):
         self.backbone = backbone
         self.transformer = kwargs['transformer']
         hidden_dim = args.hidden_dim
+        self.hidden_dim = hidden_dim
 
         self.class_embed = nn.Linear(hidden_dim, num_classes + 1)
         self.coord_embed = MLP(hidden_dim, hidden_dim, 2, 3)
 
         self.pq_stride = args.sparse_stride if quadtree_layer == 'sparse' else args.dense_stride
         self.feat_name = '8x' if quadtree_layer == 'sparse' else '4x'
+        self.enhanced_point_query = bool(getattr(args, 'enhanced_point_query', False))
+        if self.enhanced_point_query:
+            context_kernel = max(1, int(getattr(args, 'query_context_kernel', 3)))
+            if context_kernel % 2 == 0:
+                context_kernel += 1
+            self.query_context_conv = nn.Sequential(
+                nn.Conv2d(hidden_dim, hidden_dim, kernel_size=context_kernel, padding=context_kernel // 2, groups=hidden_dim),
+                nn.Conv2d(hidden_dim, hidden_dim, kernel_size=1),
+                nn.GELU(),
+            )
+            self.query_content_fuse = nn.Sequential(
+                nn.Conv2d(hidden_dim * 3, hidden_dim, kernel_size=1),
+                nn.GELU(),
+                nn.Conv2d(hidden_dim, hidden_dim, kernel_size=1),
+            )
+            self.query_pos_fuse = nn.Sequential(
+                nn.Conv2d(hidden_dim * 2, hidden_dim, kernel_size=1),
+                nn.GELU(),
+                nn.Conv2d(hidden_dim, hidden_dim, kernel_size=1),
+            )
+            self.query_content_norm = nn.LayerNorm(hidden_dim)
+            self.query_pos_norm = nn.LayerNorm(hidden_dim)
+            self.branch_content_bias = nn.Parameter(torch.zeros(1, hidden_dim, 1, 1))
+            self.branch_pos_bias = nn.Parameter(torch.zeros(1, hidden_dim, 1, 1))
+
+    @staticmethod
+    def _apply_spatial_layer_norm(feature_map, norm_layer):
+        feature_map = feature_map.permute(0, 2, 3, 1)
+        feature_map = norm_layer(feature_map)
+        return feature_map.permute(0, 3, 1, 2).contiguous()
+
+    def _build_point_query_prior(self, points_queries, img_h, img_w, h, w, device, dtype):
+        points_queries = points_queries.float().to(device=device)
+        scale = 2 * math.pi
+        num_pos_feats = max(1, self.hidden_dim // 2)
+        dim_t = torch.arange(num_pos_feats, dtype=dtype, device=device)
+        dim_t = 10000 ** (2 * (dim_t // 2) / num_pos_feats)
+
+        pos_y = (points_queries[:, 0] / max(float(img_h), 1.0))[:, None] * scale / dim_t
+        pos_x = (points_queries[:, 1] / max(float(img_w), 1.0))[:, None] * scale / dim_t
+        pos_y = torch.stack((pos_y[:, 0::2].sin(), pos_y[:, 1::2].cos()), dim=2).flatten(1)
+        pos_x = torch.stack((pos_x[:, 0::2].sin(), pos_x[:, 1::2].cos()), dim=2).flatten(1)
+        coord_prior = torch.cat((pos_y, pos_x), dim=1)
+        if coord_prior.shape[1] < self.hidden_dim:
+            coord_prior = F.pad(coord_prior, (0, self.hidden_dim - coord_prior.shape[1]))
+        coord_prior = coord_prior[:, :self.hidden_dim]
+        return coord_prior.t().reshape(1, self.hidden_dim, h, w)
+
+    def _enhance_query_tensors(self, query_embed, query_feats, src, points_queries, shift_y_down, shift_x_down, samples):
+        if not self.enhanced_point_query:
+            return query_embed, query_feats
+
+        bs, c, h, w = query_feats.shape
+        img_h, img_w = samples.tensors.shape[-2:]
+        coord_prior = self._build_point_query_prior(
+            points_queries,
+            img_h,
+            img_w,
+            h,
+            w,
+            device=query_feats.device,
+            dtype=query_feats.dtype,
+        ).expand(bs, -1, -1, -1)
+        context_map = self.query_context_conv(src)
+        local_context = context_map[:, :, shift_y_down, shift_x_down].view(bs, c, h, w)
+
+        query_feats = query_feats + self.query_content_fuse(
+            torch.cat([query_feats, local_context, coord_prior], dim=1)
+        ) + self.branch_content_bias
+        query_embed = query_embed + self.query_pos_fuse(
+            torch.cat([query_embed, coord_prior], dim=1)
+        ) + self.branch_pos_bias
+
+        query_feats = self._apply_spatial_layer_norm(query_feats, self.query_content_norm)
+        query_embed = self._apply_spatial_layer_norm(query_embed, self.query_pos_norm)
+        return query_embed, query_feats
     
     def points_queris_embed(self, samples, stride=8, src=None, **kwargs):
         """
@@ -40,12 +119,13 @@ class BasePETCount(nn.Module):
 
         # Lấy kích thước ảnh/feature map hiện tại để tính chỉ số và phép biến đổi không gian chính xác.
         input = samples.tensors
-        image_shape = torch.tensor(input.shape[2:])
-        shape = (image_shape + stride//2 -1) // stride
+        img_h, img_w = input.shape[2:]
+        shape_h = (img_h + stride // 2 - 1) // stride
+        shape_w = (img_w + stride // 2 - 1) // stride
 
         # Sinh tập điểm truy vấn ban đầu theo lưới để quét không gian ảnh một cách hệ thống.
-        shift_x = ((torch.arange(0, shape[1]) + 0.5) * stride).long()
-        shift_y = ((torch.arange(0, shape[0]) + 0.5) * stride).long()
+        shift_x = ((torch.arange(0, shape_w, device=input.device) + 0.5) * stride).long()
+        shift_y = ((torch.arange(0, shape_h, device=input.device) + 0.5) * stride).long()
         shift_y, shift_x = torch.meshgrid(shift_y, shift_x, indexing='ij')
         points_queries = torch.vstack([shift_y.flatten(), shift_x.flatten()]).permute(1,0) # 2xN --> Nx2
         h, w = shift_x.shape
@@ -59,6 +139,15 @@ class BasePETCount(nn.Module):
         shift_y_down, shift_x_down = points_queries[:, 0] // stride, points_queries[:, 1] // stride
         query_feats = src[:, :, shift_y_down,shift_x_down]
         query_feats = query_feats.view(bs, c, h, w)
+        query_embed, query_feats = self._enhance_query_tensors(
+            query_embed,
+            query_feats,
+            src,
+            points_queries,
+            shift_y_down,
+            shift_x_down,
+            samples,
+        )
 
         return query_embed, points_queries, query_feats
     
@@ -72,12 +161,13 @@ class BasePETCount(nn.Module):
 
         # Lấy kích thước ảnh/feature map hiện tại để tính chỉ số và phép biến đổi không gian chính xác.
         input = samples.tensors
-        image_shape = torch.tensor(input.shape[2:])
-        shape = (image_shape + stride//2 -1) // stride
+        img_h, img_w = input.shape[2:]
+        shape_h = (img_h + stride // 2 - 1) // stride
+        shape_w = (img_w + stride // 2 - 1) // stride
 
         # Sinh các điểm truy vấn theo bước stride hiện tại để chuẩn bị cho bước truy xuất đặc trưng.
-        shift_x = ((torch.arange(0, shape[1]) + 0.5) * stride).long()
-        shift_y = ((torch.arange(0, shape[0]) + 0.5) * stride).long()
+        shift_x = ((torch.arange(0, shape_w, device=input.device) + 0.5) * stride).long()
+        shift_y = ((torch.arange(0, shape_h, device=input.device) + 0.5) * stride).long()
         shift_y, shift_x = torch.meshgrid(shift_y, shift_x, indexing='ij')
         points_queries = torch.vstack([shift_y.flatten(), shift_x.flatten()]).permute(1,0) # 2xN --> Nx2
         h, w = shift_x.shape
@@ -89,11 +179,20 @@ class BasePETCount(nn.Module):
         # Truy xuất đặc trưng cho điểm truy vấn bằng cách ánh xạ gần nhất trên feature map.
         shift_y_down, shift_x_down = points_queries[:, 0] // stride, points_queries[:, 1] // stride
         query_feats = src[:, :, shift_y_down, shift_x_down]
+        query_feats = query_feats.view(bs, c, h, w)
+        query_embed = query_embed.reshape(bs, c, h, w)
+        query_embed, query_feats = self._enhance_query_tensors(
+            query_embed,
+            query_feats,
+            src,
+            points_queries,
+            shift_y_down,
+            shift_x_down,
+            samples,
+        )
         
         # Chia tensor thành các cửa sổ cục bộ để giảm chi phí attention và tăng tính song song.
-        query_embed = query_embed.reshape(bs, c, h, w)
         points_queries = points_queries.reshape(h, w, 2).permute(2, 0, 1).unsqueeze(0)
-        query_feats = query_feats.reshape(bs, c, h, w)
 
         dec_win_w, dec_win_h = kwargs['dec_win_size']
         query_embed_win = window_partition(query_embed, window_size_h=dec_win_h, window_size_w=dec_win_w)

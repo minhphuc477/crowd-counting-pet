@@ -35,6 +35,9 @@ CHECKPOINT_MODEL_ARG_FIELDS = (
     'hidden_dim',
     'dropout',
     'nheads',
+    'lr_scheduler',
+    'warmup_epochs',
+    'min_lr',
     'set_cost_class',
     'set_cost_point',
     'ce_loss_coef',
@@ -45,6 +48,26 @@ CHECKPOINT_MODEL_ARG_FIELDS = (
     'count_loss_coef',
     'enc_win_list',
     'dec_win_sizes',
+    'use_shifted_windows',
+    'enhanced_point_query',
+    'query_context_kernel',
+)
+
+UPGRADE_COMPATIBLE_MISSING_KEY_PREFIXES = (
+    'quadtree_sparse.query_context_conv.',
+    'quadtree_sparse.query_content_fuse.',
+    'quadtree_sparse.query_pos_fuse.',
+    'quadtree_sparse.query_content_norm.',
+    'quadtree_sparse.query_pos_norm.',
+    'quadtree_sparse.branch_content_bias',
+    'quadtree_sparse.branch_pos_bias',
+    'quadtree_dense.query_context_conv.',
+    'quadtree_dense.query_content_fuse.',
+    'quadtree_dense.query_pos_fuse.',
+    'quadtree_dense.query_content_norm.',
+    'quadtree_dense.query_pos_norm.',
+    'quadtree_dense.branch_content_bias',
+    'quadtree_dense.branch_pos_bias',
 )
 
 
@@ -67,6 +90,25 @@ def restore_args_from_checkpoint(args, checkpoint, fields=None):
         if hasattr(checkpoint_args, field):
             setattr(args, field, copy.deepcopy(getattr(checkpoint_args, field)))
     return args
+
+
+def load_model_state(model, state_dict, strict=True):
+    if not strict:
+        return model.load_state_dict(state_dict, strict=False)
+
+    incompatible = model.load_state_dict(state_dict, strict=False)
+    missing_keys = [
+        key for key in incompatible.missing_keys
+        if not key.startswith(UPGRADE_COMPATIBLE_MISSING_KEY_PREFIXES)
+    ]
+    if missing_keys or incompatible.unexpected_keys:
+        raise RuntimeError(
+            'Checkpoint/model mismatch. Missing keys: {} | Unexpected keys: {}'.format(
+                missing_keys or incompatible.missing_keys,
+                incompatible.unexpected_keys,
+            )
+        )
+    return incompatible
 
 
 class SmoothedValue(object):

@@ -28,6 +28,7 @@ class WinEncoderTransformer(nn.Module):
 
         self.enc_win_list = kwargs['enc_win_list']
         self.return_intermediate = kwargs['return_intermediate'] if 'return_intermediate' in kwargs else False           
+        self.use_shifted_windows = kwargs.get('use_shifted_windows', True)
 
     def _reset_parameters(self):
         for p in self.parameters():
@@ -40,15 +41,30 @@ class WinEncoderTransformer(nn.Module):
         memeory_list = []
         memeory = src
         for idx, enc_win_size in enumerate(self.enc_win_list):
-            # Chia đặc trưng đầu vào encoder thành các cửa sổ cục bộ nhằm giảm chi phí attention.
             enc_win_w, enc_win_h = enc_win_size
-            memeory_win, pos_embed_win, mask_win  = enc_win_partition(memeory, pos_embed, mask, enc_win_h, enc_win_w)            
+            shift_h = enc_win_h // 2 if self.use_shifted_windows and idx % 2 == 1 and enc_win_h > 1 else 0
+            shift_w = enc_win_w // 2 if self.use_shifted_windows and idx % 2 == 1 and enc_win_w > 1 else 0
+            memeory_win, pos_embed_win, mask_win = enc_win_partition(
+                memeory,
+                pos_embed,
+                mask,
+                enc_win_h,
+                enc_win_w,
+                shift_h=shift_h,
+                shift_w=shift_w,
+            )
 
-            # Lan truyền xuôi qua encoder để tích hợp ngữ cảnh cho feature map.
             output = self.encoder.single_forward(memeory_win, src_key_padding_mask=mask_win, pos=pos_embed_win, layer_idx=idx)
 
-            # Ghép lại các cửa sổ encoder về bố cục không gian ban đầu.
-            memeory = enc_win_partition_reverse(output, enc_win_h, enc_win_w, h, w)
+            memeory = enc_win_partition_reverse(
+                output,
+                enc_win_h,
+                enc_win_w,
+                h,
+                w,
+                shift_h=shift_h,
+                shift_w=shift_w,
+            )
             if self.return_intermediate:
                 memeory_list.append(memeory)        
         memory_ = memeory_list if self.return_intermediate else memeory
@@ -325,6 +341,7 @@ def build_encoder(args, **kwargs):
         nhead=args.nheads,
         dim_feedforward=args.dim_feedforward,
         num_encoder_layers=args.enc_layers,
+        use_shifted_windows=getattr(args, 'use_shifted_windows', True),
         **kwargs,
     )
 

@@ -111,7 +111,7 @@ What changed:
 - `--search_trials` default changed from `4` to `0`.
 - `--split_warmup_epochs` default changed from `1` back to `5`.
 - `--target_mae` default now disables early stopping unless explicitly set.
-- The 5070 Ti auto profile no longer force-enables extra search/threshold/early-stop/count-loss behavior.
+- The dedicated `5070 Ti` auto profile was removed, so `--backbone auto` goes back to the generic memory-based ConvNeXt path.
 
 Why:
 

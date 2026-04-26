@@ -13,7 +13,7 @@ from datasets import build_dataset
 import util.misc as utils
 from engine import evaluate
 from models import build_model
-from models.backbones import resolve_convnextv2_backbone_name
+from models.backbones import resolve_timm_backbone_name
 
 
 def get_args_parser():
@@ -108,8 +108,8 @@ def main(args):
         if 'best_threshold' in resume_checkpoint and not args.threshold_sweep:
             args.inference_threshold = resume_checkpoint['best_threshold']
 
-    if args.backbone == 'auto':
-        args.backbone = resolve_convnextv2_backbone_name(args.backbone)
+    if args.backbone in {'auto', 'auto_swin'}:
+        args.backbone = resolve_timm_backbone_name(args.backbone)
 
     # Khởi tạo toàn bộ mô hình theo cấu hình hiện tại để sẵn sàng cho huấn luyện hoặc suy luận.
     model, criterion = build_model(args)
@@ -139,7 +139,7 @@ def main(args):
     # Nạp trọng số pretrained để suy luận/đánh giá với mô hình đã huấn luyện.
     if resume_checkpoint is not None:
         checkpoint = resume_checkpoint
-        model_without_ddp.load_state_dict(checkpoint['model'])        
+        utils.load_model_state(model_without_ddp, checkpoint['model'])
         cur_epoch = checkpoint['epoch'] if 'epoch' in checkpoint else 0
     
     # Thực hiện giai đoạn đánh giá: chỉ suy luận và đo chất lượng mà không cập nhật trọng số.

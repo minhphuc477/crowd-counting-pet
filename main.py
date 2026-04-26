@@ -16,7 +16,7 @@ import util.misc as utils
 from datasets import build_dataset
 from engine import NonFiniteTrainingError, evaluate, train_one_epoch
 from models import build_model
-from models.backbones import get_convnextv2_training_defaults, resolve_convnextv2_backbone_name
+from models.backbones import get_timm_training_defaults, resolve_timm_backbone_name
 
 try:
     import optuna
@@ -45,6 +45,13 @@ def get_args_parser():
     arg_parser.add_argument('--batch_size', default=8, type=int)
     arg_parser.add_argument('--weight_decay', default=1e-4, type=float)
     arg_parser.add_argument('--epochs', default=1500, type=int)
+    arg_parser.add_argument('--lr_scheduler', default='warmup_cosine', type=str,
+                        choices=('warmup_cosine', 'cosine', 'step'),
+                        help='learning-rate schedule to use')
+    arg_parser.add_argument('--warmup_epochs', default=5, type=int,
+                        help='number of warmup epochs used by warmup_cosine')
+    arg_parser.add_argument('--min_lr', default=1e-7, type=float,
+                        help='minimum learning rate reached by cosine annealing')
     arg_parser.add_argument('--clip_max_norm', default=0.1, type=float,
                         help='gradient clipping max norm')
 
@@ -65,6 +72,12 @@ def get_args_parser():
                         help="Dropout applied in the transformer")
     arg_parser.add_argument('--nheads', default=8, type=int,
                         help="Number of attention heads inside the transformer's attentions")
+    arg_parser.add_argument('--use_shifted_windows', action=argparse.BooleanOptionalAction, default=True,
+                        help='alternate shifted local windows in the PET context encoder')
+    arg_parser.add_argument('--enhanced_point_query', action=argparse.BooleanOptionalAction, default=False,
+                        help='fuse local context and explicit coordinate priors into point queries')
+    arg_parser.add_argument('--query_context_kernel', default=3, type=int,
+                        help='kernel size used by the enhanced point-query local-context block')
 
     # Nhóm tham số hàm loss: điều chỉnh trọng số giữa các mục tiêu học.
     # - Tham số cho matcher (Hungarian) dùng ghép truy vấn dự đoán với ground-truth.
@@ -163,56 +176,15 @@ def configure_determinism(args):
         torch.backends.cudnn.benchmark = True
 
 
-def get_cuda_profile(device):
-    if device.type != 'cuda' or not torch.cuda.is_available():
-        return {'name': '', 'memory_gb': 0.0}
-
-    device_index = device.index if device.index is not None else torch.cuda.current_device()
-    props = torch.cuda.get_device_properties(device_index)
-    return {
-        'name': props.name.lower(),
-        'memory_gb': props.total_memory / (1024 ** 3),
-    }
-
-
-def is_rtx_5070_ti_like(device):
-    profile = get_cuda_profile(device)
-    gpu_name = profile['name']
-    memory_gb = profile['memory_gb']
-    return ('5070' in gpu_name and 'ti' in gpu_name) or (15.0 <= memory_gb <= 18.5 and 'nvidia' in gpu_name)
-
-
-def apply_rtx_5070_ti_profile(args, device):
-    args.backbone = 'convnextv2_base'
-    args.batch_size, args.lr, args.lr_backbone = get_convnextv2_training_defaults(args.backbone)
-    args.batch_size = 2
-    args.hidden_dim = max(args.hidden_dim, 384)
-    args.dim_feedforward = max(args.dim_feedforward, 768)
-    args.dec_layers = max(args.dec_layers, 3)
-    args.accum_iter = max(args.accum_iter, 2)
-    args.use_amp = should_use_amp(args, device)
-    args.enc_win_list = [(32, 16), (32, 16), (16, 8), (16, 8), (8, 4)]
-    args.dec_win_sizes = {
-        'sparse': [32, 16],
-        'dense': [16, 8],
-    }
-    print('[5070Ti_profile] backbone=%s batch_size=%s hidden_dim=%s dim_feedforward=%s dec_layers=%s accum_iter=%s target_mae=%s amp=%s' % (
-        args.backbone, args.batch_size, args.hidden_dim, args.dim_feedforward, args.dec_layers, args.accum_iter, args.target_mae, args.use_amp
-    ))
-
-
 def resolve_auto_tuning_defaults(args, device):
-    if args.backbone == 'auto':
-        if is_rtx_5070_ti_like(device):
-            apply_rtx_5070_ti_profile(args, device)
-        else:
-            args.backbone = resolve_convnextv2_backbone_name(args.backbone)
-            args.batch_size, args.lr, args.lr_backbone = get_convnextv2_training_defaults(args.backbone)
-            args.enc_win_list = getattr(args, 'enc_win_list', [(32, 16), (32, 16), (16, 8), (16, 8)])
-            args.dec_win_sizes = getattr(args, 'dec_win_sizes', {
-                'sparse': [16, 8],
-                'dense': [8, 4],
-            })
+    if args.backbone in {'auto', 'auto_swin'}:
+        args.backbone = resolve_timm_backbone_name(args.backbone)
+        args.batch_size, args.lr, args.lr_backbone = get_timm_training_defaults(args.backbone)
+        args.enc_win_list = getattr(args, 'enc_win_list', [(32, 16), (32, 16), (16, 8), (16, 8)])
+        args.dec_win_sizes = getattr(args, 'dec_win_sizes', {
+            'sparse': [16, 8],
+            'dense': [8, 4],
+        })
         args.accum_iter = 2 if args.batch_size <= 2 else max(1, args.accum_iter)
         args.use_amp = should_use_amp(args, device)
         print('[auto_tune] backbone=%s batch_size=%s lr=%s lr_backbone=%s accum_iter=%s amp=%s search_trials=%s' % (
@@ -273,28 +245,59 @@ def build_model_state(args, device, total_epochs):
     ]
     optimizer = torch.optim.AdamW(param_dicts, lr=args.lr,
                                   weight_decay=args.weight_decay)
-    warmup_epochs = min(5, max(1, total_epochs // 20))
-    cosine_epochs = max(1, total_epochs - warmup_epochs)
-    warmup_scheduler = torch.optim.lr_scheduler.LinearLR(
-        optimizer, start_factor=1e-3, total_iters=warmup_epochs
-    )
-    cosine_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-        optimizer, T_max=cosine_epochs, eta_min=1e-7
-    )
-    lr_scheduler = torch.optim.lr_scheduler.SequentialLR(
-        optimizer,
-        schedulers=[warmup_scheduler, cosine_scheduler],
-        milestones=[warmup_epochs],
-    )
+
+    scheduler_name = getattr(args, 'lr_scheduler', 'warmup_cosine')
+    if scheduler_name == 'step':
+        lr_scheduler = torch.optim.lr_scheduler.StepLR(
+            optimizer,
+            step_size=max(1, total_epochs // 2),
+            gamma=0.1,
+        )
+    elif scheduler_name == 'cosine':
+        lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer,
+            T_max=max(1, total_epochs),
+            eta_min=getattr(args, 'min_lr', 1e-7),
+        )
+    else:
+        warmup_epochs = min(max(0, int(getattr(args, 'warmup_epochs', 5))), max(total_epochs - 1, 0))
+        cosine_epochs = max(1, total_epochs - warmup_epochs)
+        if warmup_epochs == 0:
+            lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+                optimizer,
+                T_max=cosine_epochs,
+                eta_min=getattr(args, 'min_lr', 1e-7),
+            )
+        else:
+            warmup_scheduler = torch.optim.lr_scheduler.LinearLR(
+                optimizer,
+                start_factor=1e-3,
+                total_iters=warmup_epochs,
+            )
+            cosine_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+                optimizer,
+                T_max=cosine_epochs,
+                eta_min=getattr(args, 'min_lr', 1e-7),
+            )
+            lr_scheduler = torch.optim.lr_scheduler.SequentialLR(
+                optimizer,
+                schedulers=[warmup_scheduler, cosine_scheduler],
+                milestones=[warmup_epochs],
+            )
     return model, criterion, model_without_ddp, optimizer, lr_scheduler, n_parameters
 
 
 def get_backbone_candidates(reference_backbone):
     backbone_neighbors = {
-        'convnextv2_nano': ['convnextv2_nano', 'convnextv2_small'],
-        'convnextv2_small': ['convnextv2_nano', 'convnextv2_small', 'convnextv2_base'],
-        'convnextv2_base': ['convnextv2_small', 'convnextv2_base'],
-        'convnextv2_large': ['convnextv2_base', 'convnextv2_large'],
+        'convnextv2_nano': ['convnextv2_nano', 'convnextv2_tiny', 'convnextv2_small'],
+        'convnextv2_tiny': ['convnextv2_nano', 'convnextv2_tiny', 'convnextv2_small', 'swinv2_tiny_window8_256'],
+        'convnextv2_small': ['convnextv2_tiny', 'convnextv2_small', 'convnextv2_base', 'swinv2_tiny_window8_256'],
+        'convnextv2_base': ['convnextv2_small', 'convnextv2_base', 'swinv2_tiny_window8_256', 'swinv2_small_window8_256'],
+        'convnextv2_large': ['convnextv2_base', 'convnextv2_large', 'swinv2_small_window8_256'],
+        'swin_tiny_patch4_window7_224': ['convnextv2_small', 'swin_tiny_patch4_window7_224', 'swinv2_tiny_window8_256'],
+        'swin_small_patch4_window7_224': ['convnextv2_base', 'swin_small_patch4_window7_224', 'swinv2_small_window8_256'],
+        'swinv2_tiny_window8_256': ['convnextv2_small', 'convnextv2_base', 'swinv2_tiny_window8_256', 'swinv2_small_window8_256'],
+        'swinv2_small_window8_256': ['convnextv2_base', 'convnextv2_large', 'swinv2_tiny_window8_256', 'swinv2_small_window8_256'],
     }
     return backbone_neighbors.get(reference_backbone, [reference_backbone])
 
@@ -309,7 +312,7 @@ def sample_search_config(args, backbone_candidates, trial=None, rng=None):
 
     if trial is not None:
         backbone = trial.suggest_categorical('backbone', backbone_candidates)
-        max_batch_size, base_lr, base_lr_backbone = get_convnextv2_training_defaults(backbone)
+        max_batch_size, base_lr, base_lr_backbone = get_timm_training_defaults(backbone)
         batch_size = trial.suggest_categorical('batch_size', [1, 2, 4, 8])
         batch_size = min(batch_size, max_batch_size)
         accum_iter = trial.suggest_categorical('accum_iter', [1, 2, 4, 8])
@@ -322,7 +325,7 @@ def sample_search_config(args, backbone_candidates, trial=None, rng=None):
             use_amp = trial.suggest_categorical('use_amp', [False, True])
     else:
         backbone = rng.choice(backbone_candidates)
-        max_batch_size, base_lr, base_lr_backbone = get_convnextv2_training_defaults(backbone)
+        max_batch_size, base_lr, base_lr_backbone = get_timm_training_defaults(backbone)
         batch_candidates = sorted({max(1, max_batch_size // 2), max_batch_size})
         if max_batch_size == 1:
             batch_candidates.append(2)
@@ -368,7 +371,7 @@ def run_training(args, device, dataset_train, dataset_val, total_epochs, output_
     best_threshold = float(getattr(args, 'inference_threshold', 0.5))
     if resume_checkpoint is not None:
         checkpoint = resume_checkpoint
-        model_without_ddp.load_state_dict(checkpoint['model'])
+        utils.load_model_state(model_without_ddp, checkpoint['model'])
         if 'optimizer' in checkpoint and 'lr_scheduler' in checkpoint and 'epoch' in checkpoint:
             optimizer.load_state_dict(checkpoint['optimizer'])
             lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])

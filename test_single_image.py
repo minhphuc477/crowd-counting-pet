@@ -8,7 +8,7 @@ import torchvision.transforms as standard_transforms
 
 import util.misc as utils
 from models import build_model
-from models.backbones import resolve_convnextv2_backbone_name
+from models.backbones import resolve_timm_backbone_name
 
 
 def get_args_parser():
@@ -177,15 +177,15 @@ def main(args):
         if 'best_threshold' in resume_checkpoint:
             args.inference_threshold = resume_checkpoint['best_threshold']
 
-    if args.backbone == 'auto':
-        args.backbone = resolve_convnextv2_backbone_name(args.backbone)
+    if args.backbone in {'auto', 'auto_swin'}:
+        args.backbone = resolve_timm_backbone_name(args.backbone)
 
     model, criterion = build_model(args)
     model.to(device)
 
     # Nạp trọng số pretrained để suy luận/đánh giá với mô hình đã huấn luyện.
     checkpoint = resume_checkpoint if resume_checkpoint is not None else utils.load_checkpoint(args.resume, map_location='cpu')
-    model.load_state_dict(checkpoint['model'])
+    utils.load_model_state(model, checkpoint['model'])
     
     # Thực hiện giai đoạn đánh giá: chỉ suy luận và đo chất lượng mà không cập nhật trọng số.
     vis_dir = None if args.vis_dir == "" else args.vis_dir
