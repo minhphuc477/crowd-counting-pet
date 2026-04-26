@@ -197,9 +197,13 @@ class PET(nn.Module):
 
         # Mã hóa ngữ cảnh toàn cục để làm giàu thông tin trước khi dự đoán điểm đếm.
         self.encode_feats = '8x'
-        enc_win_list = [(32, 16), (32, 16), (16, 8), (16, 8)]  # encoder window size
-        args.enc_layers = len(enc_win_list)
-        self.context_encoder = build_encoder(args, enc_win_list=enc_win_list)
+        self.enc_win_list = getattr(args, 'enc_win_list', [(32, 16), (32, 16), (16, 8), (16, 8)])
+        args.enc_layers = len(self.enc_win_list)
+        self.context_encoder = build_encoder(args, enc_win_list=self.enc_win_list)
+        self.dec_win_sizes = getattr(args, 'dec_win_sizes', {
+            'sparse': [16, 8],
+            'dense': [8, 4],
+        })
 
         # Dự đoán bản đồ tách vùng quadtree để quyết định nơi dùng nhánh sparse hoặc dense.
         context_patch = (128, 64)
@@ -376,7 +380,7 @@ class PET(nn.Module):
         # Chạy forward cho tầng quadtree mức 0 ở nhánh sparse để lấy dự đoán thưa.
         if run_sparse:
             kwargs['div'] = sparse_div
-            kwargs['dec_win_size'] = [16, 8]
+            kwargs['dec_win_size'] = self.dec_win_sizes.get('sparse', [16, 8])
             outputs_sparse = self.quadtree_sparse(samples, features, context_info, **kwargs)
         else:
             outputs_sparse = None
@@ -384,7 +388,7 @@ class PET(nn.Module):
         # Chạy forward cho tầng quadtree mức 1 ở nhánh dense để tinh chỉnh vùng đông.
         if run_dense:
             kwargs['div'] = dense_div
-            kwargs['dec_win_size'] = [8, 4]
+            kwargs['dec_win_size'] = self.dec_win_sizes.get('dense', [8, 4])
             outputs_dense = self.quadtree_dense(samples, features, context_info, **kwargs)
         else:
             outputs_dense = None

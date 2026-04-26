@@ -116,10 +116,59 @@ def should_use_amp(args, device):
     return device.type == 'cuda' and not args.disable_amp and getattr(args, 'use_amp', True)
 
 
+def get_cuda_profile(device):
+    if device.type != 'cuda' or not torch.cuda.is_available():
+        return {'name': '', 'memory_gb': 0.0}
+
+    device_index = device.index if device.index is not None else torch.cuda.current_device()
+    props = torch.cuda.get_device_properties(device_index)
+    return {
+        'name': props.name.lower(),
+        'memory_gb': props.total_memory / (1024 ** 3),
+    }
+
+
+def is_rtx_5070_ti_like(device):
+    profile = get_cuda_profile(device)
+    gpu_name = profile['name']
+    memory_gb = profile['memory_gb']
+    return ('5070' in gpu_name and 'ti' in gpu_name) or (15.0 <= memory_gb <= 18.5 and 'nvidia' in gpu_name)
+
+
+def apply_rtx_5070_ti_profile(args, device):
+    args.backbone = 'convnextv2_base'
+    args.batch_size, args.lr, args.lr_backbone = get_convnextv2_training_defaults(args.backbone)
+    args.batch_size = 2
+    args.hidden_dim = max(args.hidden_dim, 384)
+    args.dim_feedforward = max(args.dim_feedforward, 768)
+    args.dec_layers = max(args.dec_layers, 3)
+    args.accum_iter = max(args.accum_iter, 2)
+    args.eval_freq = 1
+    args.target_mae = min(args.target_mae, 40.0)
+    args.search_trials = max(args.search_trials, 6)
+    args.use_amp = should_use_amp(args, device)
+    args.enc_win_list = [(32, 16), (32, 16), (16, 8), (16, 8), (8, 4)]
+    args.dec_win_sizes = {
+        'sparse': [32, 16],
+        'dense': [16, 8],
+    }
+    print('[5070Ti_profile] backbone=%s batch_size=%s hidden_dim=%s dim_feedforward=%s dec_layers=%s accum_iter=%s target_mae=%s amp=%s' % (
+        args.backbone, args.batch_size, args.hidden_dim, args.dim_feedforward, args.dec_layers, args.accum_iter, args.target_mae, args.use_amp
+    ))
+
+
 def resolve_auto_tuning_defaults(args, device):
     if args.backbone == 'auto':
-        args.backbone = resolve_convnextv2_backbone_name(args.backbone)
-        args.batch_size, args.lr, args.lr_backbone = get_convnextv2_training_defaults(args.backbone)
+        if is_rtx_5070_ti_like(device):
+            apply_rtx_5070_ti_profile(args, device)
+        else:
+            args.backbone = resolve_convnextv2_backbone_name(args.backbone)
+            args.batch_size, args.lr, args.lr_backbone = get_convnextv2_training_defaults(args.backbone)
+            args.enc_win_list = getattr(args, 'enc_win_list', [(32, 16), (32, 16), (16, 8), (16, 8)])
+            args.dec_win_sizes = getattr(args, 'dec_win_sizes', {
+                'sparse': [16, 8],
+                'dense': [8, 4],
+            })
         args.eval_freq = 1
         args.search_trials = max(args.search_trials, 4)
         args.accum_iter = 2 if args.batch_size <= 2 else max(1, args.accum_iter)
