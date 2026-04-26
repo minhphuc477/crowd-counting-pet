@@ -1,3 +1,5 @@
+#!/usr/bin/env bash
+
 CUDA_VISIBLE_DEVICES='0' \
 torchrun \
     --standalone \
@@ -22,4 +24,4 @@ torchrun \
     --epochs=1500 \
     --dataset_file="SHA" \
     --eval_freq=1 \
-    --output_dir='pet_model'
+    --output_dir='pet_model_1'
