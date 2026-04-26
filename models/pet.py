@@ -200,6 +200,8 @@ class PET(nn.Module):
         self.enc_win_list = getattr(args, 'enc_win_list', [(32, 16), (32, 16), (16, 8), (16, 8)])
         args.enc_layers = len(self.enc_win_list)
         self.context_encoder = build_encoder(args, enc_win_list=self.enc_win_list)
+        self.split_warmup_epochs = max(0, int(getattr(args, 'split_warmup_epochs', 1)))
+        self.count_loss_coef = float(getattr(args, 'count_loss_coef', 0.01))
         self.inference_threshold = getattr(args, 'inference_threshold', 0.5)
         self.dec_win_sizes = getattr(args, 'dec_win_sizes', {
             'sparse': [16, 8],
@@ -263,9 +265,34 @@ class PET(nn.Module):
         output_sparse = self._prepare_outputs_for_loss(outputs['sparse'])
         output_dense = self._prepare_outputs_for_loss(outputs['dense'])
         weight_dict = criterion.weight_dict
-        warmup_ep = 5
+        warmup_ep = self.split_warmup_epochs
         split_map_sparse = outputs['split_map_sparse'].float()
         split_map_dense = outputs['split_map_dense'].float()
+
+        def _soft_count(branch_outputs):
+            if branch_outputs is None or 'pred_logits' not in branch_outputs:
+                return None
+            count_scores = torch.softmax(branch_outputs['pred_logits'].float(), -1)[..., 1]
+            batch_size = len(targets)
+            if count_scores.dim() == 1:
+                count_scores = count_scores.unsqueeze(0)
+            if count_scores.shape[0] == batch_size:
+                return count_scores.sum(dim=1)
+            if count_scores.shape[1] == batch_size:
+                return count_scores.sum(dim=0)
+            return count_scores.reshape(batch_size, -1).sum(dim=1)
+
+        gt_counts = torch.tensor([float(len(target['points'])) for target in targets], device=split_map_sparse.device, dtype=torch.float32)
+        count_loss = output_sparse['pred_logits'].sum() * 0.0
+        sparse_count = _soft_count(output_sparse)
+        dense_count = _soft_count(output_dense)
+        count_losses = []
+        if sparse_count is not None:
+            count_losses.append(F.smooth_l1_loss(sparse_count, gt_counts, reduction='mean'))
+        if dense_count is not None:
+            count_losses.append(F.smooth_l1_loss(dense_count, gt_counts, reduction='mean'))
+        if count_losses:
+            count_loss = sum(count_losses) / len(count_losses)
 
         # Tính tổng loss cho các nhánh để tối ưu mô hình theo mục tiêu huấn luyện đã định nghĩa.
         if epoch >= warmup_ep:
@@ -320,8 +347,12 @@ class PET(nn.Module):
         loss_dict['loss_split'] = loss_split
         weight_dict['loss_split'] = weight_split
 
+        # Thêm giám sát count trực tiếp để kéo số lượng dự đoán về gần GT hơn.
+        loss_dict['loss_count'] = count_loss
+        weight_dict['loss_count'] = self.count_loss_coef
+
         # Gom toàn bộ thành phần loss thành giá trị cuối cùng dùng cho bước lan truyền ngược.
-        losses += loss_split * weight_split
+        losses += loss_split * weight_split + count_loss * self.count_loss_coef
         return {'loss_dict':loss_dict, 'weight_dict':weight_dict, 'losses':losses}
 
     def forward(self, samples: NestedTensor, **kwargs):

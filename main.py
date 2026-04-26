@@ -97,6 +97,10 @@ def get_args_parser():
                         help='step size for validation threshold sweep')
     arg_parser.add_argument('--deterministic', action=argparse.BooleanOptionalAction, default=True,
                         help='enable deterministic training and data loading')
+    arg_parser.add_argument('--split_warmup_epochs', default=1, type=int,
+                        help='epochs to wait before enabling quadtree splitter loss')
+    arg_parser.add_argument('--count_loss_coef', default=0.01, type=float,
+                        help='weight for the soft count consistency loss')
     arg_parser.add_argument('--accum_iter', default=1, type=int,
                         help='gradient accumulation steps')
     arg_parser.add_argument('--disable_amp', action='store_true',
@@ -178,6 +182,8 @@ def apply_rtx_5070_ti_profile(args, device):
     args.inference_threshold = 0.45
     args.eval_freq = 1
     args.target_mae = min(args.target_mae, 40.0)
+    args.split_warmup_epochs = min(getattr(args, 'split_warmup_epochs', 1), 1)
+    args.count_loss_coef = max(float(getattr(args, 'count_loss_coef', 0.01)), 0.01)
     args.search_trials = max(args.search_trials, 6)
     args.use_amp = should_use_amp(args, device)
     args.enc_win_list = [(32, 16), (32, 16), (16, 8), (16, 8), (8, 4)]
@@ -212,6 +218,8 @@ def resolve_auto_tuning_defaults(args, device):
     else:
         args.accum_iter = max(1, args.accum_iter)
         args.use_amp = should_use_amp(args, device)
+        args.split_warmup_epochs = getattr(args, 'split_warmup_epochs', 1)
+        args.count_loss_coef = getattr(args, 'count_loss_coef', 0.01)
 
 
 def build_dataloaders(dataset_train, dataset_val, args):
