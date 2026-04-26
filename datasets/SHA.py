@@ -12,7 +12,7 @@ import warnings
 warnings.filterwarnings('ignore')
 
 class SHA(Dataset):
-    def __init__(self, data_root, transform=None, train=False, flip=False):
+    def __init__(self, data_root, transform=None, train=False, flip=False, patch_size=256):
         self.root_path = data_root
         
         prefix = "train_data" if train else "test_data"
@@ -31,7 +31,7 @@ class SHA(Dataset):
         self.transform = transform
         self.train = train
         self.flip = flip
-        self.patch_size = 256
+        self.patch_size = patch_size
     
     def compute_density(self, points):
         """
@@ -145,8 +145,8 @@ def build(image_set, args):
     
     data_root = args.data_path
     if image_set == 'train':
-        train_set = SHA(data_root, train=True, transform=transform, flip=True)
+        train_set = SHA(data_root, train=True, transform=transform, flip=True, patch_size=getattr(args, 'patch_size', 256))
         return train_set
     elif image_set == 'val':
-        val_set = SHA(data_root, train=False, transform=transform)
+        val_set = SHA(data_root, train=False, transform=transform, patch_size=getattr(args, 'patch_size', 256))
         return val_set

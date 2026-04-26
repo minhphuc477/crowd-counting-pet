@@ -21,7 +21,7 @@ def get_args_parser():
 
     # Nhóm tham số mô hình: cấu hình kiến trúc chính và các siêu tham số cốt lõi.
     # - Tham số cho backbone dùng để trích xuất đặc trưng thị giác ở nhiều mức.
-    parser.add_argument('--backbone', default='convnextv2_nano', type=str,
+    parser.add_argument('--backbone', default='auto', type=str,
                         help="Name of the ConvNeXt V2 backbone to use")
     parser.add_argument('--position_embedding', default='sine', type=str, choices=('sine', 'learned', 'fourier'),
                         help="Type of positional embedding to use on top of the image features")
@@ -60,6 +60,13 @@ def get_args_parser():
     parser.add_argument('--resume', default='', help='resume from checkpoint')
     parser.add_argument('--vis_dir', default="")
     parser.add_argument('--num_workers', default=2, type=int)
+    parser.add_argument('--patch_size', default=256, type=int)
+    parser.add_argument('--inference_threshold', default=0.5, type=float)
+    parser.add_argument('--threshold_sweep', action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument('--threshold_min', default=0.30, type=float)
+    parser.add_argument('--threshold_max', default=0.70, type=float)
+    parser.add_argument('--threshold_step', default=0.025, type=float)
+    parser.add_argument('--deterministic', action=argparse.BooleanOptionalAction, default=True)
 
     # Nhóm tham số huấn luyện phân tán: thiết lập tiến trình, đồng bộ và backend giao tiếp.
     parser.add_argument('--world_size', default=1, type=int,
@@ -78,6 +85,17 @@ def main(args):
     torch.manual_seed(seed)
     np.random.seed(seed)
     random.seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+    if args.deterministic:
+        torch.backends.cudnn.benchmark = False
+        torch.backends.cudnn.deterministic = True
+        try:
+            torch.use_deterministic_algorithms(True, warn_only=True)
+        except TypeError:
+            torch.use_deterministic_algorithms(True)
+    else:
+        torch.backends.cudnn.benchmark = True
 
     resume_checkpoint = None
     if args.resume:
@@ -88,6 +106,8 @@ def main(args):
             resume_checkpoint = torch.load(args.resume, map_location='cpu', weights_only=False)
         if 'args' in resume_checkpoint and hasattr(resume_checkpoint['args'], 'backbone'):
             args.backbone = resume_checkpoint['args'].backbone
+        if 'best_threshold' in resume_checkpoint and not args.threshold_sweep:
+            args.inference_threshold = resume_checkpoint['best_threshold']
 
     if args.backbone == 'auto':
         args.backbone = resolve_convnextv2_backbone_name(args.backbone)
@@ -125,9 +145,20 @@ def main(args):
     
     # Thực hiện giai đoạn đánh giá: chỉ suy luận và đo chất lượng mà không cập nhật trọng số.
     vis_dir = None if args.vis_dir == "" else args.vis_dir
-    test_stats = evaluate(model, data_loader_val, device, vis_dir=vis_dir)
+    test_stats = evaluate(
+        model,
+        data_loader_val,
+        device,
+        vis_dir=vis_dir,
+        inference_threshold=args.inference_threshold,
+        threshold_sweep=args.threshold_sweep,
+        threshold_min=args.threshold_min,
+        threshold_max=args.threshold_max,
+        threshold_step=args.threshold_step,
+    )
     mae, mse = test_stats['mae'], test_stats['mse']
-    line = f'\nepoch: {cur_epoch}, mae: {mae}, mse: {mse}' 
+    threshold = test_stats.get('threshold', args.inference_threshold)
+    line = f'\nepoch: {cur_epoch}, mae: {mae}, mse: {mse}, threshold: {threshold}' 
     print(line)
 
 

@@ -22,6 +22,10 @@ if float(torchvision.__version__.split(".")[1]) < 7.0:
     from torchvision.ops.misc import _output_size
 
 
+def _distributed_device():
+    return torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+
 class SmoothedValue(object):
     """
     Track a series of values and provide access to smoothed values over a window or the global series average.
@@ -45,7 +49,7 @@ class SmoothedValue(object):
         """
         if not is_dist_avail_and_initialized():
             return
-        t = torch.tensor([self.count, self.total], dtype=torch.float64, device='cuda')
+        t = torch.tensor([self.count, self.total], dtype=torch.float64, device=_distributed_device())
         dist.barrier()
         dist.all_reduce(t)
         t = t.tolist()
@@ -98,11 +102,12 @@ def all_gather(data):
     # Tuần tự hóa dữ liệu về Tensor để truyền qua các tiến trình phân tán.
     buffer = pickle.dumps(data)
     storage = torch.ByteStorage.from_buffer(buffer)
-    tensor = torch.ByteTensor(storage).to("cuda")
+    dist_device = _distributed_device()
+    tensor = torch.ByteTensor(storage).to(dist_device)
 
     # Thu thập kích thước Tensor ở từng rank để chuẩn bị all_gather.
-    local_size = torch.tensor([tensor.numel()], device="cuda")
-    size_list = [torch.tensor([0], device="cuda") for _ in range(world_size)]
+    local_size = torch.tensor([tensor.numel()], device=dist_device)
+    size_list = [torch.tensor([0], device=dist_device) for _ in range(world_size)]
     dist.all_gather(size_list, local_size)
     size_list = [int(size.item()) for size in size_list]
     max_size = max(size_list)
@@ -112,9 +117,9 @@ def all_gather(data):
     # Xử lý trường hợp cần gom các tensor có kích thước khác nhau giữa các tiến trình.
     tensor_list = []
     for _ in size_list:
-        tensor_list.append(torch.empty((max_size,), dtype=torch.uint8, device="cuda"))
+        tensor_list.append(torch.empty((max_size,), dtype=torch.uint8, device=dist_device))
     if local_size != max_size:
-        padding = torch.empty(size=(max_size - local_size,), dtype=torch.uint8, device="cuda")
+        padding = torch.empty(size=(max_size - local_size,), dtype=torch.uint8, device=dist_device)
         tensor = torch.cat((tensor, padding), dim=0)
     dist.all_gather(tensor_list, tensor)
 

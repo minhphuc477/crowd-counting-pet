@@ -20,6 +20,28 @@ class NonFiniteTrainingError(RuntimeError):
     pass
 
 
+def _build_threshold_values(reference_threshold, threshold_sweep=False,
+                            threshold_min=0.30, threshold_max=0.70, threshold_step=0.025):
+    reference_threshold = float(reference_threshold)
+    if not threshold_sweep:
+        return [reference_threshold]
+
+    if threshold_step <= 0:
+        raise ValueError('threshold_step must be positive')
+    if threshold_max < threshold_min:
+        raise ValueError('threshold_max must be >= threshold_min')
+
+    steps = int(round((threshold_max - threshold_min) / threshold_step))
+    threshold_values = [round(threshold_min + idx * threshold_step, 6) for idx in range(steps + 1)]
+    threshold_values = [min(max(value, 0.0), 1.0) for value in threshold_values]
+
+    reference_threshold = round(min(max(reference_threshold, 0.0), 1.0), 6)
+    if reference_threshold not in threshold_values:
+        threshold_values.append(reference_threshold)
+        threshold_values.sort()
+    return threshold_values
+
+
 class DeNormalize(object):
     def __init__(self, mean, std):
         self.mean = mean
@@ -160,7 +182,8 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
 
 # Thực hiện giai đoạn đánh giá: chỉ suy luận và đo chất lượng mà không cập nhật trọng số.
 @torch.no_grad()
-def evaluate(model, data_loader, device, epoch=0, vis_dir=None):
+def evaluate(model, data_loader, device, epoch=0, vis_dir=None, inference_threshold=None,
+             threshold_sweep=False, threshold_min=0.30, threshold_max=0.70, threshold_step=0.025):
     model.eval()
 
     metric_logger = utils.MetricLogger(delimiter="  ")
@@ -168,6 +191,26 @@ def evaluate(model, data_loader, device, epoch=0, vis_dir=None):
 
     if vis_dir is not None:
         os.makedirs(vis_dir, exist_ok=True)
+
+    model_without_ddp = model.module if hasattr(model, 'module') else model
+    default_threshold = getattr(model_without_ddp, 'inference_threshold', 0.5)
+    if inference_threshold is not None:
+        default_threshold = inference_threshold
+    threshold_values = _build_threshold_values(
+        default_threshold,
+        threshold_sweep=threshold_sweep,
+        threshold_min=threshold_min,
+        threshold_max=threshold_max,
+        threshold_step=threshold_step,
+    )
+    threshold_tensor = torch.tensor(threshold_values, device=device, dtype=torch.float32)
+    mae_sums = torch.zeros(len(threshold_values), device=device, dtype=torch.float32)
+    mse_sums = torch.zeros(len(threshold_values), device=device, dtype=torch.float32)
+    sample_count = torch.zeros(1, device=device, dtype=torch.float32)
+    default_threshold_index = min(
+        range(len(threshold_values)),
+        key=lambda idx: abs(threshold_values[idx] - float(default_threshold))
+    )
 
     print_freq = 10
     for samples, targets in metric_logger.log_every(data_loader, print_freq, header):
@@ -177,35 +220,63 @@ def evaluate(model, data_loader, device, epoch=0, vis_dir=None):
 
         # Chạy suy luận để lấy đầu ra dự đoán từ mô hình mà không cập nhật tham số.
         outputs = model(samples, test=True, targets=targets)
-        outputs_scores = torch.nn.functional.softmax(outputs['pred_logits'], -1)[:, :, 1][0]
+        outputs_scores = torch.nn.functional.softmax(outputs['pred_logits'], -1)[:, :, 1][0].float()
         outputs_points = outputs['pred_points'][0]
-        outputs_offsets = outputs['pred_offsets'][0]
         
         # Hậu xử lý điểm dự đoán (lọc, đổi thang đo) trước khi tính metric hoặc trực quan hóa.
-        predict_cnt = len(outputs_scores)
         gt_cnt = targets[0]['points'].shape[0]
+        gt_cnt_tensor = torch.tensor(float(gt_cnt), device=metric_device, dtype=torch.float32)
+        predict_cnts = (outputs_scores.unsqueeze(0) > threshold_tensor.unsqueeze(1)).sum(dim=1).float()
 
         # Tính sai số giữa dự đoán và ground-truth để đánh giá chất lượng mô hình.
-        mae = abs(predict_cnt - gt_cnt)
-        mse = (predict_cnt - gt_cnt) * (predict_cnt - gt_cnt)
+        diff = predict_cnts - gt_cnt_tensor
+        mae_sums += diff.abs()
+        mse_sums += diff.square()
+        sample_count += 1.0
+        mae = diff[default_threshold_index].abs()
+        mse = diff[default_threshold_index].square()
 
         # Ghi lại kết quả từng mẫu/từng batch để tổng hợp thống kê cuối cùng.
         results = {}
-        toTensor = lambda x: torch.tensor(x, device=metric_device).float()
-        results['mae'], results['mse'] = toTensor(mae), toTensor(mse)
-        metric_logger.update(mae=results['mae'], mse=results['mse'])
+        results['mae'], results['mse'] = mae, mse
 
         results_reduced = utils.reduce_dict(results)
         metric_logger.update(mae=results_reduced['mae'], mse=results_reduced['mse'])
 
         # Trực quan hóa dự đoán lên ảnh để kiểm tra định tính vùng đúng/sai của mô hình.
         if vis_dir: 
-            points = [[point[0]*img_h, point[1]*img_w] for point in outputs_points]     # recover to actual points
+            vis_mask = outputs_scores > threshold_values[default_threshold_index]
+            vis_points = outputs_points[vis_mask].detach().cpu()
+            points = [[point[0]*img_h, point[1]*img_w] for point in vis_points]     # recover to actual points
             split_map = (outputs['split_map_raw'][0].detach().cpu().squeeze(0) > 0.5).float().numpy()
             visualization(samples, targets, [points], vis_dir, split_map=split_map)
     
     # Thu thập thống kê từ mọi tiến trình phân tán rồi mới tính giá trị tổng hợp cuối cùng.
     metric_logger.synchronize_between_processes()
-    results = {k: meter.global_avg for k, meter in metric_logger.meters.items()}
-    results['mse'] = np.sqrt(results['mse'])
+    if utils.is_dist_avail_and_initialized():
+        torch.distributed.all_reduce(mae_sums)
+        torch.distributed.all_reduce(mse_sums)
+        torch.distributed.all_reduce(sample_count)
+
+    denom = max(sample_count.item(), 1.0)
+    mae_values = (mae_sums / denom).detach().cpu().tolist()
+    mse_values = torch.sqrt(mse_sums / denom).detach().cpu().tolist()
+    best_index = min(
+        range(len(threshold_values)),
+        key=lambda idx: (
+            mae_values[idx],
+            mse_values[idx],
+            abs(threshold_values[idx] - float(default_threshold)),
+            threshold_values[idx],
+        ),
+    )
+    results = {
+        'mae': mae_values[best_index],
+        'mse': mse_values[best_index],
+        'threshold': threshold_values[best_index],
+    }
+    if len(threshold_values) > 1:
+        results['threshold_candidates'] = threshold_values
+        results['mae_by_threshold'] = mae_values
+        results['mse_by_threshold'] = mse_values
     return results

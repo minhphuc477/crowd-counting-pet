@@ -4,10 +4,13 @@ torchrun \
     --nproc_per_node=1 \
     main.py \
     --backbone="auto" \
-    --target_mae=50 \
+    --target_mae=40 \
     --search_trials=6 \
     --search_epochs=8 \
     --search_eval_freq=1 \
+    --patch_size=384 \
+    --threshold_sweep \
+    --deterministic \
     --ce_loss_coef=1.0 \
     --point_loss_coef=5.0 \
     --eos_coef=0.5 \

@@ -200,6 +200,7 @@ class PET(nn.Module):
         self.enc_win_list = getattr(args, 'enc_win_list', [(32, 16), (32, 16), (16, 8), (16, 8)])
         args.enc_layers = len(self.enc_win_list)
         self.context_encoder = build_encoder(args, enc_win_list=self.enc_win_list)
+        self.inference_threshold = getattr(args, 'inference_threshold', 0.5)
         self.dec_win_sizes = getattr(args, 'dec_win_sizes', {
             'sparse': [16, 8],
             'dense': [8, 4],
@@ -413,12 +414,16 @@ class PET(nn.Module):
     def test_forward(self, samples, features, pos, **kwargs):
         outputs = self.pet_forward(samples, features, pos, **kwargs)
         out_dense, out_sparse = outputs['dense'], outputs['sparse']
-        thrs = 0.5  # inference threshold        
 
         if out_sparse is None and out_dense is None:
+            empty_logits = torch.empty(
+                (1, 0, self.quadtree_sparse.class_embed.out_features),
+                device=samples.tensors.device,
+                dtype=samples.tensors.dtype,
+            )
             empty_pred = torch.empty((1, 0, 2), device=samples.tensors.device, dtype=samples.tensors.dtype)
             return {
-                'pred_logits': empty_pred,
+                'pred_logits': empty_logits,
                 'pred_points': empty_pred,
                 'pred_offsets': empty_pred,
                 'img_shape': samples.tensors.shape[-2:],
@@ -430,7 +435,7 @@ class PET(nn.Module):
         # Xử lý các truy vấn điểm nhánh sparse trước khi kết hợp vào đầu ra chung.
         if outputs['sparse'] is not None:
             out_sparse_scores = torch.nn.functional.softmax(out_sparse['pred_logits'], -1)[..., 1]
-            valid_sparse = out_sparse_scores > thrs
+            valid_sparse = out_sparse_scores > 0
             index_sparse = valid_sparse.cpu()
         else:
             index_sparse = None
@@ -438,7 +443,7 @@ class PET(nn.Module):
         # Xử lý các truy vấn điểm nhánh dense trước khi tổng hợp kết quả.
         if outputs['dense'] is not None:
             out_dense_scores = torch.nn.functional.softmax(out_dense['pred_logits'], -1)[..., 1]
-            valid_dense = out_dense_scores > thrs
+            valid_dense = out_dense_scores > 0
             index_dense = valid_dense.cpu()
         else:
             index_dense = None

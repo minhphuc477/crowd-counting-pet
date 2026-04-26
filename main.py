@@ -7,7 +7,6 @@ import random
 import time
 from pathlib import Path
 import os
-import shutil
 
 import numpy as np
 import torch
@@ -39,7 +38,7 @@ def get_args_parser():
 
     # Nhóm tham số mô hình: cấu hình kiến trúc chính và các siêu tham số cốt lõi.
     # - Tham số cho backbone dùng để trích xuất đặc trưng thị giác ở nhiều mức.
-    arg_parser.add_argument('--backbone', default='convnextv2_nano', type=str,
+    arg_parser.add_argument('--backbone', default='auto', type=str,
                         help="Name of the ConvNeXt V2 backbone to use")
     arg_parser.add_argument('--position_embedding', default='sine', type=str, choices=('sine', 'learned', 'fourier'),
                         help="Type of positional embedding to use on top of the image features")
@@ -82,8 +81,22 @@ def get_args_parser():
                         help='start epoch')
     arg_parser.add_argument('--num_workers', default=2, type=int)
     arg_parser.add_argument('--eval_freq', default=5, type=int)
-    arg_parser.add_argument('--target_mae', default=50.0, type=float,
+    arg_parser.add_argument('--target_mae', default=40.0, type=float,
                         help='stop early once validation MAE reaches this target')
+    arg_parser.add_argument('--patch_size', default=256, type=int,
+                        help='training crop size for SHA')
+    arg_parser.add_argument('--inference_threshold', default=0.5, type=float,
+                        help='confidence threshold used to count predicted points at inference')
+    arg_parser.add_argument('--threshold_sweep', action=argparse.BooleanOptionalAction, default=True,
+                        help='sweep validation count thresholds and keep the best one instead of using a fixed threshold')
+    arg_parser.add_argument('--threshold_min', default=0.30, type=float,
+                        help='minimum threshold value to consider during validation sweep')
+    arg_parser.add_argument('--threshold_max', default=0.70, type=float,
+                        help='maximum threshold value to consider during validation sweep')
+    arg_parser.add_argument('--threshold_step', default=0.025, type=float,
+                        help='step size for validation threshold sweep')
+    arg_parser.add_argument('--deterministic', action=argparse.BooleanOptionalAction, default=True,
+                        help='enable deterministic training and data loading')
     arg_parser.add_argument('--accum_iter', default=1, type=int,
                         help='gradient accumulation steps')
     arg_parser.add_argument('--disable_amp', action='store_true',
@@ -116,6 +129,24 @@ def should_use_amp(args, device):
     return device.type == 'cuda' and not args.disable_amp and getattr(args, 'use_amp', True)
 
 
+def seed_worker(worker_id):
+    worker_seed = torch.initial_seed() % 2**32
+    np.random.seed(worker_seed)
+    random.seed(worker_seed)
+
+
+def configure_determinism(args):
+    if args.deterministic:
+        torch.backends.cudnn.benchmark = False
+        torch.backends.cudnn.deterministic = True
+        try:
+            torch.use_deterministic_algorithms(True, warn_only=True)
+        except TypeError:
+            torch.use_deterministic_algorithms(True)
+    else:
+        torch.backends.cudnn.benchmark = True
+
+
 def get_cuda_profile(device):
     if device.type != 'cuda' or not torch.cuda.is_available():
         return {'name': '', 'memory_gb': 0.0}
@@ -143,6 +174,8 @@ def apply_rtx_5070_ti_profile(args, device):
     args.dim_feedforward = max(args.dim_feedforward, 768)
     args.dec_layers = max(args.dec_layers, 3)
     args.accum_iter = max(args.accum_iter, 2)
+    args.patch_size = max(getattr(args, 'patch_size', 256), 384)
+    args.inference_threshold = 0.45
     args.eval_freq = 1
     args.target_mae = min(args.target_mae, 40.0)
     args.search_trials = max(args.search_trials, 6)
@@ -182,20 +215,29 @@ def resolve_auto_tuning_defaults(args, device):
 
 
 def build_dataloaders(dataset_train, dataset_val, args):
+    train_generator = torch.Generator()
+    train_generator.manual_seed(args.seed)
+    val_generator = torch.Generator()
+    val_generator.manual_seed(args.seed + 1)
+
     if args.distributed:
-        sampler_train = DistributedSampler(dataset_train)
-        sampler_val = DistributedSampler(dataset_val, shuffle=False)
+        sampler_train = DistributedSampler(dataset_train, seed=args.seed)
+        sampler_val = DistributedSampler(dataset_val, shuffle=False, seed=args.seed)
     else:
-        sampler_train = torch.utils.data.RandomSampler(dataset_train)
+        sampler_train = torch.utils.data.RandomSampler(dataset_train, generator=train_generator)
         sampler_val = torch.utils.data.SequentialSampler(dataset_val)
+
+    worker_init_fn = seed_worker if args.deterministic else None
 
     batch_sampler_train = torch.utils.data.BatchSampler(
         sampler_train, args.batch_size, drop_last=True)
 
     data_loader_train = DataLoader(dataset_train, batch_sampler=batch_sampler_train,
-                                collate_fn=utils.collate_fn, num_workers=args.num_workers)
+                                collate_fn=utils.collate_fn, num_workers=args.num_workers,
+                                worker_init_fn=worker_init_fn, generator=train_generator)
     data_loader_val = DataLoader(dataset_val, 1, sampler=sampler_val,
-                                drop_last=False, collate_fn=utils.collate_fn, num_workers=args.num_workers)
+                                drop_last=False, collate_fn=utils.collate_fn, num_workers=args.num_workers,
+                                worker_init_fn=worker_init_fn, generator=val_generator)
     return data_loader_train, data_loader_val, sampler_train
 
 
@@ -220,7 +262,19 @@ def build_model_state(args, device, total_epochs):
     ]
     optimizer = torch.optim.AdamW(param_dicts, lr=args.lr,
                                   weight_decay=args.weight_decay)
-    lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs, eta_min=1e-7)
+    warmup_epochs = min(5, max(1, total_epochs // 20))
+    cosine_epochs = max(1, total_epochs - warmup_epochs)
+    warmup_scheduler = torch.optim.lr_scheduler.LinearLR(
+        optimizer, start_factor=1e-3, total_iters=warmup_epochs
+    )
+    cosine_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+        optimizer, T_max=cosine_epochs, eta_min=1e-7
+    )
+    lr_scheduler = torch.optim.lr_scheduler.SequentialLR(
+        optimizer,
+        schedulers=[warmup_scheduler, cosine_scheduler],
+        milestones=[warmup_epochs],
+    )
     return model, criterion, model_without_ddp, optimizer, lr_scheduler, n_parameters
 
 
@@ -300,6 +354,7 @@ def run_training(args, device, dataset_train, dataset_val, total_epochs, output_
     data_loader_train, data_loader_val, sampler_train = build_dataloaders(dataset_train, dataset_val, args)
 
     best_mae, best_epoch = 1e8, 0
+    best_threshold = float(getattr(args, 'inference_threshold', 0.5))
     if resume_checkpoint is not None:
         checkpoint = resume_checkpoint
         model_without_ddp.load_state_dict(checkpoint['model'])
@@ -309,11 +364,13 @@ def run_training(args, device, dataset_train, dataset_val, total_epochs, output_
             args.start_epoch = checkpoint['epoch'] + 1
             best_mae = checkpoint.get('best_mae', best_mae)
             best_epoch = checkpoint.get('best_epoch', best_epoch)
+            best_threshold = checkpoint.get('best_threshold', best_threshold)
+            args.inference_threshold = best_threshold
         if best_mae <= args.target_mae:
             print('[auto_tune] resume checkpoint already meets target_mae=%.2f (best_mae=%.2f); stopping.' % (
                 args.target_mae, best_mae
             ))
-            return {'best_mae': best_mae, 'best_epoch': best_epoch, 'n_parameters': n_parameters}
+            return {'best_mae': best_mae, 'best_epoch': best_epoch, 'best_threshold': best_threshold, 'n_parameters': n_parameters}
 
     use_amp = getattr(args, 'use_amp', False) and device.type == 'cuda' and not args.disable_amp
     scaler = torch.cuda.amp.GradScaler(enabled=use_amp)
@@ -352,6 +409,7 @@ def run_training(args, device, dataset_train, dataset_val, total_epochs, output_
                 'args': args,
                 'best_mae': best_mae,
                 'best_epoch': best_epoch,
+                'best_threshold': best_threshold,
             }, checkpoint_path)
 
         log_stats = {**{f'train_{k}': v for k, v in train_stats.items()},
@@ -363,26 +421,47 @@ def run_training(args, device, dataset_train, dataset_val, total_epochs, output_
 
         if epoch % eval_freq == 0 and epoch > 0:
             t1 = time.time()
-            test_stats = evaluate(model, data_loader_val, device, epoch, None)
+            test_stats = evaluate(
+                model,
+                data_loader_val,
+                device,
+                epoch,
+                None,
+                inference_threshold=args.inference_threshold,
+                threshold_sweep=args.threshold_sweep,
+                threshold_min=args.threshold_min,
+                threshold_max=args.threshold_max,
+                threshold_step=args.threshold_step,
+            )
             t2 = time.time()
 
             mae, mse = test_stats['mae'], test_stats['mse']
-            is_best = mae < best_mae
+            eval_threshold = test_stats.get('threshold', args.inference_threshold)
+            is_best = mae < best_mae or (math.isclose(mae, best_mae) and eval_threshold != best_threshold)
             if is_best:
                 best_epoch = epoch
                 best_mae = mae
+                best_threshold = eval_threshold
 
             print("\n==========================")
-            print("\nepoch:", epoch, "mae:", mae, "mse:", mse, "\n\nbest mae:", best_mae, "best epoch:", best_epoch)
+            print("\nepoch:", epoch, "mae:", mae, "mse:", mse, "threshold:", eval_threshold,
+                  "\n\nbest mae:", best_mae, "best epoch:", best_epoch, "best threshold:", best_threshold)
             print("==========================\n")
             if utils.is_main_process() and run_log_name is not None:
-                append_text(run_log_name, "\nepoch:{}, mae:{}, mse:{}, time{}, \n\nbest mae:{}, best epoch: {}\n\n".format(
-                                                epoch, mae, mse, t2 - t1, best_mae, best_epoch))
+                append_text(run_log_name, "\nepoch:{}, mae:{}, mse:{}, threshold:{}, time{}, \n\nbest mae:{}, best epoch: {}, best threshold:{}\n\n".format(
+                                                epoch, mae, mse, eval_threshold, t2 - t1, best_mae, best_epoch, best_threshold))
 
             if is_best and save_checkpoints and utils.is_main_process() and output_dir is not None:
-                src_path = output_dir / 'checkpoint.pth'
-                dst_path = output_dir / 'best_checkpoint.pth'
-                shutil.copyfile(src_path, dst_path)
+                utils.save_on_master({
+                    'model': model_without_ddp.state_dict(),
+                    'optimizer': optimizer.state_dict(),
+                    'lr_scheduler': lr_scheduler.state_dict(),
+                    'epoch': epoch,
+                    'args': args,
+                    'best_mae': best_mae,
+                    'best_epoch': best_epoch,
+                    'best_threshold': best_threshold,
+                }, output_dir / 'best_checkpoint.pth')
 
             if mae <= args.target_mae:
                 print('[auto_tune] target_mae=%.2f reached with mae=%.2f; stopping early.' % (
@@ -398,7 +477,7 @@ def run_training(args, device, dataset_train, dataset_val, total_epochs, output_
     total_time = time.time() - start_time
     total_time_str = str(datetime.timedelta(seconds=int(total_time)))
     print('Training time {}'.format(total_time_str))
-    return {'best_mae': best_mae, 'best_epoch': best_epoch, 'n_parameters': n_parameters}
+    return {'best_mae': best_mae, 'best_epoch': best_epoch, 'best_threshold': best_threshold, 'n_parameters': n_parameters}
 
 
 def run_hyperparameter_search(args, device, dataset_train, dataset_val, output_dir):
@@ -458,6 +537,7 @@ def run_hyperparameter_search(args, device, dataset_train, dataset_val, output_d
             result = evaluate_config(trial)
             trial.set_user_attr('config', {k: result[k] for k in ('backbone', 'batch_size', 'lr', 'lr_backbone', 'weight_decay', 'clip_max_norm', 'accum_iter', 'use_amp')})
             trial.set_user_attr('best_epoch', result['best_epoch'])
+            trial.set_user_attr('best_threshold', result.get('best_threshold', args.inference_threshold))
             return result['best_mae']
 
         study.optimize(objective, n_trials=args.search_trials)
@@ -465,6 +545,7 @@ def run_hyperparameter_search(args, device, dataset_train, dataset_val, output_d
         best_result = dict(best_trial.user_attrs['config'])
         best_result['best_mae'] = best_trial.value
         best_result['best_epoch'] = best_trial.user_attrs.get('best_epoch', -1)
+        best_result['best_threshold'] = best_trial.user_attrs.get('best_threshold', args.inference_threshold)
     else:
         for _ in range(args.search_trials):
             result = evaluate_config(None)
@@ -492,6 +573,9 @@ def main(args):
     torch.manual_seed(seed)
     np.random.seed(seed)
     random.seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+    configure_determinism(args)
 
     resume_checkpoint = None
     if args.resume:
@@ -508,6 +592,8 @@ def main(args):
                 args.batch_size = checkpoint_args.batch_size
             if hasattr(checkpoint_args, 'lr_backbone'):
                 args.lr_backbone = checkpoint_args.lr_backbone
+        if 'best_threshold' in resume_checkpoint:
+            args.inference_threshold = resume_checkpoint['best_threshold']
 
     resolve_auto_tuning_defaults(args, device)
 
@@ -534,6 +620,7 @@ def main(args):
             args.clip_max_norm = float(best_search.get('clip_max_norm', args.clip_max_norm))
             args.accum_iter = max(1, int(best_search.get('accum_iter', args.accum_iter)))
             args.use_amp = bool(best_search.get('use_amp', args.use_amp))
+            args.inference_threshold = float(best_search.get('best_threshold', args.inference_threshold))
             args.eval_freq = 1
             print('[auto_tune] using best search config:', best_search)
 

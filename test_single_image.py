@@ -53,8 +53,10 @@ def get_args_parser():
                         help='device to use for training / testing')
     parser.add_argument('--seed', default=42, type=int)
     parser.add_argument('--resume', default='', help='resume from checkpoint')
+    parser.add_argument('--img_path', default='', help='path to the image to evaluate')
     parser.add_argument('--vis_dir', default="")
     parser.add_argument('--num_workers', default=2, type=int)
+    parser.add_argument('--inference_threshold', default=0.5, type=float)
 
     # Nhóm tham số huấn luyện phân tán: thiết lập tiến trình, đồng bộ và backend giao tiếp.
     parser.add_argument('--world_size', default=1, type=int,
@@ -120,7 +122,7 @@ def visualization(samples, pred, vis_dir, img_path, split_map=None):
 
 
 @torch.no_grad()
-def evaluate_single_image(model, img_path, device, vis_dir=None):
+def evaluate_single_image(model, img_path, device, inference_threshold=0.5, vis_dir=None):
     model.eval()
 
     if vis_dir is not None:
@@ -145,8 +147,9 @@ def evaluate_single_image(model, img_path, device, vis_dir=None):
     outputs = model(samples, test=True)
     raw_scores = torch.nn.functional.softmax(outputs['pred_logits'], -1)
     outputs_scores = raw_scores[:, :, 1][0]
-    outputs_points = outputs['pred_points'][0]
-    print('prediction: ', len(outputs_scores))
+    keep = outputs_scores > inference_threshold
+    outputs_points = outputs['pred_points'][0][keep].detach().cpu()
+    print('prediction: ', int(keep.sum().item()))
     
     # Trực quan hóa dự đoán lên ảnh để kiểm tra định tính vùng đúng/sai của mô hình.
     if vis_dir: 
@@ -157,9 +160,8 @@ def evaluate_single_image(model, img_path, device, vis_dir=None):
 
 def main(args):
     # Thiết lập đường dẫn ảnh và checkpoint mô hình để chạy thử nhanh.
-    args.img_path = 'your_image_path'
-    args.resume = 'your_model_path'
-    args.vis_dir = ''
+    if not getattr(args, 'img_path', '') or not args.resume:
+        raise ValueError('Please provide both --img_path and --resume for single-image evaluation.')
 
     # Khởi tạo toàn bộ mô hình theo cấu hình hiện tại để sẵn sàng cho huấn luyện hoặc suy luận.
     device = torch.device(args.device)
@@ -173,6 +175,8 @@ def main(args):
             resume_checkpoint = torch.load(args.resume, map_location='cpu', weights_only=False)
         if 'args' in resume_checkpoint and hasattr(resume_checkpoint['args'], 'backbone'):
             args.backbone = resume_checkpoint['args'].backbone
+        if 'best_threshold' in resume_checkpoint:
+            args.inference_threshold = resume_checkpoint['best_threshold']
 
     if args.backbone == 'auto':
         args.backbone = resolve_convnextv2_backbone_name(args.backbone)
@@ -186,7 +190,7 @@ def main(args):
     
     # Thực hiện giai đoạn đánh giá: chỉ suy luận và đo chất lượng mà không cập nhật trọng số.
     vis_dir = None if args.vis_dir == "" else args.vis_dir
-    evaluate_single_image(model, args.img_path, device, vis_dir=vis_dir)
+    evaluate_single_image(model, args.img_path, device, inference_threshold=args.inference_threshold, vis_dir=vis_dir)
 
 
 if __name__ == '__main__':
