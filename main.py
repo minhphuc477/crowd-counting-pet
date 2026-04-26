@@ -91,7 +91,7 @@ def get_args_parser():
                         help='sweep validation count thresholds and keep the best one instead of using a fixed threshold')
     arg_parser.add_argument('--threshold_min', default=0.30, type=float,
                         help='minimum threshold value to consider during validation sweep')
-    arg_parser.add_argument('--threshold_max', default=0.70, type=float,
+    arg_parser.add_argument('--threshold_max', default=0.95, type=float,
                         help='maximum threshold value to consider during validation sweep')
     arg_parser.add_argument('--threshold_step', default=0.025, type=float,
                         help='step size for validation threshold sweep')
