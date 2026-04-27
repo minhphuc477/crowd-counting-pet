@@ -83,7 +83,7 @@ PET
   ```
 
 - `train.sh` is the restored known-good ConvNeXt auto-tuning path for this fork.
-- Experimental Swin / shifted-window / enhanced-point-query changes remain available, but they are not the default training route.
+- Experimental Swin / shifted-window / enhanced-point-query changes remain available, but they are not the default training route. The shifted-window path now uses a proper Swin-style attention mask instead of roll-only windows.
 - The upgrade notes and the regression caveat are documented in [MAE40_UPGRADE_GUIDE.md](MAE40_UPGRADE_GUIDE.md).
   
 

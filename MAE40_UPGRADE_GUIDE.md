@@ -63,6 +63,13 @@ Implemented experimental change:
 
 This is the same basic idea that makes Swin-style local attention much less myopic than plain non-overlapping windows.
 
+Important implementation note:
+
+- a shifted layer cannot stop at a cyclic roll
+- it also needs the Swin-style per-window attention mask so wrapped tokens do not attend across artificial image boundaries
+- this repo now applies that mask in the encoder path
+- `--use_shifted_windows` still stays off by default until it proves better than the ConvNeXt baseline in full training
+
 ### 5. Decoder attention needed better query priors more than more depth
 
 The repo already had decoder self-attention and cross-attention. The larger weakness was the input query token itself:
@@ -146,6 +153,18 @@ bash train.sh --backbone auto_swin --output_dir pet_swin_experiment
 
 ```bash
 bash train.sh --use_shifted_windows --enhanced_point_query --output_dir pet_query_upgrade_experiment
+```
+
+### Query-only ablation
+
+```bash
+bash train.sh --enhanced_point_query --output_dir pet_query_only_experiment
+```
+
+### Shifted-window ablation
+
+```bash
+bash train.sh --use_shifted_windows --output_dir pet_shifted_window_experiment
 ```
 
 ### Direct ConvNeXt base run

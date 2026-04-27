@@ -28,7 +28,7 @@ class WinEncoderTransformer(nn.Module):
 
         self.enc_win_list = kwargs['enc_win_list']
         self.return_intermediate = kwargs['return_intermediate'] if 'return_intermediate' in kwargs else False           
-        self.use_shifted_windows = kwargs.get('use_shifted_windows', True)
+        self.use_shifted_windows = kwargs.get('use_shifted_windows', False)
 
     def _reset_parameters(self):
         for p in self.parameters():
@@ -44,7 +44,7 @@ class WinEncoderTransformer(nn.Module):
             enc_win_w, enc_win_h = enc_win_size
             shift_h = enc_win_h // 2 if self.use_shifted_windows and idx % 2 == 1 and enc_win_h > 1 else 0
             shift_w = enc_win_w // 2 if self.use_shifted_windows and idx % 2 == 1 and enc_win_w > 1 else 0
-            memeory_win, pos_embed_win, mask_win = enc_win_partition(
+            memeory_win, pos_embed_win, mask_win, attn_mask = enc_win_partition(
                 memeory,
                 pos_embed,
                 mask,
@@ -52,9 +52,17 @@ class WinEncoderTransformer(nn.Module):
                 enc_win_w,
                 shift_h=shift_h,
                 shift_w=shift_w,
+                return_attn_mask=True,
             )
+            attn_mask = expand_window_attention_mask(attn_mask, batch_size=bs, num_heads=self.nhead)
 
-            output = self.encoder.single_forward(memeory_win, src_key_padding_mask=mask_win, pos=pos_embed_win, layer_idx=idx)
+            output = self.encoder.single_forward(
+                memeory_win,
+                mask=attn_mask,
+                src_key_padding_mask=mask_win,
+                pos=pos_embed_win,
+                layer_idx=idx,
+            )
 
             memeory = enc_win_partition_reverse(
                 output,
@@ -341,7 +349,7 @@ def build_encoder(args, **kwargs):
         nhead=args.nheads,
         dim_feedforward=args.dim_feedforward,
         num_encoder_layers=args.enc_layers,
-        use_shifted_windows=getattr(args, 'use_shifted_windows', True),
+        use_shifted_windows=getattr(args, 'use_shifted_windows', False),
         **kwargs,
     )
 
