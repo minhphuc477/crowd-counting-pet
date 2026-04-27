@@ -82,9 +82,9 @@ PET
   sh train.sh
   ```
 
-- `train.sh` in this fork is the stronger 16 GB recipe targeting modern backbones and validation threshold calibration.
-- For the older ConvNeXt reference recipe, use [train_convnext_reference.sh](train_convnext_reference.sh).
-- Upgrade rationale and machine-specific recommendations are documented in [MAE40_UPGRADE_GUIDE.md](MAE40_UPGRADE_GUIDE.md).
+- `train.sh` is the restored known-good ConvNeXt auto-tuning path for this fork.
+- Experimental Swin / shifted-window / enhanced-point-query changes remain available, but they are not the default training route.
+- The upgrade notes and the regression caveat are documented in [MAE40_UPGRADE_GUIDE.md](MAE40_UPGRADE_GUIDE.md).
   
 
 ## Evaluation

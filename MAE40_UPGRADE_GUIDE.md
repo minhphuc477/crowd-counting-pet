@@ -1,5 +1,12 @@
 # MAE40 Upgrade Guide
 
+Important status update:
+
+- the architectural upgrades in this note are still experimental
+- after regression evidence from training runs, the repo default was restored to the known-good `ConvNeXtV2` auto-tuned path
+- `train.sh` now points back to the conservative reference route
+- Swin, shifted-window encoder mixing, and enhanced point-query fusion are opt-in experiments only
+
 This note documents the upgrade path implemented in this repo for a training machine with:
 
 - `RTX 5070 Ti`
@@ -14,10 +21,10 @@ It does not promise a `40.x MAE` result by itself. That still depends on dataset
 
 The counting threshold only calibrates how many predicted points are kept at inference. It does not fix weak features, limited cross-window context, or thin point-query tokens.
 
-That is why the repo now treats threshold as calibration, not architecture:
+That is why the repo treats threshold as calibration, not architecture:
 
 - `engine.py` can sweep validation thresholds
-- `train.sh` enables threshold sweep by default
+- threshold sweep is available when enabled explicitly
 - the best threshold is stored in checkpoints
 
 If MAE is still high after sweep, the bottleneck is upstream of thresholding.
@@ -38,19 +45,19 @@ There is an important difference between "best on paper" and "best usable here".
 - `ConvNeXt V2` remains the safest strong backbone family
 - `SwinV2` is the best new practical upgrade implemented in this repo because it supports dynamic full-image feature extraction with `strict_img_size=False` and gives PET a stronger hierarchical transformer backbone
 
-For this `5070 Ti 16 GB` machine, the best default path is now:
+For this `5070 Ti 16 GB` machine, the best stable default path in this repo is still:
+
+- `auto` -> resolves to `convnextv2_base`
+
+Best current experiment:
 
 - `auto_swin` -> resolves to `swinv2_small_window8_256`
-
-Safe fallback:
-
-- `convnextv2_base`
 
 ### 4. Encoder attention needed cross-window mixing
 
 The old PET encoder used local windows only, but those windows did not communicate across boundaries. That is a real limitation in crowd scenes where density patterns and occlusion cues span multiple windows.
 
-Implemented change:
+Implemented experimental change:
 
 - alternating shifted windows in the PET context encoder via `--use_shifted_windows`
 
@@ -65,7 +72,7 @@ The repo already had decoder self-attention and cross-attention. The larger weak
 - no explicit coordinate prior
 - no local-context fusion around the query
 
-Implemented change:
+Implemented experimental change:
 
 - `--enhanced_point_query`
 
@@ -102,7 +109,7 @@ This directly improves the content and positional signal that decoder attention 
 
 ### Training entrypoint
 
-`train.sh` is now the strong 16 GB recipe:
+`train.sh` is now the restored reference recipe:
 
 ```bash
 bash train.sh
@@ -110,37 +117,41 @@ bash train.sh
 
 That path uses:
 
-- `--backbone auto_swin`
-- `--enhanced_point_query`
-- `--threshold_sweep`
+- `--backbone auto`
 - `--search_trials 6`
-- `--search_epochs 10`
+- `--search_epochs 8`
 - `--search_eval_freq 1`
-- `--target_mae 45`
+- `--target_mae 50`
 - `--eval_freq 1`
 
-The conservative ConvNeXt reference path stays available in:
+The explicit copy of that same path also stays available in:
 
 - [train_convnext_reference.sh](/f:/PET/train_convnext_reference.sh)
 
 ## Recommended usage on this machine
 
-### Default strong run
+### Default stable run
 
 ```bash
 bash train.sh
 ```
 
-### Safer fallback if SwinV2 is unstable in your Linux environment
+### Experimental Swin run
+
+```bash
+bash train.sh --backbone auto_swin --output_dir pet_swin_experiment
+```
+
+### Experimental query/encoder upgrade ablation
+
+```bash
+bash train.sh --use_shifted_windows --enhanced_point_query --output_dir pet_query_upgrade_experiment
+```
+
+### Direct ConvNeXt base run
 
 ```bash
 bash train.sh --backbone convnextv2_base --output_dir pet_convnext_base_strong
-```
-
-### If you want to disable the new query enhancement for ablation
-
-```bash
-bash train.sh --no-enhanced_point_query --output_dir pet_no_query_upgrade
 ```
 
 ## Research references
@@ -159,7 +170,7 @@ For this repo and this `5070 Ti 16 GB` machine:
 
 - scheduler was not the primary problem, but it needed to stay on warmup + cosine
 - threshold was not the primary bottleneck
-- the backbone needed a stronger practical path than VGG and a wider search space than ConvNeXt-only
-- the largest architectural weakness inside PET itself was the thin point-query representation plus non-communicating encoder windows
+- the stable path is still ConvNeXtV2
+- the wider Swin and query/attention upgrades should be treated as experiments until they beat the 54 MAE baseline consistently
 
-Those are the exact areas upgraded here.
+Those are the areas upgraded here, but they are no longer the default route.

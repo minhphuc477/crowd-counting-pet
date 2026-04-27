@@ -72,7 +72,7 @@ def get_args_parser():
                         help="Dropout applied in the transformer")
     arg_parser.add_argument('--nheads', default=8, type=int,
                         help="Number of attention heads inside the transformer's attentions")
-    arg_parser.add_argument('--use_shifted_windows', action=argparse.BooleanOptionalAction, default=True,
+    arg_parser.add_argument('--use_shifted_windows', action=argparse.BooleanOptionalAction, default=False,
                         help='alternate shifted local windows in the PET context encoder')
     arg_parser.add_argument('--enhanced_point_query', action=argparse.BooleanOptionalAction, default=False,
                         help='fuse local context and explicit coordinate priors into point queries')
@@ -289,15 +289,15 @@ def build_model_state(args, device, total_epochs):
 
 def get_backbone_candidates(reference_backbone):
     backbone_neighbors = {
-        'convnextv2_nano': ['convnextv2_nano', 'convnextv2_tiny', 'convnextv2_small'],
-        'convnextv2_tiny': ['convnextv2_nano', 'convnextv2_tiny', 'convnextv2_small', 'swinv2_tiny_window8_256'],
-        'convnextv2_small': ['convnextv2_tiny', 'convnextv2_small', 'convnextv2_base', 'swinv2_tiny_window8_256'],
-        'convnextv2_base': ['convnextv2_small', 'convnextv2_base', 'swinv2_tiny_window8_256', 'swinv2_small_window8_256'],
-        'convnextv2_large': ['convnextv2_base', 'convnextv2_large', 'swinv2_small_window8_256'],
-        'swin_tiny_patch4_window7_224': ['convnextv2_small', 'swin_tiny_patch4_window7_224', 'swinv2_tiny_window8_256'],
-        'swin_small_patch4_window7_224': ['convnextv2_base', 'swin_small_patch4_window7_224', 'swinv2_small_window8_256'],
-        'swinv2_tiny_window8_256': ['convnextv2_small', 'convnextv2_base', 'swinv2_tiny_window8_256', 'swinv2_small_window8_256'],
-        'swinv2_small_window8_256': ['convnextv2_base', 'convnextv2_large', 'swinv2_tiny_window8_256', 'swinv2_small_window8_256'],
+        'convnextv2_nano': ['convnextv2_nano', 'convnextv2_small'],
+        'convnextv2_tiny': ['convnextv2_nano', 'convnextv2_tiny', 'convnextv2_small'],
+        'convnextv2_small': ['convnextv2_nano', 'convnextv2_small', 'convnextv2_base'],
+        'convnextv2_base': ['convnextv2_small', 'convnextv2_base'],
+        'convnextv2_large': ['convnextv2_base', 'convnextv2_large'],
+        'swin_tiny_patch4_window7_224': ['swin_tiny_patch4_window7_224', 'swin_small_patch4_window7_224'],
+        'swin_small_patch4_window7_224': ['swin_tiny_patch4_window7_224', 'swin_small_patch4_window7_224'],
+        'swinv2_tiny_window8_256': ['swinv2_tiny_window8_256', 'swinv2_small_window8_256'],
+        'swinv2_small_window8_256': ['swinv2_tiny_window8_256', 'swinv2_small_window8_256'],
     }
     return backbone_neighbors.get(reference_backbone, [reference_backbone])
 
