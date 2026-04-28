@@ -34,7 +34,10 @@ SWIN_VARIANTS = (
 )
 
 MAXVIT_VARIANTS = (
+    'maxvit_nano_rw_256',
+    'maxvit_rmlp_tiny_rw_256',
     'maxvit_tiny_pm_256',
+    'maxvit_tiny_tf_224',
     'maxvit_small_tf_224',
 )
 
@@ -81,12 +84,7 @@ def resolve_timm_backbone_name(name: str) -> str:
             return 'swinv2_small_window8_256'
         return 'swinv2_tiny_window8_256'
     if name == 'auto_maxvit':
-        if not torch.cuda.is_available():
-            return 'maxvit_tiny_pm_256'
-        total_memory_gb = torch.cuda.get_device_properties(torch.cuda.current_device()).total_memory / (1024 ** 3)
-        if total_memory_gb >= 24:
-            return 'maxvit_small_tf_224'
-        return 'maxvit_tiny_pm_256'
+        return 'maxvit_rmlp_tiny_rw_256'
     if name not in MODERN_TIMM_BACKBONES:
         raise ValueError(f'Unsupported timm backbone: {name}')
     return name
@@ -118,7 +116,10 @@ def get_timm_training_defaults(backbone_name: str):
         'swinv2_small_window8_256': (2, 2.5e-5, 2.5e-6),
         'swinv2_base_window8_256': (1, 1.5e-5, 1.5e-6),
         'swinv2_cr_small_ns_256': (2, 2.5e-5, 2.5e-6),
+        'maxvit_nano_rw_256': (8, 7.5e-5, 7.5e-6),
+        'maxvit_rmlp_tiny_rw_256': (4, 5.0e-5, 5.0e-6),
         'maxvit_tiny_pm_256': (4, 5.0e-5, 5.0e-6),
+        'maxvit_tiny_tf_224': (4, 5.0e-5, 5.0e-6),
         'maxvit_small_tf_224': (2, 2.5e-5, 2.5e-6),
     }
     if backbone_name not in defaults:
@@ -164,10 +165,19 @@ class BackboneBase_Timm(nn.Module):
         self.num_channels = num_channels
         self.return_interm_layers = return_interm_layers
 
-        self.stage_channels = [info['num_chs'] for info in backbone.feature_info.get_dicts()]
+        self.feature_info = backbone.feature_info.get_dicts()
+        self.stage_channels = [info['num_chs'] for info in self.feature_info]
+        self.stage_reductions = [info['reduction'] for info in self.feature_info]
         if len(self.stage_channels) != 4:
             raise ValueError(
                 f'The selected timm backbone must expose 4 stages, but got {len(self.stage_channels)} stages.'
+            )
+        self.output_reduction_to_index = {reduction: idx for idx, reduction in enumerate(self.stage_reductions)}
+        missing_reductions = [reduction for reduction in (4, 8) if reduction not in self.output_reduction_to_index]
+        if missing_reductions:
+            raise ValueError(
+                f'The selected timm backbone must expose 4x and 8x features for PET. '
+                f'Got reductions {self.stage_reductions}; missing {missing_reductions}.'
             )
         self.fpn = ModernBackboneFPN(self.stage_channels, hidden_size=num_channels, out_size=num_channels, out_kernel=3)
 
@@ -189,8 +199,8 @@ class BackboneBase_Timm(nn.Module):
         feats = [self._to_nchw(feat, ch) for feat, ch in zip(feats, self.stage_channels)]
 
         features_fpn = self.fpn(feats)
-        features_fpn_4x = features_fpn[0]
-        features_fpn_8x = features_fpn[1]
+        features_fpn_4x = features_fpn[self.output_reduction_to_index[4]]
+        features_fpn_8x = features_fpn[self.output_reduction_to_index[8]]
 
         m = tensor_list.mask
         assert m is not None

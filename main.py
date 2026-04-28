@@ -321,7 +321,10 @@ def get_backbone_candidates(reference_backbone, expand_search=False):
         'swinv2_small_window8_256': ['swinv2_tiny_window8_256', 'swinv2_small_window8_256'],
         'swinv2_base_window8_256': ['swinv2_small_window8_256', 'swinv2_base_window8_256'],
         'swinv2_cr_small_ns_256': ['swinv2_cr_small_ns_256', 'swinv2_base_window8_256'],
+        'maxvit_nano_rw_256': ['maxvit_nano_rw_256', 'maxvit_rmlp_tiny_rw_256'],
+        'maxvit_rmlp_tiny_rw_256': ['maxvit_nano_rw_256', 'maxvit_rmlp_tiny_rw_256'],
         'maxvit_tiny_pm_256': ['maxvit_tiny_pm_256'],
+        'maxvit_tiny_tf_224': ['maxvit_tiny_tf_224'],
         'maxvit_small_tf_224': ['maxvit_small_tf_224'],
     }
     return backbone_neighbors.get(reference_backbone, [reference_backbone])
@@ -560,6 +563,7 @@ def run_hyperparameter_search(args, device, dataset_train, dataset_val, output_d
                 or 'invalid numeric entries' in exc_message
                 or 'must be divisible by window' in exc_message
                 or 'must be divisible by' in exc_message
+                or 'invalid for input of size' in exc_message
             ):
                 if device.type == 'cuda':
                     torch.cuda.empty_cache()

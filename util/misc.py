@@ -496,9 +496,26 @@ def init_distributed_mode(args):
     args.dist_backend = 'nccl'
     print('| distributed init (rank {}): {}'.format(
         args.rank, args.dist_url), flush=True)
-    torch.distributed.init_process_group(backend=args.dist_backend, init_method=args.dist_url,
-                                         world_size=args.world_size, rank=args.rank)
-    torch.distributed.barrier()
+    init_kwargs = dict(
+        backend=args.dist_backend,
+        init_method=args.dist_url,
+        world_size=args.world_size,
+        rank=args.rank,
+    )
+    if args.dist_backend == 'nccl':
+        try:
+            torch.distributed.init_process_group(device_id=args.gpu, **init_kwargs)
+        except TypeError:
+            torch.distributed.init_process_group(**init_kwargs)
+    else:
+        torch.distributed.init_process_group(**init_kwargs)
+    if args.dist_backend == 'nccl':
+        try:
+            torch.distributed.barrier(device_ids=[args.gpu])
+        except TypeError:
+            torch.distributed.barrier()
+    else:
+        torch.distributed.barrier()
     setup_for_distributed(args.rank == 0)
 
 

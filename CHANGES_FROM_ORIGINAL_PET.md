@@ -58,6 +58,14 @@ New auto selector:
 
 - `auto_maxvit`
 
+Recent runtime fixes applied:
+
+- fixed modern-backbone scale mapping so PET now binds its `4x` and `8x` feature names to the backbone's actual reduction factors instead of assuming every backbone starts at `4x`
+- this fixes MaxViT decoder crashes caused by feeding PET a `2x/4x` pair while labeling it as `4x/8x`
+- `auto_maxvit` now resolves to `maxvit_rmlp_tiny_rw_256`, which has pretrained weights in current timm builds
+- `maxvit_tiny_pm_256` still runs, but it has no pretrained weights in current timm builds and is no longer the recommended MaxViT path
+- distributed init now passes the NCCL device id when supported to avoid the rank-to-GPU warning on newer PyTorch builds
+
 ## Backbone research
 
 The question is not "best classifier backbone on paper". The question is "best PET backbone that works with dynamic image sizes, hierarchical features, and this repo's FPN-style adapter."
@@ -80,7 +88,7 @@ Best practical upgrade candidate for this repo:
 
 Recommended order:
 
-1. `maxvit_tiny_pm_256`
+1. `maxvit_rmlp_tiny_rw_256`
 2. `swinv2_base_window8_256`
 3. `maxvit_small_tf_224` only after a dedicated padding/input-shape pass
 
@@ -105,7 +113,7 @@ Important geometry note:
 
 - `maxvit_small_tf_224` is not safe to include in automatic PET search under the current `256`-based crop/padding regime
 - it can require window divisibility that the current PET batching path does not guarantee
-- this fork now keeps automatic MaxViT search on `maxvit_tiny_pm_256` only
+- this fork now keeps automatic MaxViT search on `maxvit_rmlp_tiny_rw_256`
 - if `maxvit_small_tf_224` is tested later, it should be treated as a separate input-geometry experiment
 
 Primary sources:
@@ -160,7 +168,7 @@ bash train.sh --backbone convnextv2_base --enhanced_point_query --output_dir con
 Best next backbone experiment:
 
 ```bash
-bash train.sh --backbone maxvit_tiny_pm_256 --lr_scheduler warmup_poly --output_dir maxvit_tiny_poly
+bash train.sh --backbone maxvit_rmlp_tiny_rw_256 --lr_scheduler warmup_poly --output_dir maxvit_rmlp_tiny_poly
 ```
 
 Larger MaxViT experiment:
@@ -186,5 +194,5 @@ bash train.sh --backbone swinv2_base_window8_256 --lr_scheduler warmup_cosine --
 Current working position:
 
 - best known baseline: `convnextv2_base`
-- best next upgrade candidate: `maxvit_tiny_pm_256` first, then `maxvit_small_tf_224`
+- best next upgrade candidate: `maxvit_rmlp_tiny_rw_256` first, then `maxvit_small_tf_224`
 - best scheduler experiment to pair with new backbones: `warmup_poly`
