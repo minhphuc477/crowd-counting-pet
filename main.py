@@ -178,6 +178,7 @@ def configure_determinism(args):
 
 def resolve_auto_tuning_defaults(args, device):
     if args.backbone in {'auto', 'auto_swin', 'auto_maxvit'}:
+        args.expand_backbone_search = True
         args.backbone = resolve_timm_backbone_name(args.backbone)
         args.batch_size, args.lr, args.lr_backbone = get_timm_training_defaults(args.backbone)
         args.enc_win_list = getattr(args, 'enc_win_list', [(32, 16), (32, 16), (16, 8), (16, 8)])
@@ -191,6 +192,7 @@ def resolve_auto_tuning_defaults(args, device):
             args.backbone, args.batch_size, args.lr, args.lr_backbone, args.accum_iter, args.use_amp, args.search_trials
         ))
     else:
+        args.expand_backbone_search = getattr(args, 'expand_backbone_search', False)
         args.accum_iter = max(1, args.accum_iter)
         args.use_amp = should_use_amp(args, device)
         args.split_warmup_epochs = getattr(args, 'split_warmup_epochs', 5)
@@ -303,7 +305,10 @@ def build_model_state(args, device, total_epochs):
     return model, criterion, model_without_ddp, optimizer, lr_scheduler, n_parameters
 
 
-def get_backbone_candidates(reference_backbone):
+def get_backbone_candidates(reference_backbone, expand_search=False):
+    if not expand_search:
+        return [reference_backbone]
+
     backbone_neighbors = {
         'convnextv2_nano': ['convnextv2_nano', 'convnextv2_small'],
         'convnextv2_tiny': ['convnextv2_nano', 'convnextv2_tiny', 'convnextv2_small'],
@@ -316,8 +321,8 @@ def get_backbone_candidates(reference_backbone):
         'swinv2_small_window8_256': ['swinv2_tiny_window8_256', 'swinv2_small_window8_256'],
         'swinv2_base_window8_256': ['swinv2_small_window8_256', 'swinv2_base_window8_256'],
         'swinv2_cr_small_ns_256': ['swinv2_cr_small_ns_256', 'swinv2_base_window8_256'],
-        'maxvit_tiny_pm_256': ['maxvit_tiny_pm_256', 'maxvit_small_tf_224'],
-        'maxvit_small_tf_224': ['maxvit_tiny_pm_256', 'maxvit_small_tf_224'],
+        'maxvit_tiny_pm_256': ['maxvit_tiny_pm_256'],
+        'maxvit_small_tf_224': ['maxvit_small_tf_224'],
     }
     return backbone_neighbors.get(reference_backbone, [reference_backbone])
 
@@ -518,7 +523,10 @@ def run_hyperparameter_search(args, device, dataset_train, dataset_val, output_d
     if args.search_trials <= 0:
         return {}
 
-    backbone_candidates = get_backbone_candidates(args.backbone)
+    backbone_candidates = get_backbone_candidates(
+        args.backbone,
+        expand_search=bool(getattr(args, 'expand_backbone_search', False)),
+    )
     rng = random.Random(args.seed)
     best_result = {}
     best_score = float('inf')
@@ -544,12 +552,14 @@ def run_hyperparameter_search(args, device, dataset_train, dataset_val, output_d
                 output_dir=None, run_log_name=None, resume_checkpoint=None,
                 save_checkpoints=False, eval_freq=args.search_eval_freq, search_trial=trial
             )
-        except (NonFiniteTrainingError, RuntimeError, ValueError) as exc:
+        except (NonFiniteTrainingError, RuntimeError, ValueError, AssertionError) as exc:
             exc_message = str(exc).lower()
             if (
                 'out of memory' in exc_message
                 or 'non-finite loss' in exc_message
                 or 'invalid numeric entries' in exc_message
+                or 'must be divisible by window' in exc_message
+                or 'must be divisible by' in exc_message
             ):
                 if device.type == 'cuda':
                     torch.cuda.empty_cache()

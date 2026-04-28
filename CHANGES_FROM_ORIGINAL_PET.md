@@ -81,8 +81,8 @@ Best practical upgrade candidate for this repo:
 Recommended order:
 
 1. `maxvit_tiny_pm_256`
-2. `maxvit_small_tf_224`
-3. `swinv2_base_window8_256`
+2. `swinv2_base_window8_256`
+3. `maxvit_small_tf_224` only after a dedicated padding/input-shape pass
 
 Why MaxViT is the strongest next bet:
 
@@ -100,6 +100,13 @@ Why not keep forcing ConvNeXtV2 only:
 - `convnextv2_base` is still the best known baseline in this repo
 - but it is a baseline, not proof that no better backbone exists
 - MaxViT is the cleanest next architecture to test without repeating the shifted-window mistake
+
+Important geometry note:
+
+- `maxvit_small_tf_224` is not safe to include in automatic PET search under the current `256`-based crop/padding regime
+- it can require window divisibility that the current PET batching path does not guarantee
+- this fork now keeps automatic MaxViT search on `maxvit_tiny_pm_256` only
+- if `maxvit_small_tf_224` is tested later, it should be treated as a separate input-geometry experiment
 
 Primary sources:
 
@@ -159,7 +166,7 @@ bash train.sh --backbone maxvit_tiny_pm_256 --lr_scheduler warmup_poly --output_
 Larger MaxViT experiment:
 
 ```bash
-bash train.sh --backbone maxvit_small_tf_224 --lr_scheduler warmup_poly --output_dir maxvit_small_poly
+bash train.sh --backbone maxvit_small_tf_224 --search_trials 0 --lr_scheduler warmup_poly --output_dir maxvit_small_poly
 ```
 
 Secondary transformer-backbone experiment:
