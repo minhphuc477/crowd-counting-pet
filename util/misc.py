@@ -38,6 +38,7 @@ CHECKPOINT_MODEL_ARG_FIELDS = (
     'lr_scheduler',
     'warmup_epochs',
     'min_lr',
+    'poly_power',
     'set_cost_class',
     'set_cost_point',
     'ce_loss_coef',
@@ -48,7 +49,6 @@ CHECKPOINT_MODEL_ARG_FIELDS = (
     'count_loss_coef',
     'enc_win_list',
     'dec_win_sizes',
-    'use_shifted_windows',
     'enhanced_point_query',
     'query_context_kernel',
 )

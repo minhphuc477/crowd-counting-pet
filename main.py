@@ -46,12 +46,14 @@ def get_args_parser():
     arg_parser.add_argument('--weight_decay', default=1e-4, type=float)
     arg_parser.add_argument('--epochs', default=1500, type=int)
     arg_parser.add_argument('--lr_scheduler', default='warmup_cosine', type=str,
-                        choices=('warmup_cosine', 'cosine', 'step'),
+                        choices=('warmup_cosine', 'warmup_poly', 'cosine', 'step'),
                         help='learning-rate schedule to use')
     arg_parser.add_argument('--warmup_epochs', default=5, type=int,
                         help='number of warmup epochs used by warmup_cosine')
     arg_parser.add_argument('--min_lr', default=1e-7, type=float,
                         help='minimum learning rate reached by cosine annealing')
+    arg_parser.add_argument('--poly_power', default=0.9, type=float,
+                        help='polynomial decay power used by warmup_poly')
     arg_parser.add_argument('--clip_max_norm', default=0.1, type=float,
                         help='gradient clipping max norm')
 
@@ -72,8 +74,6 @@ def get_args_parser():
                         help="Dropout applied in the transformer")
     arg_parser.add_argument('--nheads', default=8, type=int,
                         help="Number of attention heads inside the transformer's attentions")
-    arg_parser.add_argument('--use_shifted_windows', action=argparse.BooleanOptionalAction, default=False,
-                        help='alternate shifted local windows in the PET context encoder')
     arg_parser.add_argument('--enhanced_point_query', action=argparse.BooleanOptionalAction, default=False,
                         help='fuse local context and explicit coordinate priors into point queries')
     arg_parser.add_argument('--query_context_kernel', default=3, type=int,
@@ -177,7 +177,7 @@ def configure_determinism(args):
 
 
 def resolve_auto_tuning_defaults(args, device):
-    if args.backbone in {'auto', 'auto_swin'}:
+    if args.backbone in {'auto', 'auto_swin', 'auto_maxvit'}:
         args.backbone = resolve_timm_backbone_name(args.backbone)
         args.batch_size, args.lr, args.lr_backbone = get_timm_training_defaults(args.backbone)
         args.enc_win_list = getattr(args, 'enc_win_list', [(32, 16), (32, 16), (16, 8), (16, 8)])
@@ -259,6 +259,22 @@ def build_model_state(args, device, total_epochs):
             T_max=max(1, total_epochs),
             eta_min=getattr(args, 'min_lr', 1e-7),
         )
+    elif scheduler_name == 'warmup_poly':
+        warmup_epochs = min(max(0, int(getattr(args, 'warmup_epochs', 5))), max(total_epochs - 1, 0))
+        power = float(getattr(args, 'poly_power', 0.9))
+
+        def poly_factor(epoch_idx):
+            if total_epochs <= 1:
+                return 1.0
+            if warmup_epochs > 0 and epoch_idx < warmup_epochs:
+                warmup_progress = float(epoch_idx + 1) / float(warmup_epochs)
+                return max(1e-3, warmup_progress)
+            decay_steps = max(1, total_epochs - warmup_epochs)
+            progress = min(max(epoch_idx - warmup_epochs, 0), decay_steps) / float(decay_steps)
+            min_lr_ratio = float(getattr(args, 'min_lr', 1e-7)) / max(float(args.lr), 1e-12)
+            return max(min_lr_ratio, (1.0 - progress) ** power)
+
+        lr_scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=poly_factor)
     else:
         warmup_epochs = min(max(0, int(getattr(args, 'warmup_epochs', 5))), max(total_epochs - 1, 0))
         cosine_epochs = max(1, total_epochs - warmup_epochs)
@@ -298,6 +314,10 @@ def get_backbone_candidates(reference_backbone):
         'swin_small_patch4_window7_224': ['swin_tiny_patch4_window7_224', 'swin_small_patch4_window7_224'],
         'swinv2_tiny_window8_256': ['swinv2_tiny_window8_256', 'swinv2_small_window8_256'],
         'swinv2_small_window8_256': ['swinv2_tiny_window8_256', 'swinv2_small_window8_256'],
+        'swinv2_base_window8_256': ['swinv2_small_window8_256', 'swinv2_base_window8_256'],
+        'swinv2_cr_small_ns_256': ['swinv2_cr_small_ns_256', 'swinv2_base_window8_256'],
+        'maxvit_tiny_pm_256': ['maxvit_tiny_pm_256', 'maxvit_small_tf_224'],
+        'maxvit_small_tf_224': ['maxvit_tiny_pm_256', 'maxvit_small_tf_224'],
     }
     return backbone_neighbors.get(reference_backbone, [reference_backbone])
 

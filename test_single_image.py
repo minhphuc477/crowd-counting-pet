@@ -177,7 +177,7 @@ def main(args):
         if 'best_threshold' in resume_checkpoint:
             args.inference_threshold = resume_checkpoint['best_threshold']
 
-    if args.backbone in {'auto', 'auto_swin'}:
+    if args.backbone in {'auto', 'auto_swin', 'auto_maxvit'}:
         args.backbone = resolve_timm_backbone_name(args.backbone)
 
     model, criterion = build_model(args)

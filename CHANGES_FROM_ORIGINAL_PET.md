@@ -1,206 +1,183 @@
-# Changes From Original PET
+# PET Fork Notes
 
-Reference upstream repo: [`cxliu0/PET`](https://github.com/cxliu0/PET)  
-Reference upstream commit audited here: `5b4dd7da8b11568a3305a88bb7c99a7fc831a998`  
-Local repo HEAD after this repair: `2cfe33d9fe84f34116dd70222541d58c39deabc7`
+This is the single fork-specific note for this repository. `README.md` is kept close to the original PET repo again.
 
-## Scope
+Reference paper:
 
-This document records the current functional differences between this repo and the original PET repository, with emphasis on the fixes applied in this repair pass.
+- PET: https://openaccess.thecvf.com/content/ICCV2023/html/Liu_Point-Query_Quadtree_for_Crowd_Counting_Localization_and_More_ICCV_2023_paper.html
 
-The original PET paper is:
+## What was removed
 
-- [Point-Query Quadtree for Crowd Counting, Localization, and More (ICCV 2023)](https://openaccess.thecvf.com/content/ICCV2023/html/Liu_Point-Query_Quadtree_for_Crowd_Counting_Localization_and_More_ICCV_2023_paper.html)
+The shifted-window encoder experiment was removed from the code.
 
-The paper defines PET around point-query loss and quadtree-splitter loss. The extra fork-only count regularizer was not part of the original formulation.
+Reason:
 
-## Fork Additions Kept
+- user ablations isolated it as a hard regression
+- `ablate_base` stayed competitive
+- `ablate_query` stayed competitive
+- `ablate_shift` failed badly
+- `ablate_both` failed badly
 
-- `models/backbones/backbone_convnextv2.py`
-  Adds an optional ConvNeXt V2 backbone path for newer GPUs and larger pretrained models.
-- `main.py`, `engine.py`
-  Keeps mixed precision, gradient accumulation, optional threshold sweep, optional hyperparameter search, and more defensive training error handling.
-- `test_single_image.py`
-  Keeps the single-image inference utility.
-- `models/matcher.py`, `models/pet.py`, `util/misc.py`
-  Keeps numerical sanitization and empty-target/distributed robustness improvements that are useful beyond the original codebase.
+Conclusion:
 
-## Fixes Applied In This Repair
+- cross-window shifting inside PET's own encoder is not a good change for this fork
+- the problem is architectural, not just implementation
 
-### 1. Restored upstream-safe defaults
+## What remains from the upgrade work
 
-- `main.py`
-  Default backbone changed back to `vgg16_bn`.
-- `train.sh`
-  Default training recipe changed back to the upstream-style VGG path instead of forcing the experimental auto/ConvNeXt configuration.
-- `eval.py`, `test_single_image.py`, `eval.sh`
-  Default evaluation backbone changed back to `vgg16_bn`.
+### 1. Query upgrade
 
-Why:
+The query upgrade is still available through:
 
-- The fork had made the experimental ConvNeXt/auto path the default everywhere.
-- That diverged from the published PET recipe and made the repo much easier to misconfigure.
+- `--enhanced_point_query`
 
-### 2. Restored backbone dispatch instead of forcing ConvNeXt
+What it changes:
 
-- `models/backbones/__init__.py`
+- adds local context around each point query with a depthwise + pointwise context block
+- adds an explicit sine-coordinate prior derived from the point-query location
+- fuses query content with sampled backbone feature + local context + coordinate prior
+- fuses query position embedding with the coordinate prior
+- adds branch-specific learned biases for sparse and dense branches
+- normalizes the fused query tensors before decoding
 
-What changed:
+Why this is still worth testing:
 
-- The repo now dispatches to VGG when `--backbone` starts with `vgg`.
-- The ConvNeXt path remains available when `--backbone` is `auto` or starts with `convnextv2_`.
+- your ablations show the query-only path is not the source of the catastrophic regression
+- it directly improves the representation seen by decoder self-attention and cross-attention
 
-Why:
+### 2. Modern backbone support
 
-- The fork had hard-wired `build_backbone` to ConvNeXt V2, which silently broke the original PET backbone path.
+The fork keeps a generic timm backbone adapter with PET feature fusion. Supported practical options now include:
 
-### 3. Fixed dataset path override bug
+- `convnextv2_*`
+- `swin*`
+- `swinv2_*`
+- `maxvit_*`
 
-- `datasets/__init__.py`
+New auto selector:
 
-What changed:
+- `auto_maxvit`
 
-- `--data_path` is now honored.
-- Fallback resolution now supports both `./data/ShanghaiTech/PartA` and `./data/ShanghaiTech/part_A`.
+## Backbone research
 
-Why:
+The question is not "best classifier backbone on paper". The question is "best PET backbone that works with dynamic image sizes, hierarchical features, and this repo's FPN-style adapter."
 
-- The fork always overwrote `args.data_path` internally, so user-provided dataset paths were ignored.
-- On case-sensitive systems this could also break ShanghaiTech loading depending on folder naming.
+### Local compatibility checks
 
-### 4. Fixed checkpoint compatibility and resume/eval architecture mismatches
+Verified locally with `timm 1.0.26`:
 
-- `util/misc.py`
-- `main.py`
-- `eval.py`
-- `test_single_image.py`
+- `maxvit_tiny_pm_256`: works with `features_only=True` and dynamic non-square inputs
+- `swinv2_base_window8_256`: works with `features_only=True` and dynamic non-square inputs
+- `hiera_small_abswin_256`: works at fixed `256x256`, but failed on dynamic non-square input in this PET-style feature extraction path
 
-What changed:
+That matters. PET does not live on fixed-size square classification crops at inference time.
 
-- Added `utils.load_checkpoint()` to support both newer PyTorch and the original PET environment.
-- Added `utils.restore_args_from_checkpoint()` so resume/eval rebuild the model with the checkpoint's actual architecture settings.
+### Best next backbone to test
 
-Why:
+Best practical upgrade candidate for this repo:
 
-- The fork used `torch.load(..., weights_only=False)`, which is incompatible with the original PET environment (`PyTorch 1.12.1`).
-- The fork also restored only a small subset of checkpoint args, which could rebuild the wrong architecture and make checkpoint loading fail.
+- `MaxViT`
 
-### 5. Disabled the harmful count-loss path by default and corrected its semantics
+Recommended order:
 
-- `main.py`
-- `models/pet.py`
+1. `maxvit_tiny_pm_256`
+2. `maxvit_small_tf_224`
+3. `swinv2_base_window8_256`
 
-What changed:
+Why MaxViT is the strongest next bet:
 
-- `--count_loss_coef` default changed from `0.01` to `0.0`.
-- The optional count loss now works on the combined routed count instead of forcing the sparse branch and dense branch to each match the full-image count independently.
+- official design mixes blocked local attention and dilated global attention inside the backbone itself
+- hierarchical multi-scale features match PET better than plain ViT-style backbones
+- it gives global context without modifying PET's own encoder
+- it worked in local dynamic-size feature extraction checks
 
-Why:
+Why not Hiera right now:
 
-- The previous fork logic pushed both branches toward the entire ground-truth count, which fights the quadtree routing design and can flatten training progress.
-- The original PET formulation does not include this extra loss term.
+- strong paper, but the current timm features-only path was not robust for PET-style dynamic non-square inference here
 
-### 6. Restored less aggressive training defaults
+Why not keep forcing ConvNeXtV2 only:
 
-- `main.py`
-- `train.sh`
+- `convnextv2_base` is still the best known baseline in this repo
+- but it is a baseline, not proof that no better backbone exists
+- MaxViT is the cleanest next architecture to test without repeating the shifted-window mistake
 
-What changed:
+Primary sources:
 
-- `--threshold_sweep` default changed from enabled to disabled.
-- `--search_trials` default changed from `4` to `0`.
-- `--split_warmup_epochs` default changed from `1` back to `5`.
-- `--target_mae` default now disables early stopping unless explicitly set.
-- The dedicated `5070 Ti` auto profile was removed, so `--backbone auto` goes back to the generic memory-based ConvNeXt path.
+- ConvNeXt V2: https://arxiv.org/abs/2301.00808
+- Swin Transformer V2: https://arxiv.org/abs/2111.09883
+- MaxViT: https://arxiv.org/abs/2204.01697
+- Hiera: https://arxiv.org/abs/2306.00989
+- MaxViT official repo: https://github.com/google-research/maxvit
+- Hiera official repo: https://github.com/facebookresearch/hiera
 
-Why:
+## Scheduler research
 
-- The fork had turned several experimental behaviors on by default.
-- That made the training path diverge sharply from the original PET recipe and obscured whether the model itself or the fork settings were causing regressions.
+Current baseline scheduler:
 
-### 7. Fixed SHA dataset coordinate edge cases
+- `warmup_cosine`
 
-- `datasets/SHA.py`
+Why it stays:
 
-What changed:
+- it is still the safest baseline for pretrained hierarchical backbones with AdamW
+- ConvNeXt V2 and Swin-family training recipes are both built around warmup + cosine-style decay
 
-- Fixed `index <= len(self)` to `index < len(self)`.
-- Fixed random horizontal flip to mirror around `width - 1`.
-- Fixed crop filtering to treat the right and bottom edges as exclusive.
-- Made crop resize interpolation explicit with `mode='bilinear', align_corners=False`.
+New scheduler added for PET experiments:
 
-Why:
+- `warmup_poly`
 
-- These are small coordinate bugs, but they can corrupt training targets near crop/flip boundaries.
+Why add it:
 
-### 8. Simplified inference branch merge
+- PET is a dense prediction problem, not plain classification
+- polynomial decay is a common fit for dense prediction workloads because it decays more gradually late in training than a hard step drop and can stay more useful than cosine when long runs push the LR too close to zero
 
-- `models/pet.py`
+Recommended scheduler order:
 
-What changed:
+1. baseline: `warmup_cosine`
+2. next experiment: `warmup_poly`
+3. avoid using `step` as the main path unless you have a strong reason
 
-- The sparse/dense merge now concatenates the active branch outputs directly instead of applying a meaningless `score > 0` filter.
+## Suggested next runs
 
-Why:
+Known baseline:
 
-- Softmax probabilities are always positive, so that filter never removed anything and only added confusion.
+```bash
+bash train.sh --backbone convnextv2_base --output_dir convnext_base_ref
+```
 
-### 9. Made shell entrypoints safer to reuse
+Query-only run:
 
-- `train.sh`
-- `eval.sh`
+```bash
+bash train.sh --backbone convnextv2_base --enhanced_point_query --output_dir convnext_query_only
+```
 
-What changed:
+Best next backbone experiment:
 
-- Both scripts now use `${CUDA_VISIBLE_DEVICES:-0}`.
-- Both scripts accept additional CLI flags through `"$@"`.
-- Training/eval defaults now match the restored upstream-safe path.
+```bash
+bash train.sh --backbone maxvit_tiny_pm_256 --lr_scheduler warmup_poly --output_dir maxvit_tiny_poly
+```
 
-Why:
+Larger MaxViT experiment:
 
-- The old scripts locked the repo into one experimental configuration and were awkward to override.
+```bash
+bash train.sh --backbone maxvit_small_tf_224 --lr_scheduler warmup_poly --output_dir maxvit_small_poly
+```
 
-## Current Repo-Level Divergence From Original PET
+Secondary transformer-backbone experiment:
 
-These differences still exist on purpose after the repair:
+```bash
+bash train.sh --backbone swinv2_base_window8_256 --lr_scheduler warmup_cosine --output_dir swinv2_base_cosine
+```
 
-- ConvNeXt V2 backbone support is still present and usable.
-- Mixed precision, accumulation, and Optuna-based search are still present, but now opt-in instead of default.
-- Threshold sweep support is still present, but now opt-in instead of default.
-- Single-image inference is still present.
-- Numeric sanitization and empty-target handling remain in matcher/loss/util code.
+## Bottom line
 
-## Files Currently Different From Upstream
+- removed: shifted-window PET encoder
+- kept: query upgrade
+- restored: README surface
+- added: MaxViT backbone path
+- added: `warmup_poly` scheduler option
 
-At the time of this audit, the tracked files that still differ from `origin/main` are:
+Current working position:
 
-- `datasets/SHA.py`
-- `engine.py`
-- `eval.py`
-- `eval.sh`
-- `main.py`
-- `models/backbones/__init__.py`
-- `models/backbones/backbone_convnextv2.py`
-- `models/backbones/backbone_vgg.py`
-- `models/matcher.py`
-- `models/pet.py`
-- `models/position_encoding.py`
-- `models/transformer/__init__.py`
-- `models/transformer/prog_win_transformer.py`
-- `preprocess_dataset.py`
-- `requirements.txt`
-- `test_single_image.py`
-- `train.sh`
-- `util/__init__.py`
-- `util/misc.py`
-
-## Recommended Usage After This Repair
-
-- For the closest behavior to the original PET paper/repo, use:
-  - `bash train.sh`
-  - `bash eval.sh --resume path_to_model`
-- `train.sh` and `eval.sh` are shell scripts. Run them with `bash`/`sh`, not with `python`.
-- Use the ConvNeXt path only intentionally, for example:
-  - `bash train.sh --backbone convnextv2_nano`
-  - `bash train.sh --backbone auto`
-- If you want threshold sweep or hyperparameter search, enable them explicitly instead of relying on defaults.
+- best known baseline: `convnextv2_base`
+- best next upgrade candidate: `maxvit_tiny_pm_256` first, then `maxvit_small_tf_224`
+- best scheduler experiment to pair with new backbones: `warmup_poly`

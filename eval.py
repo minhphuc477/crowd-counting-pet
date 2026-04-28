@@ -108,7 +108,7 @@ def main(args):
         if 'best_threshold' in resume_checkpoint and not args.threshold_sweep:
             args.inference_threshold = resume_checkpoint['best_threshold']
 
-    if args.backbone in {'auto', 'auto_swin'}:
+    if args.backbone in {'auto', 'auto_swin', 'auto_maxvit'}:
         args.backbone = resolve_timm_backbone_name(args.backbone)
 
     # Khởi tạo toàn bộ mô hình theo cấu hình hiện tại để sẵn sàng cho huấn luyện hoặc suy luận.

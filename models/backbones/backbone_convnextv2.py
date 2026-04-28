@@ -29,13 +29,20 @@ SWIN_VARIANTS = (
     'swin_small_patch4_window7_224',
     'swinv2_tiny_window8_256',
     'swinv2_small_window8_256',
+    'swinv2_base_window8_256',
+    'swinv2_cr_small_ns_256',
 )
 
-MODERN_TIMM_BACKBONES = CONVNEXTV2_VARIANTS + SWIN_VARIANTS
+MAXVIT_VARIANTS = (
+    'maxvit_tiny_pm_256',
+    'maxvit_small_tf_224',
+)
+
+MODERN_TIMM_BACKBONES = CONVNEXTV2_VARIANTS + SWIN_VARIANTS + MAXVIT_VARIANTS
 
 
 def is_modern_timm_backbone(name: str) -> bool:
-    return name in {'auto', 'auto_swin'} or name.startswith('convnextv2_') or name.startswith('swin')
+    return name in {'auto', 'auto_swin', 'auto_maxvit'} or name.startswith('convnextv2_') or name.startswith('swin') or name.startswith('maxvit')
 
 
 def resolve_convnextv2_backbone_name(name: str) -> str:
@@ -73,6 +80,13 @@ def resolve_timm_backbone_name(name: str) -> str:
         if total_memory_gb >= 16:
             return 'swinv2_small_window8_256'
         return 'swinv2_tiny_window8_256'
+    if name == 'auto_maxvit':
+        if not torch.cuda.is_available():
+            return 'maxvit_tiny_pm_256'
+        total_memory_gb = torch.cuda.get_device_properties(torch.cuda.current_device()).total_memory / (1024 ** 3)
+        if total_memory_gb >= 24:
+            return 'maxvit_small_tf_224'
+        return 'maxvit_tiny_pm_256'
     if name not in MODERN_TIMM_BACKBONES:
         raise ValueError(f'Unsupported timm backbone: {name}')
     return name
@@ -102,6 +116,10 @@ def get_timm_training_defaults(backbone_name: str):
         'swin_small_patch4_window7_224': (2, 2.5e-5, 2.5e-6),
         'swinv2_tiny_window8_256': (4, 5.0e-5, 5.0e-6),
         'swinv2_small_window8_256': (2, 2.5e-5, 2.5e-6),
+        'swinv2_base_window8_256': (1, 1.5e-5, 1.5e-6),
+        'swinv2_cr_small_ns_256': (2, 2.5e-5, 2.5e-6),
+        'maxvit_tiny_pm_256': (4, 5.0e-5, 5.0e-6),
+        'maxvit_small_tf_224': (2, 2.5e-5, 2.5e-6),
     }
     if backbone_name not in defaults:
         raise ValueError(f'Unsupported backbone defaults for {backbone_name}')
