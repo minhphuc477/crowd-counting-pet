@@ -116,6 +116,8 @@ class BasePETCount(nn.Module):
         # Tạo mã hóa vị trí dày đặc ở mọi pixel để truy vấn điểm giữ đúng thông tin tọa độ.
         dense_input_embed = kwargs['dense_input_embed']
         bs, c = dense_input_embed.shape[:2]
+        dense_h, dense_w = dense_input_embed.shape[-2:]
+        src_h, src_w = src.shape[-2:]
 
         # Lấy kích thước ảnh/feature map hiện tại để tính chỉ số và phép biến đổi không gian chính xác.
         input = samples.tensors
@@ -131,12 +133,15 @@ class BasePETCount(nn.Module):
         h, w = shift_x.shape
 
         # Trích xuất embedding vị trí tương ứng với các điểm truy vấn đã sinh.
-        query_embed = dense_input_embed[:, :, points_queries[:, 0], points_queries[:, 1]]
+        query_y = points_queries[:, 0].clamp(0, dense_h - 1)
+        query_x = points_queries[:, 1].clamp(0, dense_w - 1)
+        query_embed = dense_input_embed[:, :, query_y, query_x]
         bs, c = query_embed.shape[:2]
         query_embed = query_embed.view(bs, c, h, w)
 
         # Lấy đặc trưng tại điểm truy vấn theo cơ chế tương đương nội suy lân cận gần nhất.
-        shift_y_down, shift_x_down = points_queries[:, 0] // stride, points_queries[:, 1] // stride
+        shift_y_down = torch.clamp(query_y // stride, max=src_h - 1)
+        shift_x_down = torch.clamp(query_x // stride, max=src_w - 1)
         query_feats = src[:, :, shift_y_down,shift_x_down]
         query_feats = query_feats.view(bs, c, h, w)
         query_embed, query_feats = self._enhance_query_tensors(
@@ -158,6 +163,8 @@ class BasePETCount(nn.Module):
         # Tạo mã hóa vị trí dày đặc ở mọi pixel để truy vấn điểm giữ đúng thông tin tọa độ.
         dense_input_embed = kwargs['dense_input_embed']
         bs, c = dense_input_embed.shape[:2]
+        dense_h, dense_w = dense_input_embed.shape[-2:]
+        src_h, src_w = src.shape[-2:]
 
         # Lấy kích thước ảnh/feature map hiện tại để tính chỉ số và phép biến đổi không gian chính xác.
         input = samples.tensors
@@ -173,11 +180,14 @@ class BasePETCount(nn.Module):
         h, w = shift_x.shape
 
         # Lấy embedding của các điểm truy vấn để cung cấp tín hiệu vị trí cho decoder.
-        query_embed = dense_input_embed[:, :, points_queries[:, 0], points_queries[:, 1]]
+        query_y = points_queries[:, 0].clamp(0, dense_h - 1)
+        query_x = points_queries[:, 1].clamp(0, dense_w - 1)
+        query_embed = dense_input_embed[:, :, query_y, query_x]
         bs, c = query_embed.shape[:2]
 
         # Truy xuất đặc trưng cho điểm truy vấn bằng cách ánh xạ gần nhất trên feature map.
-        shift_y_down, shift_x_down = points_queries[:, 0] // stride, points_queries[:, 1] // stride
+        shift_y_down = torch.clamp(query_y // stride, max=src_h - 1)
+        shift_x_down = torch.clamp(query_x // stride, max=src_w - 1)
         query_feats = src[:, :, shift_y_down, shift_x_down]
         query_feats = query_feats.view(bs, c, h, w)
         query_embed = query_embed.reshape(bs, c, h, w)
@@ -203,10 +213,11 @@ class BasePETCount(nn.Module):
         div = kwargs['div']
         div_win = window_partition(div.unsqueeze(1), window_size_h=dec_win_h, window_size_w=dec_win_w)
         valid_div = (div_win > 0.5).sum(dim=0)[:,0] 
+        valid_indices = torch.nonzero(valid_div > 0, as_tuple=False).flatten()
+        query_embed_win = query_embed_win.index_select(1, valid_indices)
+        query_feats_win = query_feats_win.index_select(1, valid_indices)
+        points_queries_win = points_queries_win.index_select(1, valid_indices).reshape(-1, 2)
         v_idx = valid_div > 0
-        query_embed_win = query_embed_win[:, v_idx]
-        query_feats_win = query_feats_win[:, v_idx]
-        points_queries_win = points_queries_win.to(v_idx.device)[:, v_idx].reshape(-1, 2)
     
         return query_embed_win, points_queries_win, query_feats_win, v_idx
     
