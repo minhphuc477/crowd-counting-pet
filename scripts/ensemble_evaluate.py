@@ -31,6 +31,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from datasets import build_dataset
 from models import build_model
 import util.misc as utils
+from engine import evaluate
 
 
 def get_args():
@@ -121,29 +122,9 @@ def load_checkpoint(model, checkpoint_path, device):
 
 
 def evaluate_single_seed(model, data_loader, device):
-    """Evaluate model on data_loader."""
-    model.eval()
-    mae_list = []
-    
-    with torch.no_grad():
-        for samples, targets in data_loader:
-            samples = samples.to(device)
-            targets = targets.to(device)
-            
-            outputs = model(samples, test=True, targets=targets)
-            
-            # Extract MAE from outputs
-            # (Assuming outputs contains count predictions)
-            if isinstance(outputs, dict) and "pred_count" in outputs:
-                pred_count = outputs["pred_count"]
-            else:
-                pred_count = outputs
-            
-            gt_count = targets.sum(dim=(1, 2, 3))
-            mae = (pred_count - gt_count).abs().mean().item()
-            mae_list.append(mae)
-    
-    return np.mean(mae_list) if mae_list else None
+    """Evaluate model on data_loader using engine.evaluate()."""
+    results = evaluate(model, data_loader, device)
+    return results.get('mae', None)
 
 
 def main():
@@ -186,6 +167,7 @@ def main():
         # Build model
         model_args = argparse.Namespace(
             backbone=args.backbone,
+            device=str(device),  # Required by build_pet
             position_embedding="sine",
             pe_temperatureL=10000,
             hidden_dim=256,
@@ -200,9 +182,21 @@ def main():
             dec_n_points=4,
             dilation=False,
             num_queries=300,
+               # Loss coefficients (required by SetCriterion)
+               ce_loss_coef=1.0,
+               point_loss_coef=5.0,
+               eos_coef=0.1,
+               # Matcher parameters
+               set_cost_class=1.0,
+               set_cost_point=0.05,
+               # Decoder parameters (will be set by PET)
+               dec_layers=2,
+               # Position embedding parameters
+               scales=4,
+               temperature=10000,
         )
         
-        model = build_model(model_args)
+        model, _ = build_model(model_args)
         model = model.to(device)
         
         # Load checkpoint
