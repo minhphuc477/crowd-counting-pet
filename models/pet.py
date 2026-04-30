@@ -580,10 +580,12 @@ class PET(nn.Module):
                 'split_map_raw': outputs['split_map_raw'],
             }
         
+        thrs = 0.5  # inference threshold
+
         # Xử lý các truy vấn điểm nhánh sparse trước khi kết hợp vào đầu ra chung.
         if outputs['sparse'] is not None:
             out_sparse_scores = torch.nn.functional.softmax(out_sparse['pred_logits'], -1)[..., 1]
-            valid_sparse = out_sparse_scores > 0
+            valid_sparse = out_sparse_scores > thrs
             index_sparse = valid_sparse.cpu()
         else:
             index_sparse = None
@@ -591,35 +593,25 @@ class PET(nn.Module):
         # Xử lý các truy vấn điểm nhánh dense trước khi tổng hợp kết quả.
         if outputs['dense'] is not None:
             out_dense_scores = torch.nn.functional.softmax(out_dense['pred_logits'], -1)[..., 1]
-            valid_dense = out_dense_scores > 0
+            valid_dense = out_dense_scores > thrs
             index_dense = valid_dense.cpu()
         else:
             index_dense = None
 
         # Đóng gói đầu ra theo định dạng chuẩn để các bước sau dùng trực tiếp.
-        # FIX for MAE spike: When both sparse and dense branches are active, concatenating them
-        # causes systematic double-counting of predictions during evaluation (reported MAE increases ~2.6x).
-        # Solution: Prioritize dense predictions (higher spatial resolution) when available,
-        # which prevents double-counting while maintaining prediction quality.
         div_out = dict()
         output_names = out_sparse.keys() if out_sparse is not None else out_dense.keys()
-        
-        # Select active output: prefer dense (finer resolution) > sparse > nothing
-        active_output = out_dense if out_dense is not None else (out_sparse if out_sparse is not None else None)
-        
         for name in list(output_names):
             if 'pred' in name:
-                if active_output is not None:
-                    div_out[name] = active_output[name].unsqueeze(0)
+                if index_dense is None:
+                    div_out[name] = out_sparse[name][index_sparse].unsqueeze(0)
+                elif index_sparse is None:
+                    div_out[name] = out_dense[name][index_dense].unsqueeze(0)
                 else:
-                    # Fallback (should not happen if at least one branch ran)
-                    div_out[name] = out_sparse[name].unsqueeze(0) if out_sparse is not None else out_dense[name].unsqueeze(0)
+                    div_out[name] = torch.cat([out_sparse[name][index_sparse].unsqueeze(0), out_dense[name][index_dense].unsqueeze(0)], dim=1)
             else:
                 div_out[name] = out_sparse[name] if out_sparse is not None else out_dense[name]
-        
         div_out['split_map_raw'] = outputs['split_map_raw']
-        div_out['split_map_sparse'] = outputs['split_map_sparse']
-        div_out['split_map_dense'] = outputs['split_map_dense']
         return div_out
 
 
