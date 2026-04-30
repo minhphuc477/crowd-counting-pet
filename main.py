@@ -1,6 +1,7 @@
 import argparse
 import datetime
 import json
+import math
 import random
 import time
 from pathlib import Path
@@ -28,6 +29,15 @@ def get_args_parser():
     parser.add_argument('--batch_size', default=8, type=int)
     parser.add_argument('--weight_decay', default=1e-4, type=float)
     parser.add_argument('--epochs', default=1500, type=int)
+    parser.add_argument('--lr_scheduler', default='warmup_hold_cosine', type=str,
+                        choices=('warmup_hold_cosine',),
+                        help='learning-rate schedule to use')
+    parser.add_argument('--warmup_epochs', default=5, type=int,
+                        help='number of warmup epochs')
+    parser.add_argument('--hold_epochs', default=-1, type=int,
+                        help='epochs to keep peak lr before cosine decay; -1 picks an automatic value')
+    parser.add_argument('--min_lr', default=1e-7, type=float,
+                        help='minimum learning rate reached by cosine annealing')
     parser.add_argument('--clip_max_norm', default=0.1, type=float,
                         help='gradient clipping max norm')
 
@@ -90,6 +100,14 @@ def main(args):
     print(args)
     device = torch.device(args.device)
 
+    if args.backbone == 'convnextv2_base':
+        if args.batch_size == 8:
+            args.batch_size = 2
+        if args.lr == 1e-4:
+            args.lr = 2.5e-5
+        if args.lr_backbone == 1e-5:
+            args.lr_backbone = 2.5e-6
+
     # fix the seed for reproducibility
     seed = args.seed + utils.get_rank()
     torch.manual_seed(seed)
@@ -118,7 +136,27 @@ def main(args):
     ]
     optimizer = torch.optim.AdamW(param_dicts, lr=args.lr,
                                   weight_decay=args.weight_decay)
-    lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, args.epochs)
+    warmup_epochs = min(max(0, int(args.warmup_epochs)), max(args.epochs - 1, 0))
+    hold_epochs = int(args.hold_epochs)
+    if hold_epochs < 0:
+        hold_epochs = max(0, args.epochs // 15)
+    hold_epochs = min(max(0, hold_epochs), max(args.epochs - warmup_epochs - 1, 0))
+    decay_epochs = max(1, args.epochs - warmup_epochs - hold_epochs)
+    min_lr_ratio = float(args.min_lr) / max(float(args.lr), 1e-12)
+
+    def warmup_hold_cosine_factor(epoch_idx):
+        if args.epochs <= 1:
+            return 1.0
+        if warmup_epochs > 0 and epoch_idx < warmup_epochs:
+            warmup_progress = float(epoch_idx + 1) / float(warmup_epochs)
+            return max(1e-3, warmup_progress)
+        if epoch_idx < warmup_epochs + hold_epochs:
+            return 1.0
+        decay_progress = min(max(epoch_idx - warmup_epochs - hold_epochs, 0), decay_epochs) / float(decay_epochs)
+        cosine_factor = 0.5 * (1.0 + math.cos(math.pi * decay_progress))
+        return max(min_lr_ratio, cosine_factor)
+
+    lr_scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=warmup_hold_cosine_factor)
 
     # build dataset
     dataset_train = build_dataset(image_set='train', args=args)
