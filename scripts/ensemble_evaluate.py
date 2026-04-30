@@ -19,7 +19,6 @@ import argparse
 import json
 import sys
 from pathlib import Path
-from collections import defaultdict
 
 import numpy as np
 import torch
@@ -30,7 +29,6 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from datasets import build_dataset
 from models import build_model
-import util.misc as utils
 from engine import evaluate
 
 
@@ -110,15 +108,11 @@ def load_checkpoint(model, checkpoint_path, device):
     if not checkpoint_path.exists():
         print(f"Warning: Checkpoint not found at {checkpoint_path}")
         return False
-    
-    try:
-        checkpoint = torch.load(checkpoint_path, map_location=device)
-        model.load_state_dict(checkpoint["model"])
-        print(f"Loaded checkpoint from {checkpoint_path}")
-        return True
-    except Exception as e:
-        print(f"Error loading checkpoint: {e}")
-        return False
+
+    checkpoint = torch.load(checkpoint_path, map_location=device)
+    model.load_state_dict(checkpoint["model"])
+    print(f"Loaded checkpoint from {checkpoint_path}")
+    return True
 
 
 def evaluate_single_seed(model, data_loader, device):
@@ -182,18 +176,18 @@ def main():
             dec_n_points=4,
             dilation=False,
             num_queries=300,
-               # Loss coefficients (required by SetCriterion)
-               ce_loss_coef=1.0,
-               point_loss_coef=5.0,
-               eos_coef=0.1,
-               # Matcher parameters
-               set_cost_class=1.0,
-               set_cost_point=0.05,
-               # Decoder parameters (will be set by PET)
-               dec_layers=2,
-               # Position embedding parameters
-               scales=4,
-               temperature=10000,
+            # Loss coefficients (required by SetCriterion)
+            ce_loss_coef=1.0,
+            point_loss_coef=5.0,
+            eos_coef=0.1,
+            # Matcher parameters
+            set_cost_class=1.0,
+            set_cost_point=0.05,
+            # Decoder parameters (will be set by PET)
+            dec_layers=2,
+            # Position embedding parameters
+            scales=4,
+            temperature=10000,
         )
         
         model, _ = build_model(model_args)
@@ -226,10 +220,10 @@ def main():
         print(f"\n{'='*80}")
         print("Ensemble Evaluation Summary")
         print(f"{'='*80}")
-        print(f"Individual seed MAEs:")
+        print("Individual seed MAEs:")
         for seed, mae in sorted(results.items()):
             print(f"  Seed {seed}: {mae:.2f}")
-        print(f"\nAggregate Statistics:")
+        print("\nAggregate Statistics:")
         print(f"  Mean MAE:   {np.mean(mae_values):.2f} ± {np.std(mae_values):.2f}")
         print(f"  Min MAE:    {np.min(mae_values):.2f}")
         print(f"  Max MAE:    {np.max(mae_values):.2f}")
@@ -244,7 +238,7 @@ def main():
         )
         results_file.parent.mkdir(parents=True, exist_ok=True)
         
-        with open(results_file, "w") as f:
+        with open(results_file, "w", encoding="utf-8") as f:
             json.dump({
                 "individual": results,
                 "mean": float(np.mean(mae_values)),

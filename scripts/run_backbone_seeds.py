@@ -15,10 +15,10 @@ This script will:
 """
 
 import argparse
-import subprocess
 import json
-import os
+import subprocess
 import sys
+import shlex
 from pathlib import Path
 from datetime import datetime
 import numpy as np
@@ -69,7 +69,7 @@ def get_args():
 
 
 def run_training(
-    backbone, seed, extra_args, output_dir, exp_name, dry_run=False
+    backbone, seed, extra_args, output_dir, dry_run=False
 ):
     """Run training for a single seed."""
     
@@ -84,12 +84,11 @@ def run_training(
         "--backbone", backbone,
         "--seed", str(seed),
         "--output_dir", str(seed_output_dir),
-        "--exp_name", f"{exp_name}_seed{seed}",
     ]
     
     # Parse and add extra arguments
     if extra_args:
-        extra_args_list = extra_args.split()
+        extra_args_list = shlex.split(extra_args)
         cmd.extend(extra_args_list)
     
     print(f"\n{'='*80}")
@@ -108,7 +107,7 @@ def run_training(
             check=False,
         )
         return result.returncode == 0, seed_output_dir
-    except Exception as e:
+    except OSError as e:
         print(f"Error running training: {e}")
         return False, seed_output_dir
 
@@ -121,19 +120,24 @@ def collect_results(backbone, seeds, output_dir):
     
     for seed in seeds:
         seed_output_dir = Path(output_dir) / backbone / f"seed_{seed}"
+        actual_output_dir = Path("outputs") / "SHA" / seed_output_dir
         
         # Look for log file with metrics
-        stats_file = seed_output_dir / "stats.json"
+        stats_file = actual_output_dir / "run_log.txt"
         if stats_file.exists():
             try:
-                with open(stats_file, "r") as f:
-                    stats = json.load(f)
-                    if "mae_val" in stats:
-                        mae = stats["mae_val"][-1]  # Last epoch
-                        results[seed] = mae
-                        mae_values.append(mae)
-                        print(f"  Seed {seed}: MAE = {mae:.2f}")
-            except Exception as e:
+                with open(stats_file, "r", encoding="utf-8") as f:
+                    lines = [line.strip() for line in f if line.strip()]
+                for line in reversed(lines):
+                    if line.startswith('{'):
+                        stats = json.loads(line)
+                        if 'test_mae' in stats:
+                            mae = stats['test_mae']
+                            results[seed] = mae
+                            mae_values.append(mae)
+                            print(f"  Seed {seed}: MAE = {mae:.2f}")
+                            break
+            except (OSError, json.JSONDecodeError) as e:
                 print(f"  Seed {seed}: Could not read stats ({e})")
     
     if mae_values:
@@ -174,7 +178,7 @@ def save_experiment_log(backbone, seeds, output_dir, results):
             "max_mae": float(np.max(mae_values)),
         }
     
-    with open(log_file, "w") as f:
+    with open(log_file, "w", encoding="utf-8") as f:
         json.dump(log_data, f, indent=2)
     
     print(f"\nExperiment log saved to: {log_file}")
@@ -203,12 +207,11 @@ def main():
             print(f"Skipping seed {seed} (--continue_from_seed {args.continue_from_seed})")
             continue
         
-        success, seed_dir = run_training(
+        success, _ = run_training(
             args.backbone,
             seed,
             args.extra_args,
             str(output_dir),
-            exp_name,
             dry_run=args.dry_run,
         )
         

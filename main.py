@@ -10,10 +10,8 @@ import shutil
 
 import numpy as np
 import torch
-import torch.nn as nn
 from torch.utils.data import DataLoader, DistributedSampler
 
-import datasets
 import util.misc as utils
 from datasets import build_dataset
 from engine import evaluate, train_one_epoch
@@ -180,12 +178,12 @@ def main(args):
                                 drop_last=False, collate_fn=utils.collate_fn, num_workers=args.num_workers)
 
     # output directory and log 
-    if utils.is_main_process:
+    if utils.is_main_process():
         output_dir = os.path.join("./outputs", args.dataset_file, args.output_dir)
         os.makedirs(output_dir, exist_ok=True)
         output_dir = Path(output_dir)
         run_log_name = os.path.join(output_dir, 'run_log.txt')
-        with open(run_log_name, "a") as log_file:
+        with open(run_log_name, "a", encoding="utf-8") as log_file:
             log_file.write('Run Log %s\n' % time.strftime("%c"))
             log_file.write("{}".format(args))
             log_file.write("parameters: {}".format(n_parameters))
@@ -221,8 +219,8 @@ def main(args):
         print('[ep %d][lr %.7f][%.2fs]' % \
               (epoch, optimizer.param_groups[0]['lr'], t2 - t1))
         
-        if utils.is_main_process:
-            with open(run_log_name, "a") as log_file:
+        if utils.is_main_process():
+            with open(run_log_name, "a", encoding="utf-8") as log_file:
                 log_file.write('\n[ep %d][lr %.7f][%.2fs]' % (epoch, optimizer.param_groups[0]['lr'], t2 - t1))
 
         lr_scheduler.step()
@@ -245,7 +243,7 @@ def main(args):
 
         # write log
         if utils.is_main_process():
-            with open(run_log_name, "a") as f:
+            with open(run_log_name, "a", encoding="utf-8") as f:
                 f.write(json.dumps(log_stats) + "\n")
 
         # evaluation
@@ -263,9 +261,14 @@ def main(args):
             print("\nepoch:", epoch, "mae:", mae, "mse:", mse, "\n\nbest mae:", best_mae, "best epoch:", best_epoch)
             print("==========================\n")
             if utils.is_main_process():
-                with open(run_log_name, "a") as log_file:
+                with open(run_log_name, "a", encoding="utf-8") as log_file:
                     log_file.write("\nepoch:{}, mae:{}, mse:{}, time{}, \n\nbest mae:{}, best epoch: {}\n\n".format(
                                                 epoch, mae, mse, t2 - t1, best_mae, best_epoch))
+                    log_file.write('\n' + json.dumps({
+                        'epoch': epoch,
+                        'test_mae': float(mae),
+                        'test_mse': float(mse),
+                    }))
                                                 
             # save best checkpoint
             if mae == best_mae and utils.is_main_process():
