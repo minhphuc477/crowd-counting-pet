@@ -45,13 +45,13 @@ def get_args_parser():
     arg_parser.add_argument('--batch_size', default=8, type=int)
     arg_parser.add_argument('--weight_decay', default=1e-4, type=float)
     arg_parser.add_argument('--epochs', default=1500, type=int)
-    arg_parser.add_argument('--lr_scheduler', default='warmup_cosine', type=str,
+    arg_parser.add_argument('--lr_scheduler', default='warmup_hold_cosine', type=str,
                         choices=('warmup_cosine', 'warmup_hold_cosine', 'warmup_poly', 'cosine', 'step'),
                         help='learning-rate schedule to use')
     arg_parser.add_argument('--warmup_epochs', default=5, type=int,
                         help='number of warmup epochs used by warmup_cosine')
-    arg_parser.add_argument('--hold_epochs', default=0, type=int,
-                        help='number of epochs to keep the peak lr before cosine decay')
+    arg_parser.add_argument('--hold_epochs', default=-1, type=int,
+                        help='number of epochs to keep the peak lr before cosine decay; -1 picks an automatic value')
     arg_parser.add_argument('--min_lr', default=1e-7, type=float,
                         help='minimum learning rate reached by cosine annealing')
     arg_parser.add_argument('--poly_power', default=0.9, type=float,
@@ -281,7 +281,10 @@ def build_model_state(args, device, total_epochs):
         lr_scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=poly_factor)
     elif scheduler_name == 'warmup_hold_cosine':
         warmup_epochs = min(max(0, int(getattr(args, 'warmup_epochs', 5))), max(total_epochs - 1, 0))
-        hold_epochs = min(max(0, int(getattr(args, 'hold_epochs', 0))), max(total_epochs - warmup_epochs - 1, 0))
+        hold_epochs = int(getattr(args, 'hold_epochs', -1))
+        if hold_epochs < 0:
+            hold_epochs = max(0, total_epochs // 15)
+        hold_epochs = min(max(0, hold_epochs), max(total_epochs - warmup_epochs - 1, 0))
         decay_epochs = max(1, total_epochs - warmup_epochs - hold_epochs)
         min_lr_ratio = float(getattr(args, 'min_lr', 1e-7)) / max(float(args.lr), 1e-12)
 
