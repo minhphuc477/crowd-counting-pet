@@ -1,7 +1,6 @@
 """
 Modules to compute bipartite matching
 """
-import numpy as np
 import torch
 from scipy.optimize import linear_sum_assignment
 from torch import nn
@@ -44,53 +43,32 @@ class HungarianMatcher(nn.Module):
                 len(index_i) = len(index_j) = min(num_queries, num_target_points)
         """
         bs, num_queries = outputs["pred_logits"].shape[:2]
-        sizes = [len(v["points"]) for v in targets]
 
-        # Trả về matching rỗng nếu toàn bộ batch không có target để tránh lỗi cat/split.
-        if sum(sizes) == 0:
-            empty = torch.empty(0, dtype=torch.int64)
-            return [(empty, empty) for _ in range(bs)]
+        # flatten to compute the cost matrices in a batch
+        out_prob = outputs["pred_logits"].flatten(0, 1).softmax(-1)  # [batch_size * num_queries, 2]
+        out_points = outputs["pred_points"].flatten(0, 1)  # [batch_size * num_queries, 2]
 
-        # Làm phẳng tensor để tính ma trận chi phí cho cả batch một cách vector hóa.
-        logits = outputs["pred_logits"].flatten(0, 1).float()
-        out_prob = torch.nan_to_num(logits.softmax(-1), nan=0.5, posinf=1.0, neginf=0.0)  # [batch_size * num_queries, 2]
-        out_points = torch.nan_to_num(outputs["pred_points"].flatten(0, 1).float(), nan=0.0, posinf=1e6, neginf=-1e6)  # [batch_size * num_queries, 2]
-
-        # Nối nhãn lớp và tọa độ điểm đích để thuận tiện tính cost/matching đồng thời.
+        # concat target labels and points
         tgt_ids = torch.cat([v["labels"] for v in targets])
-        tgt_points = torch.nan_to_num(torch.cat([v["points"] for v in targets]).float(), nan=0.0, posinf=1e6, neginf=-1e6)
+        tgt_points = torch.cat([v["points"] for v in targets])
 
-        # Tính chi phí phân lớp (xấp xỉ -xác suất lớp đích) cho thuật toán matching.
+        # compute the classification cost, i.e., - prob[target class]
         cost_class = -out_prob[:, tgt_ids]
 
-        # Tính chi phí hồi quy theo khoảng cách L2 giữa điểm dự đoán và điểm ground-truth.
+        # compute the L2 cost between points
         img_h, img_w = outputs['img_shape']
         out_points_abs = out_points.clone()
         out_points_abs[:,0] *= img_h
         out_points_abs[:,1] *= img_w
-        cost_point = torch.nan_to_num(torch.cdist(out_points_abs, tgt_points, p=2), nan=1e6, posinf=1e6, neginf=1e6)
+        cost_point = torch.cdist(out_points_abs, tgt_points, p=2)
 
-        # Tạo ma trận chi phí cuối cùng làm đầu vào cho Hungarian matching.
+        # final cost matrix
         C = self.cost_point * cost_point + self.cost_class * cost_class
-        C = torch.nan_to_num(C, nan=1e6, posinf=1e6, neginf=1e6)
-        C = C.view(bs, num_queries, -1).to(dtype=torch.float64, device='cpu')
+        C = C.view(bs, num_queries, -1).cpu()
 
-        indices = []
-        for batch_idx, (target_size, cost_chunk) in enumerate(zip(sizes, C.split(sizes, -1))):
-            if target_size == 0:
-                empty = torch.empty(0, dtype=torch.int64)
-                indices.append((empty, empty))
-                continue
-
-            cost_matrix = cost_chunk[batch_idx].contiguous().numpy()
-            if not np.isfinite(cost_matrix).all():
-                cost_matrix = np.nan_to_num(cost_matrix, nan=1e6, posinf=1e6, neginf=1e6)
-            row_ind, col_ind = linear_sum_assignment(cost_matrix)
-            indices.append((
-                torch.as_tensor(row_ind, dtype=torch.int64),
-                torch.as_tensor(col_ind, dtype=torch.int64),
-            ))
-        return indices
+        sizes = [len(v["points"]) for v in targets]
+        indices = [linear_sum_assignment(c[i]) for i, c in enumerate(C.split(sizes, -1))]
+        return [(torch.as_tensor(i, dtype=torch.int64), torch.as_tensor(j, dtype=torch.int64)) for i, j in indices]
 
 
 def build_matcher(args):

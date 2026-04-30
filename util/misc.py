@@ -3,7 +3,6 @@ Misc functions, including distributed helpers.
 
 Mostly copy-paste from torchvision references.
 """
-import copy
 import os
 import subprocess
 import time
@@ -16,100 +15,11 @@ import torch
 import torch.distributed as dist
 from torch import Tensor
 
-# Đoạn này là workaround cho lỗi tensor rỗng trên một số phiên bản PyTorch/Torchvision cũ.
+# needed due to empty tensor bug in pytorch and torchvision 0.5
 import torchvision
 if float(torchvision.__version__.split(".")[1]) < 7.0:
     from torchvision.ops import _new_empty_tensor
     from torchvision.ops.misc import _output_size
-
-
-def _distributed_device():
-    return torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-
-
-CHECKPOINT_MODEL_ARG_FIELDS = (
-    'backbone',
-    'position_embedding',
-    'dec_layers',
-    'dim_feedforward',
-    'hidden_dim',
-    'dropout',
-    'nheads',
-    'lr_scheduler',
-    'warmup_epochs',
-    'hold_epochs',
-    'min_lr',
-    'poly_power',
-    'set_cost_class',
-    'set_cost_point',
-    'ce_loss_coef',
-    'point_loss_coef',
-    'eos_coef',
-    'patch_size',
-    'split_warmup_epochs',
-    'count_loss_coef',
-    'enc_win_list',
-    'dec_win_sizes',
-    'enhanced_point_query',
-    'query_context_kernel',
-)
-
-UPGRADE_COMPATIBLE_MISSING_KEY_PREFIXES = (
-    'quadtree_sparse.query_context_conv.',
-    'quadtree_sparse.query_content_fuse.',
-    'quadtree_sparse.query_pos_fuse.',
-    'quadtree_sparse.query_content_norm.',
-    'quadtree_sparse.query_pos_norm.',
-    'quadtree_sparse.branch_content_bias',
-    'quadtree_sparse.branch_pos_bias',
-    'quadtree_dense.query_context_conv.',
-    'quadtree_dense.query_content_fuse.',
-    'quadtree_dense.query_pos_fuse.',
-    'quadtree_dense.query_content_norm.',
-    'quadtree_dense.query_pos_norm.',
-    'quadtree_dense.branch_content_bias',
-    'quadtree_dense.branch_pos_bias',
-)
-
-
-def load_checkpoint(path, map_location='cpu'):
-    try:
-        return torch.load(path, map_location=map_location, weights_only=False)
-    except TypeError:
-        return torch.load(path, map_location=map_location)
-
-
-def restore_args_from_checkpoint(args, checkpoint, fields=None):
-    checkpoint_args = checkpoint.get('args') if isinstance(checkpoint, dict) else None
-    if checkpoint_args is None:
-        return args
-
-    if fields is None:
-        fields = CHECKPOINT_MODEL_ARG_FIELDS
-
-    for field in fields:
-        if hasattr(checkpoint_args, field):
-            setattr(args, field, copy.deepcopy(getattr(checkpoint_args, field)))
-    return args
-
-
-def load_model_state(model, state_dict, strict=True):
-    if not strict:
-        return model.load_state_dict(state_dict, strict=False)
-
-    incompatible = model.load_state_dict(state_dict, strict=False)
-    missing_keys = [
-        key for key in incompatible.missing_keys
-        if not key.startswith(UPGRADE_COMPATIBLE_MISSING_KEY_PREFIXES)
-    ]
-    if missing_keys or incompatible.unexpected_keys:
-        raise RuntimeError(
-            'Checkpoint/model mismatch. Missing keys: {} | Unexpected keys: {}'.format(
-                missing_keys or incompatible.missing_keys,
-                incompatible.unexpected_keys,
-            )
-        )
-    return incompatible
 
 
 class SmoothedValue(object):
@@ -135,7 +45,7 @@ class SmoothedValue(object):
         """
         if not is_dist_avail_and_initialized():
             return
-        t = torch.tensor([self.count, self.total], dtype=torch.float64, device=_distributed_device())
+        t = torch.tensor([self.count, self.total], dtype=torch.float64, device='cuda')
         dist.barrier()
         dist.all_reduce(t)
         t = t.tolist()
@@ -185,27 +95,26 @@ def all_gather(data):
     if world_size == 1:
         return [data]
 
-    # Tuần tự hóa dữ liệu về Tensor để truyền qua các tiến trình phân tán.
+    # serialized to a Tensor
     buffer = pickle.dumps(data)
     storage = torch.ByteStorage.from_buffer(buffer)
-    dist_device = _distributed_device()
-    tensor = torch.ByteTensor(storage).to(dist_device)
+    tensor = torch.ByteTensor(storage).to("cuda")
 
-    # Thu thập kích thước Tensor ở từng rank để chuẩn bị all_gather.
-    local_size = torch.tensor([tensor.numel()], device=dist_device)
-    size_list = [torch.tensor([0], device=dist_device) for _ in range(world_size)]
+    # obtain Tensor size of each rank
+    local_size = torch.tensor([tensor.numel()], device="cuda")
+    size_list = [torch.tensor([0], device="cuda") for _ in range(world_size)]
     dist.all_gather(size_list, local_size)
     size_list = [int(size.item()) for size in size_list]
     max_size = max(size_list)
 
-    # Nhận Tensor từ mọi rank và ghép lại để tổng hợp dữ liệu toàn cục.
-    # Đệm Tensor về cùng kích thước vì torch.all_gather không hỗ trợ tensor khác shape.
-    # Xử lý trường hợp cần gom các tensor có kích thước khác nhau giữa các tiến trình.
+    # receiving Tensor from all ranks
+    # we pad the tensor because torch all_gather does not support
+    # gathering tensors of different shapes
     tensor_list = []
     for _ in size_list:
-        tensor_list.append(torch.empty((max_size,), dtype=torch.uint8, device=dist_device))
+        tensor_list.append(torch.empty((max_size,), dtype=torch.uint8, device="cuda"))
     if local_size != max_size:
-        padding = torch.empty(size=(max_size - local_size,), dtype=torch.uint8, device=dist_device)
+        padding = torch.empty(size=(max_size - local_size,), dtype=torch.uint8, device="cuda")
         tensor = torch.cat((tensor, padding), dim=0)
     dist.all_gather(tensor_list, tensor)
 
@@ -232,7 +141,7 @@ def reduce_dict(input_dict, average=True):
     with torch.no_grad():
         names = []
         values = []
-        # Sắp xếp key để thứ tự nhất quán giữa các tiến trình khi reduce dictionary.
+        # sort the keys so that they are consistent across processes
         for k in sorted(input_dict.keys()):
             names.append(k)
             values.append(input_dict[k])
@@ -335,6 +244,7 @@ class MetricLogger(object):
             header, total_time_str, total_time / len(iterable)))
 
 
+
 def collate_fn(batch):
     batch = list(zip(*batch))
     batch[0] = nested_tensor_from_tensor_list(batch[0])
@@ -378,17 +288,17 @@ class NestedTensor(object):
 
 
 def nested_tensor_from_tensor_list(tensor_list: List[Tensor]):
-    # TODO: Tổng quát hóa đoạn xử lý này để hỗ trợ thêm nhiều kiểu dữ liệu đầu vào.
+    # TODO make this more general
     if tensor_list[0].ndim == 3:
         if torchvision._is_tracing():
-            # nested_tensor_from_tensor_list() xuất sang ONNX chưa ổn định trong một số trường hợp.
-            # Vì vậy cần gọi _onnx_nested_tensor_from_tensor_list() để tương thích ONNX tracing.
+            # nested_tensor_from_tensor_list() does not export well to ONNX
+            # call _onnx_nested_tensor_from_tensor_list() instead
             return _onnx_nested_tensor_from_tensor_list(tensor_list)
 
-        # TODO: Bổ sung hỗ trợ ảnh có kích thước khác nhau một cách tổng quát hơn.
+        # TODO make it support different-sized images
         max_size = _max_by_axis_pad([list(img.shape) for img in tensor_list])
 
-        # Dòng bên dưới là ví dụ cách tính kích thước nhỏ nhất theo từng chiều khi gom nhiều ảnh khác kích thước vào cùng một batch.
+        # min_size = tuple(min(s) for s in zip(*[img.shape for img in tensor_list]))
         batch_shape = [len(tensor_list)] + max_size
         b, c, h, w = batch_shape
         dtype = tensor_list[0].dtype
@@ -403,8 +313,8 @@ def nested_tensor_from_tensor_list(tensor_list: List[Tensor]):
     return NestedTensor(tensor, mask)
 
 
-# _onnx_nested_tensor_from_tensor_list() là phiên bản triển khai dành cho đường xuất ONNX.
-# Phiên bản này tương thích với ONNX tracing tốt hơn hàm gốc.
+# _onnx_nested_tensor_from_tensor_list() is an implementation of
+# nested_tensor_from_tensor_list() that is supported by ONNX tracing.
 @torch.jit.unused
 def _onnx_nested_tensor_from_tensor_list(tensor_list: List[Tensor]) -> NestedTensor:
     max_size = []
@@ -413,10 +323,10 @@ def _onnx_nested_tensor_from_tensor_list(tensor_list: List[Tensor]) -> NestedTen
         max_size.append(max_size_i)
     max_size = tuple(max_size)
 
-    # Workaround cho giới hạn hiện tại của exporter trong quá trình ONNX tracing.
-    # Minh họa thao tác chép nội dung ảnh gốc vào tensor đã pad trước đó để giữ nguyên dữ liệu hợp lệ.
-    # Minh họa thao tác cập nhật mask: đặt vùng ảnh hợp lệ thành False để phân biệt với vùng padding.
-    # Phép gán theo slicing này hiện chưa được ONNX hỗ trợ đầy đủ.
+    # work around for
+    # pad_img[: img.shape[0], : img.shape[1], : img.shape[2]].copy_(img)
+    # m[: img.shape[1], :img.shape[2]] = False
+    # which is not yet supported in onnx
     padded_imgs = []
     padded_masks = []
     for img in tensor_list:
@@ -497,29 +407,7 @@ def init_distributed_mode(args):
     args.dist_backend = 'nccl'
     print('| distributed init (rank {}): {}'.format(
         args.rank, args.dist_url), flush=True)
-    init_kwargs = dict(
-        backend=args.dist_backend,
-        init_method=args.dist_url,
-        world_size=args.world_size,
-        rank=args.rank,
-    )
-    if args.dist_backend == 'nccl':
-        try:
-            torch.distributed.init_process_group(device_id=args.gpu, **init_kwargs)
-        except TypeError:
-            torch.distributed.init_process_group(**init_kwargs)
-    else:
-        torch.distributed.init_process_group(**init_kwargs)
-    if args.dist_backend == 'nccl':
-        try:
-            torch.distributed.barrier(device_ids=[args.gpu])
-        except TypeError:
-            torch.distributed.barrier()
-    else:
-        torch.distributed.barrier()
+    torch.distributed.init_process_group(backend=args.dist_backend, init_method=args.dist_url,
+                                         world_size=args.world_size, rank=args.rank)
+    torch.distributed.barrier()
     setup_for_distributed(args.rank == 0)
-
-
-def cleanup_distributed_mode():
-    if is_dist_avail_and_initialized():
-        dist.destroy_process_group()

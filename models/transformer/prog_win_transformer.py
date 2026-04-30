@@ -40,23 +40,15 @@ class WinEncoderTransformer(nn.Module):
         memeory_list = []
         memeory = src
         for idx, enc_win_size in enumerate(self.enc_win_list):
+            # encoder window partition
             enc_win_w, enc_win_h = enc_win_size
-            memeory_win, pos_embed_win, mask_win = enc_win_partition(
-                memeory,
-                pos_embed,
-                mask,
-                enc_win_h,
-                enc_win_w,
-            )
+            memeory_win, pos_embed_win, mask_win  = enc_win_partition(memeory, pos_embed, mask, enc_win_h, enc_win_w)            
+
+            # encoder forward
             output = self.encoder.single_forward(memeory_win, src_key_padding_mask=mask_win, pos=pos_embed_win, layer_idx=idx)
 
-            memeory = enc_win_partition_reverse(
-                output,
-                enc_win_h,
-                enc_win_w,
-                h,
-                w,
-            )
+            # reverse encoder window
+            memeory = enc_win_partition_reverse(output, enc_win_h, enc_win_w, h, w)
             if self.return_intermediate:
                 memeory_list.append(memeory)        
         memory_ = memeory_list if self.return_intermediate else memeory
@@ -99,12 +91,12 @@ class WinDecoderTransformer(nn.Module):
         bs, c, h, w = src_shape
         qH, qW = query_feats.shape[-2:]
 
-        # Chia truy vấn đầu vào thành các cửa sổ để attention tập trung theo vùng cục bộ.
+        # window-rize query input
         query_embed_ = query_embed.permute(1,2,0).reshape(bs, c, qH, qW)
         query_embed_win = window_partition(query_embed_, window_size_h=dec_win_h, window_size_w=dec_win_w)
         tgt = window_partition(query_feats, window_size_h=dec_win_h, window_size_w=dec_win_w)
 
-        # Thực hiện attention ở decoder để cập nhật truy vấn dựa trên ngữ cảnh liên quan.
+        # decoder attention
         hs_win = self.decoder(tgt, memory_win, memory_key_padding_mask=mask_win, pos=pos_embed_win, 
                                                                         query_pos=query_embed_win, **kwargs)
         hs_tmp = [window_partition_reverse(hs_w, dec_win_h, dec_win_w, qH, qW) for hs_w in hs_win]
@@ -115,7 +107,7 @@ class WinDecoderTransformer(nn.Module):
         """ 
         decoder forward during inference
         """       
-        # Thực hiện attention ở decoder để cập nhật truy vấn dựa trên ngữ cảnh liên quan.
+        # decoder attention
         tgt = query_feats
         hs_win = self.decoder(tgt, memory_win, memory_key_padding_mask=mask_win, pos=pos_embed_win, 
                                                                         query_pos=query_embed, **kwargs)
@@ -128,12 +120,12 @@ class WinDecoderTransformer(nn.Module):
         query_embed, points_queries, query_feats, v_idx = pqs
         self.dec_win_w, self.dec_win_h = kwargs['dec_win_size']
         
-        # Chia memory đầu vào theo cửa sổ để đồng bộ không gian với query trong decoder.
+        # window-rize memory input
         div_ratio = 1 if kwargs['pq_stride'] == 8 else 2
         memory_win, pos_embed_win, mask_win = enc_win_partition(src, pos_embed, mask, 
                                                     int(self.dec_win_h/div_ratio), int(self.dec_win_w/div_ratio))
         
-        # Chạy decoder theo cơ chế động để thích nghi với số lượng truy vấn thay đổi.
+        # dynamic decoder forward
         if 'test' in kwargs:
             memory_win = memory_win[:,v_idx]
             pos_embed_win = pos_embed_win[:,v_idx]
@@ -142,7 +134,7 @@ class WinDecoderTransformer(nn.Module):
                                     memory_win, pos_embed_win, mask_win, self.dec_win_h, self.dec_win_w, src.shape, **kwargs)
             return hs
         else:
-            # Lan truyền xuôi qua decoder để cập nhật đặc trưng truy vấn điểm.
+            # decoder forward
             hs = self.decoder_forward(query_feats, query_embed, 
                                     memory_win, pos_embed_win, mask_win, self.dec_win_h, self.dec_win_w, src.shape, **kwargs)
             return hs.transpose(1, 2)
@@ -246,7 +238,7 @@ class EncoderLayer(nn.Module):
         super().__init__()
         self.self_attn = nn.MultiheadAttention(d_model, nhead, dropout=dropout)
 
-        # Thực hiện khối feed-forward để tăng năng lực biểu diễn phi tuyến sau attention.
+        # feedforward layer
         self.linear1 = nn.Linear(d_model, dim_feedforward)
         self.linear2 = nn.Linear(dim_feedforward, d_model)
         self.norm1 = nn.LayerNorm(d_model)
@@ -279,7 +271,7 @@ class DecoderLayer(nn.Module):
         self.self_attn = nn.MultiheadAttention(d_model, nhead, dropout=dropout)
         self.multihead_attn = nn.MultiheadAttention(d_model, nhead, dropout=dropout)
 
-        # Thực hiện khối feed-forward để tăng năng lực biểu diễn phi tuyến sau attention.
+        # feedforward layer
         self.linear1 = nn.Linear(d_model, dim_feedforward)
         self.linear2 = nn.Linear(dim_feedforward, d_model)
         self.norm1 = nn.LayerNorm(d_model)
@@ -301,13 +293,13 @@ class DecoderLayer(nn.Module):
                      query_pos: Optional[Tensor] = None,
                      ):
         
-        # Self-attention ở decoder giúp các truy vấn tương tác và loại bỏ dự đoán dư thừa.
+        # decoder self attention
         q = k = self.with_pos_embed(tgt, query_pos)
         tgt2 = self.self_attn(q, k, value=tgt, attn_mask=tgt_mask, key_padding_mask=tgt_key_padding_mask)[0]
         tgt = tgt + tgt2
         tgt = self.norm1(tgt)
 
-        # Cross-attention kết nối truy vấn với memory encoder để lấy ngữ cảnh không gian.
+        # decoder cross attention
         tgt2 = self.multihead_attn(query=self.with_pos_embed(tgt, query_pos),
                                    key=self.with_pos_embed(memory, pos),
                                    value=memory, attn_mask=memory_mask,
@@ -315,7 +307,7 @@ class DecoderLayer(nn.Module):
         tgt = tgt + tgt2
         tgt = self.norm2(tgt)
 
-        # Áp dụng mạng feed-forward nhằm tinh chỉnh biểu diễn đặc trưng sau attention.
+        # feed-forward
         tgt2 = self.linear2(self.activation(self.linear1(tgt)))
         tgt = tgt + tgt2
         tgt = self.norm3(tgt)

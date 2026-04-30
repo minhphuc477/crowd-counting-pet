@@ -70,12 +70,12 @@ class BackboneBase_VGG(nn.Module):
                 xs = layer(xs)
                 feats.append(xs)
                         
-            # Hợp nhất đặc trưng đa mức để cân bằng thông tin chi tiết và ngữ nghĩa.
+            # feature fusion
             features_fpn = self.fpn([feats[1], feats[2], feats[3]])
             features_fpn_4x = features_fpn[0]
             features_fpn_8x = features_fpn[1]
 
-            # Tạo mask hợp lệ cho tensor để bỏ qua vùng padding khi tính attention/loss.
+            # get tensor mask
             m = tensor_list.mask
             assert m is not None
             mask_4x = F.interpolate(m[None].float(), size=features_fpn_4x.shape[-2:]).to(torch.bool)[0]
@@ -112,7 +112,7 @@ class Joiner(nn.Sequential):
         pos = {}
         for name, x in xs.items():            
             out[name] = x
-            # Mã hóa vị trí không gian nhằm giữ lại cấu trúc hình học khi đưa đặc trưng vào transformer.
+            # position encoding
             pos[name] = self[1](x).to(x.tensors.dtype)
         return out, pos
 
