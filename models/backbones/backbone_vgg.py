@@ -98,6 +98,8 @@ class Backbone_VGG(BackboneBase_VGG):
     def __init__(self, name: str, return_interm_layers: bool):
         if name == 'vgg16_bn':
             backbone = vgg16_bn(pretrained=True)
+        else:
+            raise ValueError(f'Unsupported VGG backbone: {name}')
         num_channels = 256
         super().__init__(backbone, num_channels, name, return_interm_layers)
 
