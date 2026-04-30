@@ -74,6 +74,8 @@ def get_args_parser():
     # dataset parameters
     parser.add_argument('--dataset_file', default="SHA")
     parser.add_argument('--data_path', default="./data/ShanghaiTech/PartA", type=str)
+    parser.add_argument('--patch_size', default=256, type=int,
+                        help='training crop size for SHA')
 
     # misc parameters
     parser.add_argument('--output_dir', default='',
