@@ -37,6 +37,7 @@ CHECKPOINT_MODEL_ARG_FIELDS = (
     'nheads',
     'lr_scheduler',
     'warmup_epochs',
+    'hold_epochs',
     'min_lr',
     'poly_power',
     'set_cost_class',

@@ -46,10 +46,12 @@ def get_args_parser():
     arg_parser.add_argument('--weight_decay', default=1e-4, type=float)
     arg_parser.add_argument('--epochs', default=1500, type=int)
     arg_parser.add_argument('--lr_scheduler', default='warmup_cosine', type=str,
-                        choices=('warmup_cosine', 'warmup_poly', 'cosine', 'step'),
+                        choices=('warmup_cosine', 'warmup_hold_cosine', 'warmup_poly', 'cosine', 'step'),
                         help='learning-rate schedule to use')
     arg_parser.add_argument('--warmup_epochs', default=5, type=int,
                         help='number of warmup epochs used by warmup_cosine')
+    arg_parser.add_argument('--hold_epochs', default=0, type=int,
+                        help='number of epochs to keep the peak lr before cosine decay')
     arg_parser.add_argument('--min_lr', default=1e-7, type=float,
                         help='minimum learning rate reached by cosine annealing')
     arg_parser.add_argument('--poly_power', default=0.9, type=float,
@@ -277,6 +279,25 @@ def build_model_state(args, device, total_epochs):
             return max(min_lr_ratio, (1.0 - progress) ** power)
 
         lr_scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=poly_factor)
+    elif scheduler_name == 'warmup_hold_cosine':
+        warmup_epochs = min(max(0, int(getattr(args, 'warmup_epochs', 5))), max(total_epochs - 1, 0))
+        hold_epochs = min(max(0, int(getattr(args, 'hold_epochs', 0))), max(total_epochs - warmup_epochs - 1, 0))
+        decay_epochs = max(1, total_epochs - warmup_epochs - hold_epochs)
+        min_lr_ratio = float(getattr(args, 'min_lr', 1e-7)) / max(float(args.lr), 1e-12)
+
+        def warmup_hold_cosine_factor(epoch_idx):
+            if total_epochs <= 1:
+                return 1.0
+            if warmup_epochs > 0 and epoch_idx < warmup_epochs:
+                warmup_progress = float(epoch_idx + 1) / float(warmup_epochs)
+                return max(1e-3, warmup_progress)
+            if epoch_idx < warmup_epochs + hold_epochs:
+                return 1.0
+            decay_progress = min(max(epoch_idx - warmup_epochs - hold_epochs, 0), decay_epochs) / float(decay_epochs)
+            cosine_factor = 0.5 * (1.0 + math.cos(math.pi * decay_progress))
+            return max(min_lr_ratio, cosine_factor)
+
+        lr_scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=warmup_hold_cosine_factor)
     else:
         warmup_epochs = min(max(0, int(getattr(args, 'warmup_epochs', 5))), max(total_epochs - 1, 0))
         cosine_epochs = max(1, total_epochs - warmup_epochs)
