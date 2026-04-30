@@ -105,6 +105,8 @@ class BasePETCount(nn.Module):
         div_win = window_partition(div.unsqueeze(1), window_size_h=dec_win_h, window_size_w=dec_win_w)
         valid_div = (div_win > 0.5).sum(dim=0)[:,0] 
         v_idx = valid_div > 0
+        # Move v_idx to CPU to match device of indexed tensors
+        v_idx = v_idx.cpu()
         query_embed_win = query_embed_win[:, v_idx]
         query_feats_win = query_feats_win[:, v_idx]
         points_queries_win = points_queries_win[:, v_idx].reshape(-1, 2)
