@@ -166,7 +166,7 @@ def main(args):
     model.to(device)
 
     # load pretrained model
-    checkpoint = torch.load(args.resume, map_location='cpu')        
+    checkpoint = torch.load(args.resume, map_location='cpu', weights_only=False)        
     model.load_state_dict(checkpoint['model'])
     
     # evaluation

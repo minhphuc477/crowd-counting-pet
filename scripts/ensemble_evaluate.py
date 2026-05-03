@@ -109,7 +109,7 @@ def load_checkpoint(model, checkpoint_path, device):
         print(f"Warning: Checkpoint not found at {checkpoint_path}")
         return False
 
-    checkpoint = torch.load(checkpoint_path, map_location=device)
+    checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
     model.load_state_dict(checkpoint["model"])
     print(f"Loaded checkpoint from {checkpoint_path}")
     return True
