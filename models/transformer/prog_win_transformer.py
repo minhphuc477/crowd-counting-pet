@@ -118,12 +118,12 @@ class WinDecoderTransformer(nn.Module):
     def forward(self, src, pos_embed, mask, pqs, **kwargs):
         bs, c, h, w = src.shape
         query_embed, points_queries, query_feats, v_idx = pqs
-        self.dec_win_w, self.dec_win_h = kwargs['dec_win_size']
+        # dec_win_size is [height, width]
+        self.dec_win_h, self.dec_win_w = kwargs['dec_win_size']
         
-        # window-rize memory input
-        div_ratio = 1 if kwargs['pq_stride'] == 8 else 2
+        # window-rize memory input - use window sizes directly without div_ratio adjustment
         memory_win, pos_embed_win, mask_win = enc_win_partition(src, pos_embed, mask, 
-                                                    int(self.dec_win_h/div_ratio), int(self.dec_win_w/div_ratio))
+                                                    self.dec_win_h, self.dec_win_w)
         
         # dynamic decoder forward
         if 'test' in kwargs:
@@ -132,9 +132,11 @@ class WinDecoderTransformer(nn.Module):
                 v_idx = v_idx.to(memory_win.device)
             except Exception:
                 pass
-            memory_win = memory_win[:, v_idx]
-            pos_embed_win = pos_embed_win[:, v_idx]
-            mask_win = mask_win[v_idx]
+            # Only filter windows if v_idx matches the window dimension
+            if v_idx is not None and v_idx.shape[0] == memory_win.shape[1]:
+                memory_win = memory_win[:, v_idx]
+                pos_embed_win = pos_embed_win[:, v_idx]
+                mask_win = mask_win[v_idx]
             hs = self.decoder_forward_dynamic(query_feats, query_embed, 
                                     memory_win, pos_embed_win, mask_win, self.dec_win_h, self.dec_win_w, src.shape, **kwargs)
             return hs
