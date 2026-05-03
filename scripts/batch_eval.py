@@ -5,6 +5,17 @@ Scans outputs/SHA directory and evaluates all best_checkpoint.pth files.
 
 Usage:
   python scripts/batch_eval.py --dataset_file SHA --data_path ./data/ShanghaiTech/part_A
+  
+  With verbose error output:
+  python scripts/batch_eval.py --dataset_file SHA --data_path ./data/ShanghaiTech/part_A --verbose
+  
+  Debug specific backbone:
+  python scripts/batch_eval.py --dataset_file SHA --data_path ./data/ShanghaiTech/part_A --verbose_for maxvit
+
+Helper scripts:
+  - scripts/list_checkpoints.py: List all checkpoints and inferred backbones
+  - scripts/diagnose_checkpoint.py: Test if a checkpoint can load
+  - scripts/test_eval.py: Manually run eval.py for one checkpoint
 """
 
 import argparse
@@ -18,25 +29,59 @@ import numpy as np
 
 def get_backbone_from_dirname(dirname):
     """Infer backbone name from directory name."""
-    if 'convnextv2' in dirname:
+    dirname_lower = dirname.lower()
+    
+    if 'convnextv2' in dirname_lower:
         return 'convnextv2_base'
-    if 'maxvit' in dirname:
-        # Try to extract the full model name
-        for part in dirname.split('_'):
-            if 'maxvit' in part:
-                return part
-        return 'maxvit_small_tf_224'
-    if 'swinv2' in dirname:
-        for part in dirname.split('_'):
+    
+    if 'swinv2' in dirname_lower:
+        # Try to extract full swinv2 model name from dirname
+        if 'swinv2_base_window8_256' in dirname_lower:
+            return 'swinv2_base_window8_256'
+        # Extract from parts
+        parts = dirname.split('_')
+        for i, part in enumerate(parts):
             if 'swinv2' in part:
-                return part
+                # Collect swinv2_* and following parts
+                extracted = [part]
+                for j in range(i+1, min(i+4, len(parts))):
+                    extracted.append(parts[j])
+                    if parts[j].startswith('base') or parts[j].startswith('small'):
+                        break
+                backbone = '_'.join(extracted)
+                # Handle specific cases
+                if not any(x in backbone for x in ['window', 'base', 'small']):
+                    return 'swinv2_base_window8_256'
+                return backbone
         return 'swinv2_base_window8_256'
-    if 'vgg' in dirname:
+    
+    if 'maxvit' in dirname_lower:
+        # Try to extract full maxvit model name from dirname
+        if 'maxvit_rmlp_tiny_poly' in dirname_lower:
+            return 'maxvit_rmlp_tiny_poly'
+        if 'maxvit_rmlp_tiny_rw_256' in dirname_lower:
+            return 'maxvit_rmlp_tiny_rw_256'
+        # Extract from parts
+        parts = dirname.split('_')
+        for i, part in enumerate(parts):
+            if 'maxvit' in part:
+                # Collect maxvit_* and following parts up to base/rw/poly
+                extracted = [part]
+                for j in range(i+1, len(parts)):
+                    extracted.append(parts[j])
+                    if any(marker in parts[j] for marker in ['base', 'rw_256', 'poly', 'base', 'small']):
+                        break
+                backbone = '_'.join(extracted)
+                return backbone if backbone.startswith('maxvit') else 'maxvit_small_tf_224'
+        return 'maxvit_small_tf_224'
+    
+    if 'vgg' in dirname_lower:
         return 'vgg16_bn'
+    
     return None
 
 
-def run_eval(backbone, checkpoint_path, dataset_file, data_path):
+def run_eval(backbone, checkpoint_path, dataset_file, data_path, verbose=False):
     """Run eval.py for a single checkpoint."""
     cmd = [
         sys.executable,
@@ -49,22 +94,53 @@ def run_eval(backbone, checkpoint_path, dataset_file, data_path):
     ]
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
-        # Extract MAE from output
-        for line in result.stdout.split('\n'):
-            if 'mae:' in line.lower():
-                parts = line.split('mae:')
-                if len(parts) > 1:
-                    mae_str = parts[1].split(',')[0].strip()
-                    try:
-                        return float(mae_str)
-                    except ValueError:
-                        pass
+        
+        output_text = result.stdout + '\n' + result.stderr
+        
+        # Extract MAE from output - check multiple patterns
+        for line in output_text.split('\n'):
+            line_lower = line.lower()
+            if 'mae:' in line_lower or 'mae =' in line_lower:
+                # Try to extract the number
+                for sep in ['mae:', 'mae =', 'mae=']:
+                    if sep in line_lower:
+                        idx = line_lower.find(sep)
+                        remainder = line[idx + len(sep):].strip()
+                        # Extract first number
+                        num_str = ''
+                        for char in remainder:
+                            if char.isdigit() or char == '.':
+                                num_str += char
+                            elif num_str:
+                                break
+                        if num_str:
+                            try:
+                                return float(num_str)
+                            except ValueError:
+                                pass
+        
+        # If no MAE found and verbose, print debug info
+        if verbose:
+            print(f"    No MAE found in output")
+            if result.returncode != 0:
+                print(f"    Return code: {result.returncode}")
+            if result.stderr:
+                print(f"    STDERR: {result.stderr[:500]}")
+            last_lines = output_text.strip().split('\n')[-5:]
+            print(f"    Last output lines:")
+            for line in last_lines:
+                if line.strip():
+                    print(f"      {line}")
+        
         return None
     except subprocess.TimeoutExpired:
-        print(f"Timeout evaluating {checkpoint_path}")
+        print(f"    Timeout evaluating {checkpoint_path}")
         return None
     except Exception as e:
-        print(f"Error running eval for {checkpoint_path}: {e}")
+        print(f"    Error running eval: {e}")
+        if verbose:
+            import traceback
+            traceback.print_exc()
         return None
 
 
@@ -75,6 +151,8 @@ def main():
     parser.add_argument('--output_dir', default='outputs')
     parser.add_argument('--skip_existing', action='store_true', help='Skip if summary already exists')
     parser.add_argument('--backbone_filter', default='', help='Only eval dirs containing this backbone name')
+    parser.add_argument('--verbose', action='store_true', help='Show error details for failed evaluations')
+    parser.add_argument('--verbose_for', default='', help='Show verbose output only for dirs containing this string')
     args = parser.parse_args()
 
     outputs_dir = Path(args.output_dir) / args.dataset_file
@@ -114,7 +192,8 @@ def main():
     print(f"Found {len(checkpoints_to_eval)} checkpoints to evaluate")
     for i, item in enumerate(checkpoints_to_eval):
         print(f"\n[{i+1}/{len(checkpoints_to_eval)}] Evaluating {item['dir']} ({item['backbone']})...")
-        mae = run_eval(item['backbone'], item['checkpoint'], args.dataset_file, args.data_path)
+        be_verbose = args.verbose or (args.verbose_for and args.verbose_for in item['dir'])
+        mae = run_eval(item['backbone'], item['checkpoint'], args.dataset_file, args.data_path, verbose=be_verbose)
         if mae is not None:
             results[item['backbone']].append({
                 'dir': item['dir'],
