@@ -15,6 +15,10 @@ python scripts/run_backbone_seeds.py \
     --extra_args "--epochs 1500 --patch_size 256 --lr_scheduler warmup_hold_cosine"
 ```
 
+For ConvNeXtV2, the current training code now applies a stronger default recipe than the original VGG path: `lr=5e-5`, `lr_backbone=5e-6`, `batch_size=4`, and `warmup_epochs=10` when those values are left at their defaults.
+
+The same idea is now implemented as an explicit backbone recipe table in `main.py`, so future backbones like MaxViT can get their own named defaults instead of piggybacking on a single hard-coded branch.
+
 ### Key Arguments
 
 - `--backbone`: Model backbone to train (default: `convnextv2_base`)

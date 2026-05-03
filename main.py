@@ -18,6 +18,29 @@ from engine import evaluate, train_one_epoch
 from models import build_model
 
 
+BASE_TRAINING_DEFAULTS = {
+    'lr': 1e-4,
+    'lr_backbone': 1e-5,
+    'batch_size': 8,
+    'warmup_epochs': 5,
+}
+
+BACKBONE_RECIPES = {
+    'convnextv2_base': {
+        'batch_size': 4,
+        'lr': 5e-5,
+        'lr_backbone': 5e-6,
+        'warmup_epochs': 10,
+    },
+    'maxvit_small_tf_224': {
+        'batch_size': 4,
+        'lr': 5e-5,
+        'lr_backbone': 5e-6,
+        'warmup_epochs': 10,
+    },
+}
+
+
 def get_args_parser():
     parser = argparse.ArgumentParser('Set Point Query Transformer', add_help=False)
 
@@ -95,18 +118,30 @@ def get_args_parser():
     return parser
 
 
+def apply_backbone_recipe(args):
+    """Apply backbone-specific fine-tuning defaults when the user left a generic setting in place."""
+    recipe = None
+    if args.backbone == 'convnextv2_base':
+        recipe = BACKBONE_RECIPES['convnextv2_base']
+    elif args.backbone.startswith('maxvit'):
+        recipe = BACKBONE_RECIPES['maxvit_small_tf_224']
+
+    if recipe is None:
+        return
+
+    for key, tuned_value in recipe.items():
+        default_value = BASE_TRAINING_DEFAULTS.get(key)
+        current_value = getattr(args, key)
+        if default_value is not None and current_value == default_value:
+            setattr(args, key, tuned_value)
+
+
 def main(args):
     utils.init_distributed_mode(args)
     print(args)
     device = torch.device(args.device)
 
-    if args.backbone == 'convnextv2_base':
-        if args.batch_size == 8:
-            args.batch_size = 2
-        if args.lr == 1e-4:
-            args.lr = 2.5e-5
-        if args.lr_backbone == 1e-5:
-            args.lr_backbone = 2.5e-6
+    apply_backbone_recipe(args)
 
     # fix the seed for reproducibility
     seed = args.seed + utils.get_rank()

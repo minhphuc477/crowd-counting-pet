@@ -74,6 +74,28 @@ PET
 ## Training
 
 - Download ImageNet pretrained [vgg16_bn](https://download.pytorch.org/models/vgg16_bn-6c64b313.pth), and put it in ```pretrained``` folder. Or you can define your pre-trained model path in [models/backbones/vgg.py](models/backbones/vgg.py)
+
+### Backbone choice for PET
+
+For PET, `convnextv2_base` is the safest default starting point. It is not the only strong option, but it is the best balance of accuracy, stability, and integration effort for this codebase.
+
+- ConvNeXt V2 is a pure CNN, so it fits PET's FPN-style feature flow cleanly.
+- It gives hierarchical features with strong semantic quality, which matters for quadtree splitting and point localization.
+- It is a much stronger upgrade than VGG16 without introducing the integration and deployment risk of more exotic architectures.
+
+I also considered the backbone families you listed:
+
+- VMamba: very promising for high-resolution global context, but more experimental to integrate and tune here.
+- InternImage: excellent for dense prediction and scale-aware localization, but usually heavier operationally.
+- FastViT: best if latency is the main goal, but not my first pick when the priority is MAE reduction.
+- Swin V2 / MaxViT: strong hybrid options and good secondary candidates if ConvNeXtV2 stalls.
+
+Practical order to benchmark:
+
+1. `convnextv2_base` as the baseline and tuning target.
+2. `internimage` or `swinv2` if you want a higher-capacity dense predictor.
+3. `fastvit` if deployment latency matters more than raw accuracy.
+4. `vmamba` if you are willing to spend more time on tuning and backend validation.
   
 
 - To train PET on ShanghaiTech PartA, run

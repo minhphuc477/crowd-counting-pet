@@ -158,7 +158,7 @@ def evaluate(model, data_loader, device, epoch=0, vis_dir=None):
 
         # record results
         results = {}
-        toTensor = lambda x: torch.tensor(x).float().cuda()
+        toTensor = lambda x: torch.tensor(x).float().to(device)
         results['mae'], results['mse'] = toTensor(mae), toTensor(mse)
         metric_logger.update(mae=results['mae'], mse=results['mse'])
 

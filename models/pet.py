@@ -105,8 +105,12 @@ class BasePETCount(nn.Module):
         div_win = window_partition(div.unsqueeze(1), window_size_h=dec_win_h, window_size_w=dec_win_w)
         valid_div = (div_win > 0.5).sum(dim=0)[:,0] 
         v_idx = valid_div > 0
-        # Move v_idx to CPU to match device of indexed tensors
-        v_idx = v_idx.cpu()
+        # Keep v_idx on the same device as features to avoid cross-device indexing
+        try:
+            v_idx = v_idx.to(src.device)
+        except Exception:
+            # fallback: keep as-is (boolean cpu tensor) if src.device not available
+            pass
         query_embed_win = query_embed_win[:, v_idx]
         query_feats_win = query_feats_win[:, v_idx]
         points_queries_win = points_queries_win[:, v_idx].reshape(-1, 2)
@@ -141,7 +145,7 @@ class BasePETCount(nn.Module):
         # normalize point-query coordinates
         img_shape = samples.tensors.shape[-2:]
         img_h, img_w = img_shape
-        points_queries = points_queries.float().cuda()
+        points_queries = points_queries.float().to(samples.tensors.device)
         points_queries[:, 0] /= img_h
         points_queries[:, 1] /= img_w
 
@@ -361,18 +365,23 @@ class PET(nn.Module):
         thrs = 0.5  # inference threshold        
         
         # process sparse point queries
-        if outputs['sparse'] is not None:
+        # determine device for outputs
+        out_device = None
+        if out_sparse is not None:
+            out_device = out_sparse['pred_logits'].device
             out_sparse_scores = torch.nn.functional.softmax(out_sparse['pred_logits'], -1)[..., 1]
             valid_sparse = out_sparse_scores > thrs
-            index_sparse = valid_sparse.cpu()
+            index_sparse = valid_sparse.to(out_device)
         else:
             index_sparse = None
 
         # process dense point queries
         if outputs['dense'] is not None:
+            if out_device is None:
+                out_device = out_dense['pred_logits'].device
             out_dense_scores = torch.nn.functional.softmax(out_dense['pred_logits'], -1)[..., 1]
             valid_dense = out_dense_scores > thrs
-            index_dense = valid_dense.cpu()
+            index_dense = valid_dense.to(out_device)
         else:
             index_dense = None
 
