@@ -40,12 +40,13 @@ class BasePETCount(nn.Module):
 
         # get image shape
         input = samples.tensors
-        image_shape = torch.tensor(input.shape[2:])
+        image_shape = torch.tensor(input.shape[2:], device=src.device)
         shape = (image_shape + stride//2 -1) // stride
+        shape_h, shape_w = int(shape[0].item()), int(shape[1].item())
 
         # generate point queries
-        shift_x = ((torch.arange(0, shape[1]) + 0.5) * stride).long()
-        shift_y = ((torch.arange(0, shape[0]) + 0.5) * stride).long()
+        shift_x = ((torch.arange(0, shape_w, device=src.device) + 0.5) * stride).long()
+        shift_y = ((torch.arange(0, shape_h, device=src.device) + 0.5) * stride).long()
         shift_y, shift_x = torch.meshgrid(shift_y, shift_x)
         points_queries = torch.vstack([shift_y.flatten(), shift_x.flatten()]).permute(1,0) # 2xN --> Nx2
         h, w = shift_x.shape
@@ -72,12 +73,13 @@ class BasePETCount(nn.Module):
 
         # get image shape
         input = samples.tensors
-        image_shape = torch.tensor(input.shape[2:])
+        image_shape = torch.tensor(input.shape[2:], device=src.device)
         shape = (image_shape + stride//2 -1) // stride
+        shape_h, shape_w = int(shape[0].item()), int(shape[1].item())
 
         # generate points queries
-        shift_x = ((torch.arange(0, shape[1]) + 0.5) * stride).long()
-        shift_y = ((torch.arange(0, shape[0]) + 0.5) * stride).long()
+        shift_x = ((torch.arange(0, shape_w, device=src.device) + 0.5) * stride).long()
+        shift_y = ((torch.arange(0, shape_h, device=src.device) + 0.5) * stride).long()
         shift_y, shift_x = torch.meshgrid(shift_y, shift_x)
         points_queries = torch.vstack([shift_y.flatten(), shift_x.flatten()]).permute(1,0) # 2xN --> Nx2
         h, w = shift_x.shape
