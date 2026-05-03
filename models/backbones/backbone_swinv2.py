@@ -94,9 +94,18 @@ class BackboneBase_SwinV2(nn.Module):
 class Backbone_SwinV2(BackboneBase_SwinV2):
     def __init__(self, model_name='swinv2_base_window8_256', pretrained=True):
         timm = importlib.import_module('timm')
+        
+        # Map deprecated/unsupported names to actual timm model names
+        model_name_map = {
+            'swinv2_base': 'swinv2_base_window8_256',
+            'swinv2_small': 'swinv2_small_window8_256',
+            'swinv2_tiny': 'swinv2_tiny_window8_256',
+        }
+        actual_model_name = model_name_map.get(model_name, model_name)
+        
         try:
             backbone = timm.create_model(
-                model_name,
+                actual_model_name,
                 pretrained=pretrained,
                 features_only=True,
                 out_indices=(0, 1, 2, 3),
@@ -105,15 +114,28 @@ class Backbone_SwinV2(BackboneBase_SwinV2):
             if not pretrained:
                 raise
             warnings.warn(
-                f'Could not load pretrained weights for {model_name}: {exc}. Falling back to random init.',
+                f'Could not load pretrained weights for {actual_model_name}: {exc}. Falling back to random init.',
                 RuntimeWarning,
             )
-            backbone = timm.create_model(
-                model_name,
-                pretrained=False,
-                features_only=True,
-                out_indices=(0, 1, 2, 3),
-            )
+            try:
+                backbone = timm.create_model(
+                    actual_model_name,
+                    pretrained=False,
+                    features_only=True,
+                    out_indices=(0, 1, 2, 3),
+                )
+            except (RuntimeError, OSError) as exc2:
+                # If the mapped name doesn't exist either, try fallback
+                warnings.warn(
+                    f'Model {actual_model_name} not found: {exc2}. Trying fallback swinv2_base_window8_256.',
+                    RuntimeWarning,
+                )
+                backbone = timm.create_model(
+                    'swinv2_base_window8_256',
+                    pretrained=False,
+                    features_only=True,
+                    out_indices=(0, 1, 2, 3),
+                )
         super().__init__(backbone, num_channels=256)
 
 

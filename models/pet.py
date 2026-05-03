@@ -104,6 +104,10 @@ class BasePETCount(nn.Module):
         
         # dynamic point query generation
         div = kwargs['div']
+        # Interpolate div to match query_embed spatial size
+        if div.shape[-2:] != (h, w):
+            div = F.interpolate(div.unsqueeze(1).float(), size=(h, w), mode='nearest').squeeze(1)
+        
         div_win = window_partition(div.unsqueeze(1), window_size_h=dec_win_h, window_size_w=dec_win_w)
         valid_div = (div_win > 0.5).sum(dim=0)[:,0] 
         v_idx = valid_div > 0

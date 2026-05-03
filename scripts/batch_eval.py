@@ -35,45 +35,36 @@ def get_backbone_from_dirname(dirname):
         return 'convnextv2_base'
     
     if 'swinv2' in dirname_lower:
-        # Try to extract full swinv2 model name from dirname
+        # SwinV2 models from timm
         if 'swinv2_base_window8_256' in dirname_lower:
             return 'swinv2_base_window8_256'
-        # Extract from parts
-        parts = dirname.split('_')
-        for i, part in enumerate(parts):
-            if 'swinv2' in part:
-                # Collect swinv2_* and following parts
-                extracted = [part]
-                for j in range(i+1, min(i+4, len(parts))):
-                    extracted.append(parts[j])
-                    if parts[j].startswith('base') or parts[j].startswith('small'):
-                        break
-                backbone = '_'.join(extracted)
-                # Handle specific cases
-                if not any(x in backbone for x in ['window', 'base', 'small']):
-                    return 'swinv2_base_window8_256'
-                return backbone
+        if 'swinv2_small' in dirname_lower:
+            return 'swinv2_small_window8_256'
+        # Default SwinV2
         return 'swinv2_base_window8_256'
     
     if 'maxvit' in dirname_lower:
-        # Try to extract full maxvit model name from dirname
-        if 'maxvit_rmlp_tiny_poly' in dirname_lower:
-            return 'maxvit_rmlp_tiny_poly'
-        if 'maxvit_rmlp_tiny_rw_256' in dirname_lower:
+        # MaxViT models from timm - note: no "poly" suffix in timm
+        # Available: maxvit_tiny_tf_224, maxvit_small_tf_224, maxvit_base_tf_224
+        #           maxvit_rmlp_tiny_rw_256, maxvit_rmlp_small_rw_256, maxvit_rmlp_base_rw_256
+        
+        # Try to match checkpoint names to actual timm model names
+        if 'poly' in dirname_lower:
+            # "poly" suffix doesn't exist in timm, use rmlp_tiny_rw_256 as substitute
             return 'maxvit_rmlp_tiny_rw_256'
-        # Extract from parts
-        parts = dirname.split('_')
-        for i, part in enumerate(parts):
-            if 'maxvit' in part:
-                # Collect maxvit_* and following parts up to base/rw/poly
-                extracted = [part]
-                for j in range(i+1, len(parts)):
-                    extracted.append(parts[j])
-                    if any(marker in parts[j] for marker in ['base', 'rw_256', 'poly', 'base', 'small']):
-                        break
-                backbone = '_'.join(extracted)
-                return backbone if backbone.startswith('maxvit') else 'maxvit_small_tf_224'
-        return 'maxvit_small_tf_224'
+        elif 'maxvit_rmlp_tiny_rw_256' in dirname_lower:
+            return 'maxvit_rmlp_tiny_rw_256'
+        elif 'maxvit_rmlp_small' in dirname_lower:
+            return 'maxvit_rmlp_small_rw_256'
+        elif 'maxvit_rmlp_base' in dirname_lower:
+            return 'maxvit_rmlp_base_rw_256'
+        elif 'maxvit_base' in dirname_lower:
+            return 'maxvit_base_tf_224'
+        elif 'maxvit_small' in dirname_lower:
+            return 'maxvit_small_tf_224'
+        else:
+            # Default MaxViT
+            return 'maxvit_small_tf_224'
     
     if 'vgg' in dirname_lower:
         return 'vgg16_bn'

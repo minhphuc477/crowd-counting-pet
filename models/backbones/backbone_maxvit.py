@@ -94,9 +94,18 @@ class BackboneBase_MaxViT(nn.Module):
 class Backbone_MaxViT(BackboneBase_MaxViT):
     def __init__(self, model_name='maxvit_small_tf_224', pretrained=True):
         timm = importlib.import_module('timm')
+        
+        # Map deprecated/unsupported names to actual timm model names
+        model_name_map = {
+            'maxvit_rmlp_tiny_poly': 'maxvit_rmlp_tiny_rw_256',
+            'maxvit_rmlp_tiny': 'maxvit_rmlp_tiny_rw_256',
+            'maxvit_tiny': 'maxvit_tiny_tf_224',
+        }
+        actual_model_name = model_name_map.get(model_name, model_name)
+        
         try:
             backbone = timm.create_model(
-                model_name,
+                actual_model_name,
                 pretrained=pretrained,
                 features_only=True,
                 out_indices=(0, 1, 2, 3),
@@ -105,15 +114,28 @@ class Backbone_MaxViT(BackboneBase_MaxViT):
             if not pretrained:
                 raise
             warnings.warn(
-                f'Could not load pretrained weights for {model_name}: {exc}. Falling back to random init.',
+                f'Could not load pretrained weights for {actual_model_name}: {exc}. Falling back to random init.',
                 RuntimeWarning,
             )
-            backbone = timm.create_model(
-                model_name,
-                pretrained=False,
-                features_only=True,
-                out_indices=(0, 1, 2, 3),
-            )
+            try:
+                backbone = timm.create_model(
+                    actual_model_name,
+                    pretrained=False,
+                    features_only=True,
+                    out_indices=(0, 1, 2, 3),
+                )
+            except (RuntimeError, OSError) as exc2:
+                # If the mapped name doesn't exist either, try fallback
+                warnings.warn(
+                    f'Model {actual_model_name} not found: {exc2}. Trying fallback maxvit_small_tf_224.',
+                    RuntimeWarning,
+                )
+                backbone = timm.create_model(
+                    'maxvit_small_tf_224',
+                    pretrained=False,
+                    features_only=True,
+                    out_indices=(0, 1, 2, 3),
+                )
         super().__init__(backbone, num_channels=256)
 
 
