@@ -102,10 +102,18 @@ class BasePETCount(nn.Module):
         points_queries_win = window_partition(points_queries, window_size_h=dec_win_h, window_size_w=dec_win_w)
         query_feats_win = window_partition(query_feats, window_size_h=dec_win_h, window_size_w=dec_win_w)
         
-        # During inference, use all windows without filtering
-        # Filtering queries to skip empty windows can cause shape mismatches with encoder memory
-        # Post-processing will handle confidence-based filtering of predictions
-        v_idx = None
+        # Filter decoder query windows using the split map at the query-window resolution.
+        # Encoder memory stays untouched so both sides keep a compatible batch dimension.
+        div = kwargs['div']
+        if div.shape[-2:] != (h, w):
+            div = F.interpolate(div.unsqueeze(1).float(), size=(h, w), mode='nearest').squeeze(1)
+
+        div_win = window_partition(div.unsqueeze(1), window_size_h=dec_win_h, window_size_w=dec_win_w)
+        valid_div = (div_win > 0.5).sum(dim=0)[:, 0]
+        v_idx = valid_div > 0
+        query_embed_win = query_embed_win[:, v_idx]
+        query_feats_win = query_feats_win[:, v_idx]
+        points_queries_win = points_queries_win[:, v_idx].reshape(-1, 2)
     
         return query_embed_win, points_queries_win, query_feats_win, v_idx
     
