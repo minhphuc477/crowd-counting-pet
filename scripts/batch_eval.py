@@ -88,16 +88,19 @@ def run_eval(backbone, checkpoint_path, dataset_file, data_path, verbose=False):
         
         output_text = result.stdout + '\n' + result.stderr
         
-        # Extract MAE from output - check multiple patterns
+        # Extract MAE from output - try multiple patterns
+        mae_value = None
+        
+        # Pattern 1: "mae: X" or "mae: X," or "mae = X"
         for line in output_text.split('\n'):
             line_lower = line.lower()
-            if 'mae:' in line_lower or 'mae =' in line_lower:
-                # Try to extract the number
+            if 'mae' in line_lower and any(sep in line_lower for sep in [':', '=']):
+                # Find "mae:" or "mae="
                 for sep in ['mae:', 'mae =', 'mae=']:
                     if sep in line_lower:
                         idx = line_lower.find(sep)
                         remainder = line[idx + len(sep):].strip()
-                        # Extract first number
+                        # Extract first number (handle cases like "123.45," or "123.45 " etc)
                         num_str = ''
                         for char in remainder:
                             if char.isdigit() or char == '.':
@@ -106,24 +109,31 @@ def run_eval(backbone, checkpoint_path, dataset_file, data_path, verbose=False):
                                 break
                         if num_str:
                             try:
-                                return float(num_str)
+                                mae_value = float(num_str)
+                                break
                             except ValueError:
                                 pass
+                if mae_value is not None:
+                    break
         
-        # If no MAE found and verbose, print debug info
-        if verbose:
-            print(f"    No MAE found in output")
-            if result.returncode != 0:
-                print(f"    Return code: {result.returncode}")
+        # If still no MAE and verbose, print debug info
+        if mae_value is None and verbose:
+            print(f"    DEBUG: MAE extraction failed")
+            print(f"    Return code: {result.returncode}")
             if result.stderr:
-                print(f"    STDERR: {result.stderr[:500]}")
-            last_lines = output_text.strip().split('\n')[-5:]
-            print(f"    Last output lines:")
-            for line in last_lines:
-                if line.strip():
-                    print(f"      {line}")
+                err_lines = result.stderr.strip().split('\n')[-3:]
+                print(f"    STDERR (last 3 lines):")
+                for line in err_lines:
+                    if line.strip():
+                        print(f"      {line}")
+            if result.stdout:
+                out_lines = result.stdout.strip().split('\n')[-5:]
+                print(f"    STDOUT (last 5 lines):")
+                for line in out_lines:
+                    if line.strip():
+                        print(f"      {line}")
         
-        return None
+        return mae_value
     except subprocess.TimeoutExpired:
         print(f"    Timeout evaluating {checkpoint_path}")
         return None

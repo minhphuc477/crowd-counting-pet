@@ -102,24 +102,10 @@ class BasePETCount(nn.Module):
         points_queries_win = window_partition(points_queries, window_size_h=dec_win_h, window_size_w=dec_win_w)
         query_feats_win = window_partition(query_feats, window_size_h=dec_win_h, window_size_w=dec_win_w)
         
-        # dynamic point query generation
-        div = kwargs['div']
-        # Interpolate div to match query_embed spatial size
-        if div.shape[-2:] != (h, w):
-            div = F.interpolate(div.unsqueeze(1).float(), size=(h, w), mode='nearest').squeeze(1)
-        
-        div_win = window_partition(div.unsqueeze(1), window_size_h=dec_win_h, window_size_w=dec_win_w)
-        valid_div = (div_win > 0.5).sum(dim=0)[:,0] 
-        v_idx = valid_div > 0
-        # Keep v_idx on the same device as features to avoid cross-device indexing
-        try:
-            v_idx = v_idx.to(src.device)
-        except Exception:
-            # fallback: keep as-is (boolean cpu tensor) if src.device not available
-            pass
-        query_embed_win = query_embed_win[:, v_idx]
-        query_feats_win = query_feats_win[:, v_idx]
-        points_queries_win = points_queries_win[:, v_idx].reshape(-1, 2)
+        # During inference, use all windows without filtering
+        # Filtering queries to skip empty windows can cause shape mismatches with encoder memory
+        # Post-processing will handle confidence-based filtering of predictions
+        v_idx = None
     
         return query_embed_win, points_queries_win, query_feats_win, v_idx
     

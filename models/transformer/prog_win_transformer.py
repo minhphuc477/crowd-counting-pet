@@ -121,27 +121,19 @@ class WinDecoderTransformer(nn.Module):
         # dec_win_size is [height, width]
         self.dec_win_h, self.dec_win_w = kwargs['dec_win_size']
         
-        # window-rize memory input - use window sizes directly without div_ratio adjustment
+        # window-rize memory input - encoder uses full windows
         memory_win, pos_embed_win, mask_win = enc_win_partition(src, pos_embed, mask, 
                                                     self.dec_win_h, self.dec_win_w)
         
         # dynamic decoder forward
         if 'test' in kwargs:
-            # Ensure boolean index is on same device as memory_win
-            try:
-                v_idx = v_idx.to(memory_win.device)
-            except Exception:
-                pass
-            # Only filter windows if v_idx matches the window dimension
-            if v_idx is not None and v_idx.shape[0] == memory_win.shape[1]:
-                memory_win = memory_win[:, v_idx]
-                pos_embed_win = pos_embed_win[:, v_idx]
-                mask_win = mask_win[v_idx]
+            # During inference, decoder queries are already filtered by v_idx in PET module
+            # Do NOT filter encoder memory windows - they should remain complete
             hs = self.decoder_forward_dynamic(query_feats, query_embed, 
                                     memory_win, pos_embed_win, mask_win, self.dec_win_h, self.dec_win_w, src.shape, **kwargs)
             return hs
         else:
-            # decoder forward
+            # decoder forward - training uses all windows
             hs = self.decoder_forward(query_feats, query_embed, 
                                     memory_win, pos_embed_win, mask_win, self.dec_win_h, self.dec_win_w, src.shape, **kwargs)
             return hs.transpose(1, 2)
