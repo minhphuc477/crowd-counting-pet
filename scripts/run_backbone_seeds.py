@@ -8,6 +8,11 @@ Usage:
         --seeds 42 7 13 99 1234 \
         --extra_args "--epochs 1500 --patch_size 256 --lr_scheduler warmup_hold_cosine"
 
+    python scripts/run_backbone_seeds.py \
+        --preset latency \
+        --seeds 42 7 \
+        --extra_args "--epochs 300 --patch_size 256"
+
 This script will:
 1. Run main.py training for each seed
 2. Save results and checkpoints per seed in results/{backbone}/seed_{seed}/
@@ -24,6 +29,49 @@ from datetime import datetime
 import numpy as np
 
 
+ABLATION_PRESETS = {
+    "crowd_dense": [
+        "convnextv2_base",
+        "convnext_base",
+        "swinv2_base",
+        "maxvit_small",
+        "pvtv2_b1",
+    ],
+    "latency": [
+        "convnextv2_tiny",
+        "fastvit_tiny",
+        "efficientvit_tiny",
+        "mobilenetv4_small",
+        "repvit_tiny",
+        "edgenext_tiny",
+    ],
+    "full": [
+        "convnext_tiny",
+        "convnext_base",
+        "convnextv2_tiny",
+        "convnextv2_base",
+        "swinv2_tiny",
+        "swinv2_base",
+        "maxvit_tiny",
+        "maxvit_small",
+        "fastvit_tiny",
+        "fastvit_small",
+        "efficientvit_tiny",
+        "efficientvit_small",
+        "efficientnetv2_tiny",
+        "efficientnetv2_small",
+        "mobilenetv4_small",
+        "mobilenetv4_hybrid",
+        "hgnetv2_tiny",
+        "pvtv2_b0",
+        "pvtv2_b1",
+        "edgenext_tiny",
+        "repvit_tiny",
+        "repvit_small",
+    ],
+}
+
+
 def get_args():
     parser = argparse.ArgumentParser(
         description="Multi-seed training orchestrator for PET",
@@ -33,7 +81,19 @@ def get_args():
         "--backbone",
         default="convnextv2_base",
         type=str,
-        help="Backbone architecture to train (default: convnextv2_base)",
+        help="Single backbone architecture to train (default: convnextv2_base)",
+    )
+    parser.add_argument(
+        "--backbones",
+        nargs="+",
+        default=None,
+        help="Train multiple backbone architectures in one ablation run",
+    )
+    parser.add_argument(
+        "--preset",
+        choices=sorted(ABLATION_PRESETS.keys()),
+        default=None,
+        help="Named backbone ablation preset: crowd_dense, latency, or full",
     )
     parser.add_argument(
         "--seeds",
@@ -66,6 +126,14 @@ def get_args():
         help="Continue from a specific seed (skip earlier seeds)",
     )
     return parser.parse_args()
+
+
+def resolve_backbones(args):
+    if args.preset:
+        return ABLATION_PRESETS[args.preset]
+    if args.backbones:
+        return args.backbones
+    return [args.backbone]
 
 
 def run_training(
@@ -186,59 +254,63 @@ def save_experiment_log(backbone, seeds, output_dir, results):
 
 def main():
     args = get_args()
+    backbones = resolve_backbones(args)
     
     output_dir = Path(args.output_dir)
-    exp_name = f"{args.backbone}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    exp_name = f"backbone_ablation_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
     
     print(f"\n{'='*80}")
     print(f"Multi-seed Training Experiment: {exp_name}")
-    print(f"Backbone: {args.backbone}")
+    print(f"Backbones: {backbones}")
     print(f"Seeds: {args.seeds}")
     print(f"Extra arguments: {args.extra_args}")
     print(f"{'='*80}\n")
     
-    # Run training for each seed
-    successful_seeds = []
-    failed_seeds = []
-    
-    for seed in args.seeds:
-        # Skip earlier seeds if continue_from_seed is specified
-        if args.continue_from_seed is not None and seed < args.continue_from_seed:
-            print(f"Skipping seed {seed} (--continue_from_seed {args.continue_from_seed})")
-            continue
-        
-        success, _ = run_training(
-            args.backbone,
-            seed,
-            args.extra_args,
-            str(output_dir),
-            dry_run=args.dry_run,
-        )
-        
-        if success:
-            successful_seeds.append(seed)
-        else:
-            failed_seeds.append(seed)
-    
-    # Collect and display results
-    print(f"\n{'='*80}")
-    print("Training Complete - Collecting Results")
-    print(f"{'='*80}\n")
-    
-    results = collect_results(args.backbone, args.seeds, str(output_dir))
-    
-    # Save experiment log
-    if not args.dry_run:
-        save_experiment_log(args.backbone, args.seeds, str(output_dir), results)
-    
-    # Final summary
+    all_results = {}
+    successful_runs = 0
+    failed_runs = []
+
+    for backbone in backbones:
+        successful_seeds = []
+        failed_seeds = []
+
+        for seed in args.seeds:
+            if args.continue_from_seed is not None and seed < args.continue_from_seed:
+                print(f"Skipping seed {seed} (--continue_from_seed {args.continue_from_seed})")
+                continue
+
+            success, _ = run_training(
+                backbone,
+                seed,
+                args.extra_args,
+                str(output_dir),
+                dry_run=args.dry_run,
+            )
+
+            if success:
+                successful_seeds.append(seed)
+                successful_runs += 1
+            else:
+                failed_seeds.append(seed)
+                failed_runs.append((backbone, seed))
+
+        print(f"\n{'='*80}")
+        print(f"Training Complete for {backbone} - Collecting Results")
+        print(f"{'='*80}\n")
+
+        results = collect_results(backbone, args.seeds, str(output_dir))
+        all_results[backbone] = results
+
+        if not args.dry_run:
+            save_experiment_log(backbone, args.seeds, str(output_dir), results)
+
     print(f"\n{'='*80}")
     print("Final Summary")
     print(f"{'='*80}")
-    print(f"Successful runs: {len(successful_seeds)}/{len(args.seeds)}")
-    if failed_seeds:
-        print(f"Failed runs: {failed_seeds}")
-    print(f"Output directory: {output_dir / args.backbone}")
+    print(f"Successful runs: {successful_runs}/{len(backbones) * len(args.seeds)}")
+    if failed_runs:
+        print(f"Failed runs: {failed_runs}")
+    print(f"Output directory: {output_dir}")
     print(f"{'='*80}\n")
 
 

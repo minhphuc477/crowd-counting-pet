@@ -4,10 +4,14 @@ python -m torch.distributed.launch \
     --master_port=10001 \
     --use_env main.py \
     --lr=0.0001 \
-    --backbone="vgg16_bn" \
+    --backbone="convnextv2_base" \
     --ce_loss_coef=1.0 \
     --point_loss_coef=5.0 \
     --eos_coef=0.5 \
+    --negative_loss_coef=0.1 \
+    --quadtree_loss_coef=0.1 \
+    --crop_attempts=8 \
+    --min_crop_points=1 \
     --dec_layers=2 \
     --hidden_dim=256 \
     --dim_feedforward=512 \

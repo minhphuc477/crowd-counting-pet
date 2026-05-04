@@ -2,10 +2,10 @@
 Backbone modules
 """
 from collections import OrderedDict
+from typing import Dict
 
 import torch
 import torch.nn.functional as F
-import torchvision
 from torch import nn
 
 from util.misc import NestedTensor
@@ -95,9 +95,9 @@ class Backbone_VGG(BackboneBase_VGG):
     """
     VGG backbone
     """
-    def __init__(self, name: str, return_interm_layers: bool):
+    def __init__(self, name: str, return_interm_layers: bool, pretrained: bool = True):
         if name == 'vgg16_bn':
-            backbone = vgg16_bn(pretrained=True)
+            backbone = vgg16_bn(pretrained=pretrained)
         else:
             raise ValueError(f'Unsupported VGG backbone: {name}')
         num_channels = 256
@@ -110,7 +110,7 @@ class Joiner(nn.Sequential):
 
     def forward(self, tensor_list: NestedTensor):
         xs = self[0](tensor_list)
-        out: Dict[NestedTensor] = {}
+        out: Dict[str, NestedTensor] = {}
         pos = {}
         for name, x in xs.items():            
             out[name] = x
@@ -121,7 +121,7 @@ class Joiner(nn.Sequential):
 
 def build_backbone_vgg(args):
     position_embedding = build_position_encoding(args)
-    backbone = Backbone_VGG(args.backbone, True)
+    backbone = Backbone_VGG(args.backbone, True, pretrained=not getattr(args, 'no_pretrained_backbone', False))
     model = Joiner(backbone, position_embedding)
     model.num_channels = backbone.num_channels
     return model

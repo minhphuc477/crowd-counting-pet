@@ -1,6 +1,6 @@
 torch
 torchvision
-timm
+timm>=0.9.12
 numpy
 opencv-python
 scipy

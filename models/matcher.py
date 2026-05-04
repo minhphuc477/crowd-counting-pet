@@ -43,6 +43,12 @@ class HungarianMatcher(nn.Module):
                 len(index_i) = len(index_j) = min(num_queries, num_target_points)
         """
         bs, num_queries = outputs["pred_logits"].shape[:2]
+        sizes = [len(v["points"]) for v in targets]
+        total_targets = sum(sizes)
+        device = outputs["pred_logits"].device
+        if total_targets == 0:
+            empty = torch.empty(0, dtype=torch.int64, device=device)
+            return [(empty, empty) for _ in range(bs)]
 
         # flatten to compute the cost matrices in a batch
         out_prob = outputs["pred_logits"].flatten(0, 1).softmax(-1)  # [batch_size * num_queries, 2]
@@ -64,11 +70,22 @@ class HungarianMatcher(nn.Module):
 
         # final cost matrix
         C = self.cost_point * cost_point + self.cost_class * cost_class
-        C = C.view(bs, num_queries, -1).cpu()
+        C = C.view(bs, num_queries, total_targets).cpu()
 
-        sizes = [len(v["points"]) for v in targets]
-        indices = [linear_sum_assignment(c[i]) for i, c in enumerate(C.split(sizes, -1))]
-        return [(torch.as_tensor(i, dtype=torch.int64), torch.as_tensor(j, dtype=torch.int64)) for i, j in indices]
+        indices = []
+        for i, c in enumerate(C.split(sizes, -1)):
+            if sizes[i] == 0:
+                indices.append((
+                    torch.empty(0, dtype=torch.int64, device=device),
+                    torch.empty(0, dtype=torch.int64, device=device),
+                ))
+            else:
+                src_idx, tgt_idx = linear_sum_assignment(c[i])
+                indices.append((
+                    torch.as_tensor(src_idx, dtype=torch.int64, device=device),
+                    torch.as_tensor(tgt_idx, dtype=torch.int64, device=device),
+                ))
+        return indices
 
 
 def build_matcher(args):

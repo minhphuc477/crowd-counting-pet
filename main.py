@@ -16,6 +16,7 @@ import util.misc as utils
 from datasets import build_dataset
 from engine import evaluate, train_one_epoch
 from models import build_model
+from models.backbones import get_supported_timm_backbones
 
 
 BASE_TRAINING_DEFAULTS = {
@@ -26,19 +27,80 @@ BASE_TRAINING_DEFAULTS = {
 }
 
 BACKBONE_RECIPES = {
-    'convnextv2_base': {
+    'heavy': {
         'batch_size': 4,
         'lr': 5e-5,
         'lr_backbone': 5e-6,
         'warmup_epochs': 10,
     },
-    'maxvit_small_tf_224': {
-        'batch_size': 4,
-        'lr': 5e-5,
-        'lr_backbone': 5e-6,
-        'warmup_epochs': 10,
+    'mobile': {
+        'batch_size': 8,
+        'lr': 7.5e-5,
+        'lr_backbone': 7.5e-6,
+        'warmup_epochs': 8,
+    },
+    'vgg': {
+        'batch_size': 8,
+        'lr': 1e-4,
+        'lr_backbone': 1e-5,
+        'warmup_epochs': 5,
     },
 }
+
+HEAVY_BACKBONE_PREFIXES = (
+    'convnext_base',
+    'convnextv2_base',
+    'convnextv2_large',
+    'convnextv2_huge',
+    'swinv2',
+    'maxvit',
+    'pvt_v2',
+    'pvtv2',
+)
+
+MOBILE_BACKBONE_PREFIXES = (
+    'convnext_tiny',
+    'convnextv2_tiny',
+    'convnextv2_small',
+    'fastvit',
+    'efficientvit',
+    'efficientnetv2',
+    'tf_efficientnetv2',
+    'mobilenetv4',
+    'hgnet',
+    'hgnetv2',
+    'edgenext',
+    'repvit',
+)
+
+BACKBONE_ABLATION_PRESETS = {
+    'crowd_dense': [
+        'convnextv2_base',
+        'convnext_base',
+        'swinv2_base',
+        'maxvit_small',
+        'pvtv2_b1',
+    ],
+    'latency': [
+        'convnextv2_tiny',
+        'fastvit_tiny',
+        'efficientvit_tiny',
+        'mobilenetv4_small',
+        'repvit_tiny',
+        'edgenext_tiny',
+    ],
+    'full': list(get_supported_timm_backbones()),
+}
+
+
+def get_backbone_recipe(backbone_name):
+    if backbone_name.startswith('vgg'):
+        return BACKBONE_RECIPES['vgg']
+    if any(backbone_name.startswith(prefix) for prefix in HEAVY_BACKBONE_PREFIXES):
+        return BACKBONE_RECIPES['heavy']
+    if any(backbone_name.startswith(prefix) for prefix in MOBILE_BACKBONE_PREFIXES):
+        return BACKBONE_RECIPES['mobile']
+    return None
 
 
 def get_args_parser():
@@ -64,8 +126,12 @@ def get_args_parser():
 
     # model parameters
     # - backbone
-    parser.add_argument('--backbone', default='vgg16_bn', type=str,
+    parser.add_argument('--backbone', default='convnextv2_base', type=str,
                         help="Name of the convolutional backbone to use")
+    parser.add_argument('--list_backbones', action='store_true',
+                        help='print supported timm ablation backbones and exit')
+    parser.add_argument('--no_pretrained_backbone', action='store_true',
+                        help='initialize the backbone randomly instead of loading timm/ImageNet weights')
     parser.add_argument('--position_embedding', default='sine', type=str, choices=('sine', 'learned', 'fourier'),
                         help="Type of positional embedding to use on top of the image features")
     # - transformer
@@ -91,12 +157,34 @@ def get_args_parser():
     parser.add_argument('--point_loss_coef', default=5.0, type=float)
     parser.add_argument('--eos_coef', default=0.5, type=float,
                         help="Relative classification weight of the no-object class")
+    parser.add_argument('--negative_loss_coef', default=0.1, type=float,
+                        help='extra scale for all-negative classification and split-map regions')
+    parser.add_argument('--non_div_loss_coef', default=0.25, type=float,
+                        help='auxiliary loss scale outside the current quadtree branch')
+    parser.add_argument('--quadtree_loss_coef', default=0.1, type=float,
+                        help='ground-truth split-map quality loss coefficient')
+    parser.add_argument('--quadtree_prior_coef', default=0.025, type=float,
+                        help='legacy image-level splitter prior coefficient')
+    parser.add_argument('--split_count_threshold', default=2, type=int,
+                        help='minimum people in a splitter cell before it should split')
+    parser.add_argument('--split_pos_weight', default=1.0, type=float,
+                        help='positive cell weight for quadtree quality loss')
+    parser.add_argument('--split_threshold', default=-1.0, type=float,
+                        help='split-map threshold; negative enables adaptive quantile thresholding')
+    parser.add_argument('--split_threshold_quantile', default=0.55, type=float,
+                        help='adaptive split-map quantile used when split_threshold is negative')
+    parser.add_argument('--score_threshold', default=0.5, type=float,
+                        help='point classification threshold; negative enables adaptive score thresholding')
 
     # dataset parameters
     parser.add_argument('--dataset_file', default="SHA")
-    parser.add_argument('--data_path', default="./data/ShanghaiTech/PartA", type=str)
+    parser.add_argument('--data_path', default="", type=str)
     parser.add_argument('--patch_size', default=256, type=int,
                         help='training crop size for SHA')
+    parser.add_argument('--crop_attempts', default=8, type=int,
+                        help='number of random crop candidates tried per positive training image')
+    parser.add_argument('--min_crop_points', default=1, type=int,
+                        help='minimum people desired in a positive training crop')
 
     # misc parameters
     parser.add_argument('--output_dir', default='',
@@ -120,12 +208,7 @@ def get_args_parser():
 
 def apply_backbone_recipe(args):
     """Apply backbone-specific fine-tuning defaults when the user left a generic setting in place."""
-    recipe = None
-    if args.backbone == 'convnextv2_base':
-        recipe = BACKBONE_RECIPES['convnextv2_base']
-    elif args.backbone.startswith('maxvit'):
-        recipe = BACKBONE_RECIPES['maxvit_small_tf_224']
-
+    recipe = get_backbone_recipe(args.backbone)
     if recipe is None:
         return
 
@@ -138,10 +221,14 @@ def apply_backbone_recipe(args):
 
 def main(args):
     utils.init_distributed_mode(args)
+    if args.list_backbones:
+        print('Supported timm ablation backbones:')
+        for backbone in get_supported_timm_backbones():
+            print(f'  {backbone}')
+        return
+    apply_backbone_recipe(args)
     print(args)
     device = torch.device(args.device)
-
-    apply_backbone_recipe(args)
 
     # fix the seed for reproducibility
     seed = args.seed + utils.get_rank()

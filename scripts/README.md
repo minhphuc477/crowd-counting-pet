@@ -17,11 +17,37 @@ python scripts/run_backbone_seeds.py \
 
 For ConvNeXtV2, the current training code now applies a stronger default recipe than the original VGG path: `lr=5e-5`, `lr_backbone=5e-6`, `batch_size=4`, and `warmup_epochs=10` when those values are left at their defaults.
 
-The same idea is now implemented as an explicit backbone recipe table in `main.py`, so future backbones like MaxViT can get their own named defaults instead of piggybacking on a single hard-coded branch.
+The same idea is now implemented as a backbone recipe table in `main.py`, so heavier backbones and latency-focused backbones get separate conservative defaults.
+
+### Backbone Ablation Presets
+
+```bash
+# Dense crowd accuracy candidates
+python scripts/run_backbone_seeds.py \
+    --preset crowd_dense \
+    --seeds 42 7 \
+    --extra_args "--dataset_file SHA --data_path ./data/ShanghaiTech/part_A --epochs 300 --patch_size 256"
+
+# Latency candidates
+python scripts/run_backbone_seeds.py \
+    --preset latency \
+    --seeds 42 7 \
+    --extra_args "--dataset_file SHA --data_path ./data/ShanghaiTech/part_A --epochs 300 --patch_size 256"
+
+# Explicit custom set
+python scripts/run_backbone_seeds.py \
+    --backbones convnextv2_base fastvit_tiny efficientvit_tiny repvit_tiny \
+    --seeds 42 \
+    --extra_args "--dataset_file SHA --data_path ./data/ShanghaiTech/part_A --epochs 300 --patch_size 256"
+```
+
+Use `python main.py --list_backbones` to print supported timm aliases.
 
 ### Key Arguments
 
 - `--backbone`: Model backbone to train (default: `convnextv2_base`)
+- `--backbones`: Multiple backbone names for one ablation run
+- `--preset`: Named ablation set: `crowd_dense`, `latency`, or `full`
 - `--seeds`: List of random seeds (default: `42 7 13 99 1234`)
 - `--extra_args`: Additional arguments passed to `main.py` as a single quoted string
 - `--output_dir`: Base output directory (default: `results`)

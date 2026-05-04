@@ -28,9 +28,7 @@ def get_backbone_from_dirname(dirname):
         return 'swinv2_base_window8_256'
     
     if 'maxvit' in dirname_lower:
-        # MaxViT models from timm - note: no "poly" suffix in timm
-        # Available: maxvit_tiny_tf_224, maxvit_small_tf_224, maxvit_base_tf_224
-        #           maxvit_rmlp_tiny_rw_256, maxvit_rmlp_small_rw_256, maxvit_rmlp_base_rw_256
+        # Use 256-compatible MaxViT variants for PET's default crop/padding.
         
         # Try to match checkpoint names to actual timm model names
         if 'poly' in dirname_lower:
@@ -40,15 +38,13 @@ def get_backbone_from_dirname(dirname):
             return 'maxvit_rmlp_tiny_rw_256'
         elif 'maxvit_rmlp_small' in dirname_lower:
             return 'maxvit_rmlp_small_rw_256'
-        elif 'maxvit_rmlp_base' in dirname_lower:
-            return 'maxvit_rmlp_base_rw_256'
-        elif 'maxvit_base' in dirname_lower:
-            return 'maxvit_base_tf_224'
         elif 'maxvit_small' in dirname_lower:
-            return 'maxvit_small_tf_224'
+            return 'maxvit_small'
+        elif 'maxvit_tiny' in dirname_lower:
+            return 'maxvit_tiny'
         else:
             # Default MaxViT
-            return 'maxvit_small_tf_224'
+            return 'maxvit_tiny'
     
     if 'vgg' in dirname_lower:
         return 'vgg16_bn'

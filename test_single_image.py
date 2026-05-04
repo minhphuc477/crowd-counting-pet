@@ -15,8 +15,10 @@ def get_args_parser():
 
     # model parameters
     # - backbone
-    parser.add_argument('--backbone', default='vgg16_bn', type=str,
+    parser.add_argument('--backbone', default='convnextv2_base', type=str,
                         help="Name of the convolutional backbone to use")
+    parser.add_argument('--no_pretrained_backbone', action='store_true',
+                        help='initialize the backbone randomly instead of loading timm/ImageNet weights')
     parser.add_argument('--position_embedding', default='sine', type=str, choices=('sine', 'learned', 'fourier'),
                         help="Type of positional embedding to use on top of the image features")
     # - transformer
@@ -42,12 +44,22 @@ def get_args_parser():
     parser.add_argument('--point_loss_coef', default=5.0, type=float)    # regression loss coefficient
     parser.add_argument('--eos_coef', default=0.5, type=float,
                         help="Relative classification weight of the no-object class")   # cross-entropy weights
+    parser.add_argument('--negative_loss_coef', default=0.1, type=float)
+    parser.add_argument('--non_div_loss_coef', default=0.25, type=float)
+    parser.add_argument('--quadtree_loss_coef', default=0.1, type=float)
+    parser.add_argument('--quadtree_prior_coef', default=0.025, type=float)
+    parser.add_argument('--split_count_threshold', default=2, type=int)
+    parser.add_argument('--split_pos_weight', default=1.0, type=float)
+    parser.add_argument('--split_threshold', default=-1.0, type=float)
+    parser.add_argument('--split_threshold_quantile', default=0.55, type=float)
+    parser.add_argument('--score_threshold', default=0.5, type=float)
 
     # dataset parameters
     parser.add_argument('--dataset_file', default="SHA")
     parser.add_argument('--data_path', default="./data/ShanghaiTech/PartA", type=str)
 
     # misc parameters
+    parser.add_argument('--img_path', default='', help='image path to evaluate')
     parser.add_argument('--device', default='cuda',
                         help='device to use for training / testing')
     parser.add_argument('--seed', default=42, type=int)
@@ -150,15 +162,18 @@ def evaluate_single_image(model, img_path, device, vis_dir=None):
     # visualize predictions
     if vis_dir: 
         points = [[point[0]*img_h, point[1]*img_w] for point in outputs_points]     # recover to actual points
-        split_map = (outputs['split_map_raw'][0].detach().cpu().squeeze(0) > 0.5).float().numpy()
+        split_threshold = outputs.get('split_threshold', 0.5)
+        if torch.is_tensor(split_threshold):
+            split_threshold = float(split_threshold.detach().cpu().item())
+        split_map = (outputs['split_map_raw'][0].detach().cpu().squeeze(0) > split_threshold).float().numpy()
         visualization(samples, [points], vis_dir, img_path, split_map=split_map)
     
 
 def main(args):
-    # input image and model
-    args.img_path = 'your_image_path'
-    args.resume = 'your_model_path'
-    args.vis_dir = ''
+    if not args.img_path:
+        raise ValueError('--img_path is required')
+    if not args.resume:
+        raise ValueError('--resume is required')
 
     # build model
     device = torch.device(args.device)

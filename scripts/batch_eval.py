@@ -26,13 +26,56 @@ from pathlib import Path
 from collections import defaultdict
 import numpy as np
 
+REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+try:
+    from models.backbones import get_supported_timm_backbones, resolve_timm_backbone_name
+except ImportError:
+    get_supported_timm_backbones = None
+    resolve_timm_backbone_name = lambda name: name
+
 
 def get_backbone_from_dirname(dirname):
     """Infer backbone name from directory name."""
     dirname_lower = dirname.lower()
+    normalized_dirname = dirname_lower.replace('-', '_')
+
+    if get_supported_timm_backbones is not None:
+        known_backbones = sorted(
+            set(get_supported_timm_backbones()),
+            key=len,
+            reverse=True,
+        )
+        for backbone in known_backbones:
+            candidates = {
+                backbone.lower(),
+                resolve_timm_backbone_name(backbone).lower(),
+            }
+            if any(candidate in normalized_dirname for candidate in candidates):
+                return backbone
     
     if 'convnextv2' in dirname_lower:
         return 'convnextv2_base'
+    if 'convnext' in dirname_lower:
+        return 'convnext_base'
+    if 'fastvit' in dirname_lower:
+        return 'fastvit_tiny'
+    if 'efficientvit' in dirname_lower:
+        return 'efficientvit_tiny'
+    if 'efficientnetv2' in dirname_lower:
+        return 'efficientnetv2_tiny'
+    if 'mobilenetv4' in dirname_lower:
+        return 'mobilenetv4_small'
+    if 'hgnetv2' in dirname_lower or 'hgnet' in dirname_lower:
+        return 'hgnetv2_tiny'
+    if 'pvt_v2' in dirname_lower or 'pvtv2' in dirname_lower:
+        return 'pvtv2_b0'
+    if 'edgenext' in dirname_lower:
+        return 'edgenext_tiny'
+    if 'repvit' in dirname_lower:
+        return 'repvit_tiny'
     
     if 'swinv2' in dirname_lower:
         # SwinV2 models from timm
@@ -44,9 +87,7 @@ def get_backbone_from_dirname(dirname):
         return 'swinv2_base_window8_256'
     
     if 'maxvit' in dirname_lower:
-        # MaxViT models from timm - note: no "poly" suffix in timm
-        # Available: maxvit_tiny_tf_224, maxvit_small_tf_224, maxvit_base_tf_224
-        #           maxvit_rmlp_tiny_rw_256, maxvit_rmlp_small_rw_256, maxvit_rmlp_base_rw_256
+        # Use 256-compatible MaxViT variants for PET's default crop/padding.
         
         # Try to match checkpoint names to actual timm model names
         if 'poly' in dirname_lower:
@@ -56,15 +97,13 @@ def get_backbone_from_dirname(dirname):
             return 'maxvit_rmlp_tiny_rw_256'
         elif 'maxvit_rmlp_small' in dirname_lower:
             return 'maxvit_rmlp_small_rw_256'
-        elif 'maxvit_rmlp_base' in dirname_lower:
-            return 'maxvit_rmlp_base_rw_256'
-        elif 'maxvit_base' in dirname_lower:
-            return 'maxvit_base_tf_224'
         elif 'maxvit_small' in dirname_lower:
-            return 'maxvit_small_tf_224'
+            return 'maxvit_small'
+        elif 'maxvit_tiny' in dirname_lower:
+            return 'maxvit_tiny'
         else:
             # Default MaxViT
-            return 'maxvit_small_tf_224'
+            return 'maxvit_tiny'
     
     if 'vgg' in dirname_lower:
         return 'vgg16_bn'

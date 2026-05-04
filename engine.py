@@ -168,7 +168,10 @@ def evaluate(model, data_loader, device, epoch=0, vis_dir=None):
         # visualize predictions
         if vis_dir: 
             points = [[point[0]*img_h, point[1]*img_w] for point in outputs_points]     # recover to actual points
-            split_map = (outputs['split_map_raw'][0].detach().cpu().squeeze(0) > 0.5).float().numpy()
+            split_threshold = outputs.get('split_threshold', 0.5)
+            if torch.is_tensor(split_threshold):
+                split_threshold = float(split_threshold.detach().cpu().item())
+            split_map = (outputs['split_map_raw'][0].detach().cpu().squeeze(0) > split_threshold).float().numpy()
             visualization(samples, targets, [points], vis_dir, split_map=split_map)
     
     # gather the stats from all processes

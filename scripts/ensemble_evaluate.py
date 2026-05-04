@@ -30,6 +30,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from datasets import build_dataset
 from models import build_model
 from engine import evaluate
+import util.misc as utils
 
 
 def get_args():
@@ -72,7 +73,7 @@ def get_args():
     parser.add_argument(
         "--batch_size",
         type=int,
-        default=8,
+        default=1,
         help="Batch size for evaluation",
     )
     parser.add_argument(
@@ -150,6 +151,7 @@ def main():
         batch_size=args.batch_size,
         shuffle=False,
         num_workers=args.num_workers,
+        collate_fn=utils.collate_fn,
     )
     
     results = {}
@@ -161,33 +163,32 @@ def main():
         # Build model
         model_args = argparse.Namespace(
             backbone=args.backbone,
+            no_pretrained_backbone=False,
             device=str(device),  # Required by build_pet
             position_embedding="sine",
-            pe_temperatureL=10000,
             hidden_dim=256,
             nheads=8,
-            num_encoder_layers=6,
-            num_decoder_layers=6,
-            dim_feedforward=1024,
-            dropout=0.1,
-            activation="relu",
-            return_intermediate_dec=False,
-            num_feature_levels=4,
-            dec_n_points=4,
-            dilation=False,
-            num_queries=300,
+            dim_feedforward=512,
+            dropout=0.0,
             # Loss coefficients (required by SetCriterion)
             ce_loss_coef=1.0,
             point_loss_coef=5.0,
-            eos_coef=0.1,
+            eos_coef=0.5,
+            negative_loss_coef=0.1,
+            non_div_loss_coef=0.25,
+            quadtree_loss_coef=0.1,
+            quadtree_prior_coef=0.025,
+            split_count_threshold=2,
+            split_pos_weight=1.0,
+            split_threshold=-1.0,
+            split_threshold_quantile=0.55,
+            score_threshold=0.5,
             # Matcher parameters
             set_cost_class=1.0,
             set_cost_point=0.05,
             # Decoder parameters (will be set by PET)
             dec_layers=2,
-            # Position embedding parameters
-            scales=4,
-            temperature=10000,
+            warmup_epochs=5,
         )
         
         model, _ = build_model(model_args)

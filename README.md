@@ -73,7 +73,8 @@ PET
 
 ## Training
 
-- Download ImageNet pretrained [vgg16_bn](https://download.pytorch.org/models/vgg16_bn-6c64b313.pth), and put it in ```pretrained``` folder. Or you can define your pre-trained model path in [models/backbones/vgg.py](models/backbones/vgg.py)
+- The default backbone is now `convnextv2_base` through a shared timm/FPN adapter in [models/backbones/backbone_timm.py](models/backbones/backbone_timm.py). Install `timm` from `requirements.txt`; pass `--no_pretrained_backbone` when running offline.
+- The original `vgg16_bn` path is still available. For that path, download ImageNet pretrained [vgg16_bn](https://download.pytorch.org/models/vgg16_bn-6c64b313.pth), and put it in ```pretrained``` folder. Or you can define your pre-trained model path in [models/backbones/vgg.py](models/backbones/vgg.py)
 
 ### Backbone choice for PET
 
@@ -82,6 +83,12 @@ For PET, `convnextv2_base` is the safest default starting point. It is not the o
 - ConvNeXt V2 is a pure CNN, so it fits PET's FPN-style feature flow cleanly.
 - It gives hierarchical features with strong semantic quality, which matters for quadtree splitting and point localization.
 - It is a much stronger upgrade than VGG16 without introducing the integration and deployment risk of more exotic architectures.
+
+The timm adapter also supports these ablation families when they expose PET-compatible 4x and 8x feature maps:
+
+- Dense accuracy candidates: `convnext_base`, `convnextv2_base`, `swinv2_base`, `maxvit_small`, `pvtv2_b1`.
+- Latency candidates: `convnextv2_tiny`, `fastvit_tiny`, `efficientvit_tiny`, `mobilenetv4_small`, `repvit_tiny`, `edgenext_tiny`.
+- Additional supported aliases: run `python main.py --list_backbones`.
 
 I also considered the backbone families you listed:
 
@@ -96,6 +103,43 @@ Practical order to benchmark:
 2. `internimage` or `swinv2` if you want a higher-capacity dense predictor.
 3. `fastvit` if deployment latency matters more than raw accuracy.
 4. `vmamba` if you are willing to spend more time on tuning and backend validation.
+
+### Negative images and quadtree training
+
+- Empty annotation files and missing SHA `.mat` files are treated as valid zero-person images.
+- Positive training images try multiple random crops (`--crop_attempts`) and keep the first crop with enough people (`--min_crop_points`) before falling back to the densest sampled crop.
+- Classification and split-map losses are normalized so all-negative batches do not dominate positive localization.
+- The quadtree splitter now has a ground-truth quality loss (`--quadtree_loss_coef`) built from local point counts, plus an adaptive split threshold (`--split_threshold -1`, `--split_threshold_quantile`).
+
+### Ubuntu quick commands
+
+```bash
+git clone https://github.com/cxliu0/PET.git
+cd PET
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+pip install -r requirements.txt
+
+# train ConvNeXtV2 on ShanghaiTech Part A
+python -m torch.distributed.run --nproc_per_node=1 --master_port=10001 main.py \
+  --dataset_file SHA \
+  --data_path ./data/ShanghaiTech/part_A \
+  --backbone convnextv2_base \
+  --output_dir convnextv2_base \
+  --epochs 1500 \
+  --eval_freq 5
+
+# quick backbone list
+python main.py --list_backbones
+
+# latency-oriented ablation dry run
+python scripts/run_backbone_seeds.py \
+  --preset latency \
+  --seeds 42 7 \
+  --extra_args "--dataset_file SHA --data_path ./data/ShanghaiTech/part_A --epochs 300 --eval_freq 5" \
+  --dry_run
+```
   
 
 - To train PET on ShanghaiTech PartA, run
