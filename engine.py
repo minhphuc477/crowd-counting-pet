@@ -144,13 +144,15 @@ def evaluate(model, data_loader, device, epoch=0, vis_dir=None):
 
         # inference
         outputs = model(samples, test=True, targets=targets)
-        outputs_scores = torch.nn.functional.softmax(outputs['pred_logits'], -1)[:, :, 1]
+        
+        # Extract predictions using same pattern as test_single_image.py which works
+        outputs_scores_full = torch.nn.functional.softmax(outputs['pred_logits'], -1)
+        outputs_scores = outputs_scores_full[:, :, 1][0]  # Extract batch 0, then class 1 scores
         outputs_points = outputs['pred_points'][0]
         outputs_offsets = outputs['pred_offsets'][0]
         
         # process predicted points
-        # Count predictions correctly: shape is [batch, num_preds] after softmax, count dimension 1
-        predict_cnt = outputs_scores.shape[1] if outputs_scores.dim() >= 2 else len(outputs_scores)
+        predict_cnt = len(outputs_scores)  # Count 1D array of scores
         gt_cnt = targets[0]['points'].shape[0]
 
         # compute error
