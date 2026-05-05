@@ -219,6 +219,23 @@ def apply_backbone_recipe(args):
             setattr(args, key, tuned_value)
 
 
+def merge_checkpoint_args(args, checkpoint):
+    checkpoint_args = checkpoint.get('args')
+    if checkpoint_args is None:
+        return args
+    if isinstance(checkpoint_args, dict):
+        checkpoint_args = argparse.Namespace(**checkpoint_args)
+
+    merged = argparse.Namespace(**vars(checkpoint_args))
+    runtime_keys = {
+        'resume', 'device', 'output_dir', 'seed', 'start_epoch',
+        'num_workers', 'world_size', 'dist_url', 'list_backbones', 'syn_bn',
+    }
+    for key in runtime_keys:
+        setattr(merged, key, getattr(args, key))
+    return merged
+
+
 def main(args):
     utils.init_distributed_mode(args)
     if args.list_backbones:
@@ -226,6 +243,16 @@ def main(args):
         for backbone in get_supported_timm_backbones():
             print(f'  {backbone}')
         return
+
+    checkpoint = None
+    if args.resume:
+        if args.resume.startswith('https'):
+            checkpoint = torch.hub.load_state_dict_from_url(
+                args.resume, map_location='cpu', check_hash=True)
+        else:
+            checkpoint = torch.load(args.resume, map_location='cpu', weights_only=False)
+        args = merge_checkpoint_args(args, checkpoint)
+
     apply_backbone_recipe(args)
     print(args)
     device = torch.device(args.device)
@@ -310,21 +337,16 @@ def main(args):
             log_file.write("{}".format(args))
             log_file.write("parameters: {}".format(n_parameters))
 
-    # resume
     best_mae, best_mse, best_epoch = 1e8, 1e8, 0
-    if args.resume:
-        if args.resume.startswith('https'):
-            checkpoint = torch.hub.load_state_dict_from_url(
-                args.resume, map_location='cpu', check_hash=True)
-        else:
-            checkpoint = torch.load(args.resume, map_location='cpu', weights_only=False)
+    if checkpoint is not None:
         model_without_ddp.load_state_dict(checkpoint['model'])
         if 'optimizer' in checkpoint and 'lr_scheduler' in checkpoint and 'epoch' in checkpoint:
             optimizer.load_state_dict(checkpoint['optimizer'])
             lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])
             args.start_epoch = checkpoint['epoch'] + 1
-            best_mae = checkpoint['best_mae']
-            best_epoch = checkpoint['best_epoch']
+            best_mae = checkpoint.get('best_mae', best_mae)
+            best_mse = checkpoint.get('best_mse', best_mse)
+            best_epoch = checkpoint.get('best_epoch', best_epoch)
 
     # training
     print("Start training")
@@ -376,7 +398,8 @@ def main(args):
 
             # output results
             mae, mse = test_stats['mae'], test_stats['mse']
-            if mae < best_mae:
+            improved = mae < best_mae
+            if improved:
                 best_epoch = epoch
                 best_mae = mae
                 best_mse = mse
@@ -392,9 +415,18 @@ def main(args):
                         'test_mae': float(mae),
                         'test_mse': float(mse),
                     }))
-                                                
-            # save best checkpoint
-            if mae == best_mae and utils.is_main_process():
+
+            if improved and utils.is_main_process():
+                utils.save_on_master({
+                    'model': model_without_ddp.state_dict(),
+                    'optimizer': optimizer.state_dict(),
+                    'lr_scheduler': lr_scheduler.state_dict(),
+                    'epoch': epoch,
+                    'args': args,
+                    'best_mae': best_mae,
+                    'best_mse': best_mse,
+                    'best_epoch': best_epoch,
+                }, output_dir / 'checkpoint.pth')
                 src_path = output_dir / 'checkpoint.pth'
                 dst_path = output_dir / 'best_checkpoint.pth'
                 shutil.copyfile(src_path, dst_path)

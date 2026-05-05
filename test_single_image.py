@@ -174,15 +174,13 @@ def evaluate_single_image(model, img_path, device, vis_dir=None):
 
     # inference
     outputs = model(samples, test=True)
-    raw_scores = torch.nn.functional.softmax(outputs['pred_logits'], -1)
-    outputs_scores = raw_scores[:, :, 1][0]
     outputs_points = outputs['pred_points'][0]
     query_points = outputs.get('points_queries')
-    prediction_cnt = len(outputs_scores)
+    prediction_cnt = outputs['pred_logits'].shape[1]
     if query_points is not None:
         if query_points.dim() == 3:
             query_points = query_points[0]
-        if query_points.shape[0] == outputs_scores.shape[0]:
+        if query_points.shape[0] == prediction_cnt:
             query_y = query_points[:, 0] * img_h
             query_x = query_points[:, 1] * img_w
             prediction_cnt = int(((query_y < valid_h) & (query_x < valid_w)).sum().item())

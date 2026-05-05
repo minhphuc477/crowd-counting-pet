@@ -151,19 +151,16 @@ def evaluate(model, data_loader, device, epoch=0, vis_dir=None):
         # inference
         outputs = model(samples, test=True, targets=targets)
         
-        # Extract predictions using same pattern as test_single_image.py which works
-        outputs_scores_full = torch.nn.functional.softmax(outputs['pred_logits'], -1)
-        outputs_scores = outputs_scores_full[:, :, 1][0]  # Extract batch 0, then class 1 scores
         outputs_points = outputs['pred_points'][0]
-        outputs_offsets = outputs['pred_offsets'][0]
         query_points = outputs.get('points_queries')
         
-        # process predicted points
-        predict_cnt = len(outputs_scores)  # Count 1D array of scores
+        # test_forward() already applies score and split masking. This only
+        # removes surviving queries that lie in padded image regions.
+        predict_cnt = outputs['pred_logits'].shape[1]
         if query_points is not None:
             if query_points.dim() == 3:
                 query_points = query_points[0]
-            if query_points.shape[0] == outputs_scores.shape[0]:
+            if query_points.shape[0] == predict_cnt:
                 query_y = query_points[:, 0] * img_h
                 query_x = query_points[:, 1] * img_w
                 valid_mask = (query_y < valid_h) & (query_x < valid_w)
@@ -178,8 +175,6 @@ def evaluate(model, data_loader, device, epoch=0, vis_dir=None):
         results = {}
         toTensor = lambda x: torch.tensor(x).float().to(device)
         results['mae'], results['mse'] = toTensor(mae), toTensor(mse)
-        metric_logger.update(mae=results['mae'], mse=results['mse'])
-
         results_reduced = utils.reduce_dict(results)
         metric_logger.update(mae=results_reduced['mae'], mse=results_reduced['mse'])
 

@@ -113,11 +113,27 @@ def load_checkpoint(model, checkpoint_path, device):
     checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
     model.load_state_dict(checkpoint["model"])
     print(f"Loaded checkpoint from {checkpoint_path}")
-    return True
+    return checkpoint
+
+
+def merge_checkpoint_args(args, checkpoint):
+    checkpoint_args = checkpoint.get('args')
+    if checkpoint_args is None:
+        return args
+    if isinstance(checkpoint_args, dict):
+        checkpoint_args = argparse.Namespace(**checkpoint_args)
+
+    merged = argparse.Namespace(**vars(checkpoint_args))
+    runtime_keys = {'device', 'checkpoint_dir', 'seeds', 'batch_size', 'num_workers', 'data_path', 'dataset_file', 'ensemble_method'}
+    for key in runtime_keys:
+        setattr(merged, key, getattr(args, key))
+    return merged
 
 
 def evaluate_single_seed(model, data_loader, device):
     """Evaluate model on data_loader using engine.evaluate()."""
+    if getattr(data_loader, 'batch_size', 1) not in (None, 1):
+        raise ValueError('ensemble_evaluate only supports batch_size=1 because evaluation scores one image at a time.')
     results = evaluate(model, data_loader, device)
     return results.get('mae', None)
 
@@ -145,10 +161,13 @@ def main():
             patch_size=args.patch_size,
         ),
     )
+    eval_batch_size = 1
+    if args.batch_size != 1:
+        print(f"Warning: batch_size={args.batch_size} is not supported by the current evaluator; using 1.")
     
     data_loader_val = DataLoader(
         dataset_val,
-        batch_size=args.batch_size,
+        batch_size=eval_batch_size,
         shuffle=False,
         num_workers=args.num_workers,
         collate_fn=utils.collate_fn,
@@ -159,6 +178,16 @@ def main():
     # Evaluate each seed
     for seed in args.seeds:
         print(f"\nEvaluating seed {seed}...")
+
+        checkpoint_path = (
+            Path(args.checkpoint_dir)
+            / args.backbone
+            / f"seed_{seed}"
+            / "checkpoint.pth"
+        )
+        if not checkpoint_path.exists():
+            print(f"  Skipping seed {seed} (checkpoint not found)")
+            continue
         
         # Build model
         model_args = argparse.Namespace(
@@ -190,21 +219,12 @@ def main():
             dec_layers=2,
             warmup_epochs=5,
         )
+        checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
+        model_args = merge_checkpoint_args(model_args, checkpoint)
         
         model, _ = build_model(model_args)
         model = model.to(device)
-        
-        # Load checkpoint
-        checkpoint_path = (
-            Path(args.checkpoint_dir)
-            / args.backbone
-            / f"seed_{seed}"
-            / "checkpoint.pth"
-        )
-        
-        if not load_checkpoint(model, checkpoint_path, device):
-            print(f"  Skipping seed {seed} (checkpoint not found)")
-            continue
+        model.load_state_dict(checkpoint["model"])
         
         # Evaluate
         mae = evaluate_single_seed(model, data_loader_val, device)

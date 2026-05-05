@@ -68,7 +68,7 @@ def read_mae_from_log(dataset, seed_output_dir):
                 stats = json.loads(line)
                 if 'test_mae' in stats:
                     return float(stats['test_mae'])
-            except Exception:
+            except (OSError, json.JSONDecodeError):
                 continue
     return None
 
@@ -80,8 +80,6 @@ def main():
     results = []
     base_extra = args.extra_args
 
-    exp_base = f"{args.backbone}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-
     for i, (lr, lr_backbone, batch, warmup) in enumerate(grid):
         config_name = f"config_{i:03d}_lr{lr:.0e}_lrb{lr_backbone:.0e}_b{batch}_w{warmup}"
         out_dir = Path(args.output_dir) / args.backbone / config_name
@@ -92,13 +90,15 @@ def main():
 
         best_maes = []
         for seed in args.seeds:
-            cmd = [sys.executable, "main.py", "--backbone", args.backbone, "--seed", str(seed), "--output_dir", str(out_dir)] + extra_list
+            seed_out_dir = out_dir / f"seed_{seed}"
+            seed_out_dir.mkdir(parents=True, exist_ok=True)
+            cmd = [sys.executable, "main.py", "--backbone", args.backbone, "--seed", str(seed), "--output_dir", str(seed_out_dir)] + extra_list
             success = run_config(cmd, dry_run=args.dry_run)
             if not success:
                 print("Config failed:", config_name, "seed", seed)
                 best_maes.append(None)
                 continue
-            mae = read_mae_from_log(args.dataset_file, out_dir)
+            mae = read_mae_from_log(args.dataset_file, seed_out_dir)
             best_maes.append(mae)
 
         # compute aggregate ignoring None
