@@ -1,36 +1,36 @@
-#!/usr/bin/env bash
-set -euo pipefail
+#!/usr/bin/env sh
+set -eu
 
 # Optuna search + training for all backbones (Ubuntu/Linux)
-backbones=(
-  convnext_tiny
-  convnext_base
-  convnextv2_tiny
-  convnextv2_base
-  swinv2_tiny
-  swinv2_base
-  maxvit_tiny
-  maxvit_small
-  maxvit_rmlp_tiny
-  fastvit_tiny
-  fastvit_small
-  efficientvit_tiny
-  efficientvit_small
-  efficientnetv2_tiny
-  efficientnetv2_small
-  mobilenetv4_small
-  mobilenetv4_hybrid
-  hgnetv2_tiny
-  hgnetv2_small
-  pvtv2_b0
-  pvtv2_b1
-  edgenext_tiny
-  edgenext_small
-  repvit_tiny
-  repvit_small
-)
+backbones="
+convnext_tiny
+convnext_base
+convnextv2_tiny
+convnextv2_base
+swinv2_tiny
+swinv2_base
+maxvit_tiny
+maxvit_small
+maxvit_rmlp_tiny
+fastvit_tiny
+fastvit_small
+efficientvit_tiny
+efficientvit_small
+efficientnetv2_tiny
+efficientnetv2_small
+mobilenetv4_small
+mobilenetv4_hybrid
+hgnetv2_tiny
+hgnetv2_small
+pvtv2_b0
+pvtv2_b1
+edgenext_tiny
+edgenext_small
+repvit_tiny
+repvit_small
+"
 
-for backbone in "${backbones[@]}"; do
+for backbone in $backbones; do
   echo "========================================"
   echo "Starting Optuna search for ${backbone}..."
   echo "========================================"
@@ -45,7 +45,7 @@ for backbone in "${backbones[@]}"; do
   echo "========================================"
   python3 main.py \
     --backbone "${backbone}" \
-    --epochs 150 \
+    --epochs 1500 \
     --patch_size 256 \
     --seed 42 \
     --output_dir "results/${backbone}/final_train"
