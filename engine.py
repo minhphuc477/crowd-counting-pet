@@ -144,17 +144,32 @@ def evaluate(model, data_loader, device, epoch=0, vis_dir=None):
 
         # inference
         outputs = model(samples, test=True, targets=targets)
-        outputs_scores = torch.nn.functional.softmax(outputs['pred_logits'], -1)[:, :, 1]
-        outputs_points = outputs['pred_points']
-        outputs_offsets = outputs['pred_offsets']
+        
+        # DEBUG: Print tensor shapes to understand the structure
+        print(f"\n[DEBUG] outputs['pred_logits'].shape: {outputs['pred_logits'].shape}")
+        print(f"[DEBUG] outputs['pred_points'].shape: {outputs['pred_points'].shape}")
+        print(f"[DEBUG] targets[0]['points'].shape: {targets[0]['points'].shape}")
+        
+        outputs_scores = torch.nn.functional.softmax(outputs['pred_logits'], -1)
+        print(f"[DEBUG] softmax outputs_scores.shape: {outputs_scores.shape}")
+        
+        # Extract class 1 scores correctly
+        if outputs_scores.dim() == 3:  # [batch, num_preds, num_classes]
+            outputs_scores = outputs_scores[:, :, 1]
+            print(f"[DEBUG] After [:,:,1]: {outputs_scores.shape}")
+        elif outputs_scores.dim() == 2:  # [num_preds, num_classes]
+            outputs_scores = outputs_scores[:, 1]
+            print(f"[DEBUG] After [:,1]: {outputs_scores.shape}")
+        
+        predict_cnt = len(outputs_scores)
+        print(f"[DEBUG] predict_cnt (using len()): {predict_cnt}")
+        
+        outputs_points = outputs['pred_points'][0] if outputs['pred_points'].dim() > 2 else outputs['pred_points']
+        outputs_offsets = outputs['pred_offsets'][0] if outputs['pred_offsets'].dim() > 2 else outputs['pred_offsets']
         
         # process predicted points
-        # Count valid predictions across all batches
-        if outputs_scores.dim() == 1:
-            predict_cnt = len(outputs_scores)
-        else:
-            predict_cnt = outputs_scores.shape[1] if outputs_scores.shape[0] > 0 else 0
         gt_cnt = targets[0]['points'].shape[0]
+        print(f"[DEBUG] gt_cnt: {gt_cnt}")
 
         # compute error
         mae = abs(predict_cnt - gt_cnt)
@@ -171,11 +186,7 @@ def evaluate(model, data_loader, device, epoch=0, vis_dir=None):
 
         # visualize predictions
         if vis_dir: 
-            # Handle variable shapes from different models
-            if outputs_points.dim() == 2:  # [num_predictions, 2]
-                points = [[point[0]*img_h, point[1]*img_w] for point in outputs_points]
-            else:  # [batch, num_predictions, 2]
-                points = [[point[0]*img_h, point[1]*img_w] for point in outputs_points[0]]
+            points = [[point[0]*img_h, point[1]*img_w] for point in outputs_points]     # recover to actual points
             split_threshold = outputs.get('split_threshold', 0.5)
             if torch.is_tensor(split_threshold):
                 split_threshold = float(split_threshold.detach().cpu().item())
