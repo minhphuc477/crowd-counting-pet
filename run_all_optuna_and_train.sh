@@ -37,7 +37,7 @@ for backbone in $backbones; do
   python3 scripts/optuna_search.py \
     --backbone "${backbone}" \
     --trials 20 \
-    --seeds 42 7 13 \
+    --seeds 7 \
     --output_dir results
 
   echo "========================================"
@@ -47,7 +47,7 @@ for backbone in $backbones; do
     --backbone "${backbone}" \
     --epochs 1500 \
     --patch_size 256 \
-    --seed 42 \
+    --seed 7 \
     --output_dir "results/${backbone}/final_train"
 
   echo "Completed ${backbone}"
