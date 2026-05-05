@@ -73,6 +73,12 @@ def get_args_parser():
     parser.add_argument('--seed', default=42, type=int)
     parser.add_argument('--resume', default='', help='resume from checkpoint')
     parser.add_argument('--vis_dir', default="")
+    parser.add_argument('--override_score_threshold', default=None, type=float,
+                        help='override the checkpoint score threshold at evaluation time')
+    parser.add_argument('--override_split_threshold', default=None, type=float,
+                        help='override the checkpoint split threshold at evaluation time')
+    parser.add_argument('--override_split_threshold_quantile', default=None, type=float,
+                        help='override the checkpoint split-threshold quantile at evaluation time')
     parser.add_argument('--num_workers', default=2, type=int)
 
     # distributed training parameters
@@ -90,15 +96,30 @@ def merge_checkpoint_args(args, checkpoint):
         checkpoint_args = argparse.Namespace(**checkpoint_args)
 
     merged = argparse.Namespace(**vars(checkpoint_args))
-    runtime_keys = {'resume', 'device', 'vis_dir', 'data_path', 'dataset_file', 'num_workers', 'seed'}
+    runtime_keys = {
+        'resume', 'device', 'vis_dir', 'data_path', 'dataset_file', 'num_workers', 'seed',
+        'override_score_threshold', 'override_split_threshold', 'override_split_threshold_quantile',
+    }
     for key in runtime_keys:
         setattr(merged, key, getattr(args, key))
     return merged
 
 
+def apply_eval_overrides(args):
+    override_score_threshold = getattr(args, 'override_score_threshold', None)
+    override_split_threshold = getattr(args, 'override_split_threshold', None)
+    override_split_threshold_quantile = getattr(args, 'override_split_threshold_quantile', None)
+    if override_score_threshold is not None:
+        args.score_threshold = float(override_score_threshold)
+    if override_split_threshold is not None:
+        args.split_threshold = float(override_split_threshold)
+    if override_split_threshold_quantile is not None:
+        args.split_threshold_quantile = float(override_split_threshold_quantile)
+    return args
+
+
 def main(args):
     utils.init_distributed_mode(args)
-    print(args)
     device = torch.device(args.device)
 
     # fix the seed for reproducibility
@@ -115,6 +136,8 @@ def main(args):
         else:
             checkpoint = torch.load(args.resume, map_location='cpu', weights_only=False)
         args = merge_checkpoint_args(args, checkpoint)
+    args = apply_eval_overrides(args)
+    print(args)
 
     # build model
     model, criterion = build_model(args)

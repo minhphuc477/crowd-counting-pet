@@ -43,12 +43,32 @@ for backbone in $backbones; do
   echo "========================================"
   echo "Starting training for ${backbone}..."
   echo "========================================"
+  best_args=$(python3 - "$backbone" <<'PY'
+import json
+import shlex
+import sys
+from pathlib import Path
+
+path = Path("results") / sys.argv[1] / "optuna_best.json"
+data = json.loads(path.read_text(encoding="utf-8"))
+p = data["best_params"]
+args = [
+    "--lr", str(p["lr"]),
+    "--lr_backbone", str(p["lr_backbone"]),
+    "--batch_size", str(p["batch_size"]),
+    "--warmup_epochs", str(p["warmup"]),
+    "--score_threshold", str(p["score_threshold"]),
+]
+print(" ".join(shlex.quote(x) for x in args))
+PY
+)
   python3 main.py \
     --backbone "${backbone}" \
     --epochs 1500 \
     --patch_size 256 \
     --seed 7 \
-    --output_dir "results/${backbone}/final_train"
+    --output_dir "results/${backbone}/final_train" \
+    ${best_args}
 
   echo "Completed ${backbone}"
   echo

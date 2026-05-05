@@ -30,6 +30,7 @@ def parse_args():
     parser.add_argument('--seed_aggregate', choices=('mean', 'median'), default='mean')
     parser.add_argument('--extra_args', type=str, default='--epochs 150 --patch_size 256')
     parser.add_argument('--output_dir', type=str, default='results')
+    parser.add_argument('--best_params_file', type=str, default=None)
     return parser.parse_args()
 
 
@@ -104,6 +105,21 @@ def main():
     study = optuna.create_study(direction='minimize')
     func = lambda t: objective(t, args)
     study.optimize(func, n_trials=args.trials)
+    best_params_path = Path(args.best_params_file) if args.best_params_file else Path(args.output_dir) / args.backbone / 'optuna_best.json'
+    best_params_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(best_params_path, 'w', encoding='utf-8') as f:
+        json.dump({
+            'backbone': args.backbone,
+            'dataset_file': args.dataset_file,
+            'trials': args.trials,
+            'seed_aggregate': args.seed_aggregate,
+            'extra_args': args.extra_args,
+            'best_value': float(study.best_value),
+            'best_params': study.best_trial.params,
+            'best_trial_number': study.best_trial.number,
+            'per_seed_mae': study.best_trial.user_attrs.get('per_seed_mae'),
+        }, f, indent=2)
+    print('Saved best params to', best_params_path)
     print('Best trial:', study.best_trial.params, 'MAE:', study.best_value)
 
 

@@ -101,6 +101,24 @@ def get_args():
         default=256,
         help="Patch size for inference",
     )
+    parser.add_argument(
+        "--override_score_threshold",
+        type=float,
+        default=None,
+        help="Override the checkpoint score threshold during evaluation",
+    )
+    parser.add_argument(
+        "--override_split_threshold",
+        type=float,
+        default=None,
+        help="Override the checkpoint split threshold during evaluation",
+    )
+    parser.add_argument(
+        "--override_split_threshold_quantile",
+        type=float,
+        default=None,
+        help="Override the checkpoint split-threshold quantile during evaluation",
+    )
     return parser.parse_args()
 
 
@@ -124,10 +142,41 @@ def merge_checkpoint_args(args, checkpoint):
         checkpoint_args = argparse.Namespace(**checkpoint_args)
 
     merged = argparse.Namespace(**vars(checkpoint_args))
-    runtime_keys = {'device', 'checkpoint_dir', 'seeds', 'batch_size', 'num_workers', 'data_path', 'dataset_file', 'ensemble_method'}
+    runtime_keys = {
+        'device', 'checkpoint_dir', 'seeds', 'batch_size', 'num_workers', 'data_path', 'dataset_file',
+        'ensemble_method', 'override_score_threshold', 'override_split_threshold',
+        'override_split_threshold_quantile',
+    }
     for key in runtime_keys:
         setattr(merged, key, getattr(args, key))
     return merged
+
+
+def apply_eval_overrides(args):
+    override_score_threshold = getattr(args, 'override_score_threshold', None)
+    override_split_threshold = getattr(args, 'override_split_threshold', None)
+    override_split_threshold_quantile = getattr(args, 'override_split_threshold_quantile', None)
+    if override_score_threshold is not None:
+        args.score_threshold = float(override_score_threshold)
+    if override_split_threshold is not None:
+        args.split_threshold = float(override_split_threshold)
+    if override_split_threshold_quantile is not None:
+        args.split_threshold_quantile = float(override_split_threshold_quantile)
+    return args
+
+
+def resolve_checkpoint_path(args, seed):
+    rel_dir = Path(args.checkpoint_dir) / args.backbone / f"seed_{seed}"
+    candidates = [
+        Path("outputs") / args.dataset_file / rel_dir / "best_checkpoint.pth",
+        Path("outputs") / args.dataset_file / rel_dir / "checkpoint.pth",
+        rel_dir / "best_checkpoint.pth",
+        rel_dir / "checkpoint.pth",
+    ]
+    for path in candidates:
+        if path.exists():
+            return path
+    return candidates[0]
 
 
 def evaluate_single_seed(model, data_loader, device):
@@ -179,12 +228,7 @@ def main():
     for seed in args.seeds:
         print(f"\nEvaluating seed {seed}...")
 
-        checkpoint_path = (
-            Path(args.checkpoint_dir)
-            / args.backbone
-            / f"seed_{seed}"
-            / "checkpoint.pth"
-        )
+        checkpoint_path = resolve_checkpoint_path(args, seed)
         if not checkpoint_path.exists():
             print(f"  Skipping seed {seed} (checkpoint not found)")
             continue
@@ -221,6 +265,7 @@ def main():
         )
         checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
         model_args = merge_checkpoint_args(model_args, checkpoint)
+        model_args = apply_eval_overrides(model_args)
         
         model, _ = build_model(model_args)
         model = model.to(device)
@@ -232,6 +277,12 @@ def main():
         if mae is not None:
             results[seed] = mae
             print(f"  Seed {seed}: MAE = {mae:.2f}")
+            print(
+                f"    checkpoint={checkpoint_path} "
+                f"score_threshold={model_args.score_threshold} "
+                f"split_threshold={model_args.split_threshold} "
+                f"split_q={model_args.split_threshold_quantile}"
+            )
         else:
             print(f"  Seed {seed}: Evaluation failed")
     
