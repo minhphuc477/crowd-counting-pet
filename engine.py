@@ -144,32 +144,14 @@ def evaluate(model, data_loader, device, epoch=0, vis_dir=None):
 
         # inference
         outputs = model(samples, test=True, targets=targets)
-        
-        # DEBUG: Print tensor shapes to understand the structure
-        print(f"\n[DEBUG] outputs['pred_logits'].shape: {outputs['pred_logits'].shape}")
-        print(f"[DEBUG] outputs['pred_points'].shape: {outputs['pred_points'].shape}")
-        print(f"[DEBUG] targets[0]['points'].shape: {targets[0]['points'].shape}")
-        
-        outputs_scores = torch.nn.functional.softmax(outputs['pred_logits'], -1)
-        print(f"[DEBUG] softmax outputs_scores.shape: {outputs_scores.shape}")
-        
-        # Extract class 1 scores correctly
-        if outputs_scores.dim() == 3:  # [batch, num_preds, num_classes]
-            outputs_scores = outputs_scores[:, :, 1]
-            print(f"[DEBUG] After [:,:,1]: {outputs_scores.shape}")
-        elif outputs_scores.dim() == 2:  # [num_preds, num_classes]
-            outputs_scores = outputs_scores[:, 1]
-            print(f"[DEBUG] After [:,1]: {outputs_scores.shape}")
-        
-        predict_cnt = len(outputs_scores)
-        print(f"[DEBUG] predict_cnt (using len()): {predict_cnt}")
-        
-        outputs_points = outputs['pred_points'][0] if outputs['pred_points'].dim() > 2 else outputs['pred_points']
-        outputs_offsets = outputs['pred_offsets'][0] if outputs['pred_offsets'].dim() > 2 else outputs['pred_offsets']
+        outputs_scores = torch.nn.functional.softmax(outputs['pred_logits'], -1)[:, :, 1]
+        outputs_points = outputs['pred_points'][0]
+        outputs_offsets = outputs['pred_offsets'][0]
         
         # process predicted points
+        # Count predictions correctly: shape is [batch, num_preds] after softmax, count dimension 1
+        predict_cnt = outputs_scores.shape[1] if outputs_scores.dim() >= 2 else len(outputs_scores)
         gt_cnt = targets[0]['points'].shape[0]
-        print(f"[DEBUG] gt_cnt: {gt_cnt}")
 
         # compute error
         mae = abs(predict_cnt - gt_cnt)

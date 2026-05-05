@@ -369,9 +369,12 @@ class PET(nn.Module):
         else:
             flat = scores.detach().reshape(-1).float()
             if flat.numel() == 0:
-                threshold = torch.as_tensor(0.5, dtype=scores.dtype, device=scores.device)
+                # If no scores, return empty mask (no predictions)
+                return torch.zeros_like(scores, dtype=torch.bool)
             else:
-                threshold = torch.quantile(flat, 0.95).to(dtype=scores.dtype, device=scores.device)
+                # Use adaptive threshold: 50th percentile (median) for inference to get some predictions
+                # During training, higher threshold keeps only confident predictions
+                threshold = torch.quantile(flat, 0.5).to(dtype=scores.dtype, device=scores.device)
                 threshold = threshold.clamp(0.05, 0.95)
         return scores >= threshold
 
