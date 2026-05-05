@@ -74,6 +74,20 @@ def get_args_parser():
     return parser
 
 
+def merge_checkpoint_args(args, checkpoint):
+    checkpoint_args = checkpoint.get('args')
+    if checkpoint_args is None:
+        return args
+    if isinstance(checkpoint_args, dict):
+        checkpoint_args = argparse.Namespace(**checkpoint_args)
+
+    merged = argparse.Namespace(**vars(checkpoint_args))
+    runtime_keys = {'resume', 'device', 'vis_dir', 'img_path', 'data_path', 'dataset_file', 'num_workers', 'seed'}
+    for key in runtime_keys:
+        setattr(merged, key, getattr(args, key))
+    return merged
+
+
 class DeNormalize(object):
     def __init__(self, mean, std):
         self.mean = mean
@@ -151,13 +165,28 @@ def evaluate_single_image(model, img_path, device, vis_dir=None):
     samples = utils.nested_tensor_from_tensor_list([img])
     samples = samples.to(device)
     img_h, img_w = samples.tensors.shape[-2:]
+    valid_h, valid_w = img_h, img_w
+    if samples.mask is not None:
+        valid_area = torch.where(~samples.mask[0])
+        if valid_area[0].numel() > 0:
+            valid_h = int(valid_area[0][-1].item()) + 1
+            valid_w = int(valid_area[1][-1].item()) + 1
 
     # inference
     outputs = model(samples, test=True)
     raw_scores = torch.nn.functional.softmax(outputs['pred_logits'], -1)
     outputs_scores = raw_scores[:, :, 1][0]
     outputs_points = outputs['pred_points'][0]
-    print('prediction: ', len(outputs_scores))
+    query_points = outputs.get('points_queries')
+    prediction_cnt = len(outputs_scores)
+    if query_points is not None:
+        if query_points.dim() == 3:
+            query_points = query_points[0]
+        if query_points.shape[0] == outputs_scores.shape[0]:
+            query_y = query_points[:, 0] * img_h
+            query_x = query_points[:, 1] * img_w
+            prediction_cnt = int(((query_y < valid_h) & (query_x < valid_w)).sum().item())
+    print('prediction: ', prediction_cnt)
     
     # visualize predictions
     if vis_dir: 
@@ -175,13 +204,15 @@ def main(args):
     if not args.resume:
         raise ValueError('--resume is required')
 
+    checkpoint = torch.load(args.resume, map_location='cpu', weights_only=False)
+    args = merge_checkpoint_args(args, checkpoint)
+
     # build model
     device = torch.device(args.device)
     model, criterion = build_model(args)
     model.to(device)
 
     # load pretrained model
-    checkpoint = torch.load(args.resume, map_location='cpu', weights_only=False)        
     model.load_state_dict(checkpoint['model'])
     
     # evaluation

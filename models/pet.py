@@ -439,6 +439,7 @@ class PET(nn.Module):
     def test_forward(self, samples, features, pos, **kwargs):
         outputs = self.pet_forward(samples, features, pos, **kwargs)
         out_dense, out_sparse = outputs['dense'], outputs['sparse']
+        points_queries_out = None
         
         # process sparse point queries
         # determine device for outputs
@@ -451,6 +452,8 @@ class PET(nn.Module):
             if split_sparse.numel() == valid_sparse.numel():
                 valid_sparse = valid_sparse & split_sparse
             index_sparse = valid_sparse.to(out_device)
+            points_queries_sparse = out_sparse['points_queries'][index_sparse].unsqueeze(0)
+            points_queries_out = points_queries_sparse
         else:
             index_sparse = None
 
@@ -464,6 +467,11 @@ class PET(nn.Module):
             if split_dense.numel() == valid_dense.numel():
                 valid_dense = valid_dense & split_dense
             index_dense = valid_dense.to(out_device)
+            points_queries_dense = out_dense['points_queries'][index_dense].unsqueeze(0)
+            if points_queries_out is None:
+                points_queries_out = points_queries_dense
+            else:
+                points_queries_out = torch.cat([points_queries_out, points_queries_dense], dim=1)
         else:
             index_dense = None
 
@@ -471,6 +479,8 @@ class PET(nn.Module):
         div_out = dict()
         output_names = out_sparse.keys() if out_sparse is not None else out_dense.keys()
         for name in list(output_names):
+            if name == 'points_queries':
+                continue
             if 'pred' in name:
                 if index_dense is None:
                     div_out[name] = out_sparse[name][index_sparse].unsqueeze(0)
@@ -480,6 +490,8 @@ class PET(nn.Module):
                     div_out[name] = torch.cat([out_sparse[name][index_sparse].unsqueeze(0), out_dense[name][index_dense].unsqueeze(0)], dim=1)
             else:
                 div_out[name] = out_sparse[name] if out_sparse is not None else out_dense[name]
+        if points_queries_out is not None:
+            div_out['points_queries'] = points_queries_out
         div_out['split_map_raw'] = outputs['split_map_raw']
         div_out['split_threshold'] = outputs['split_threshold']
         return div_out

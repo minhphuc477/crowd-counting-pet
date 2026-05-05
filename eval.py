@@ -82,6 +82,20 @@ def get_args_parser():
     return parser
 
 
+def merge_checkpoint_args(args, checkpoint):
+    checkpoint_args = checkpoint.get('args')
+    if checkpoint_args is None:
+        return args
+    if isinstance(checkpoint_args, dict):
+        checkpoint_args = argparse.Namespace(**checkpoint_args)
+
+    merged = argparse.Namespace(**vars(checkpoint_args))
+    runtime_keys = {'resume', 'device', 'vis_dir', 'data_path', 'dataset_file', 'num_workers', 'seed'}
+    for key in runtime_keys:
+        setattr(merged, key, getattr(args, key))
+    return merged
+
+
 def main(args):
     utils.init_distributed_mode(args)
     print(args)
@@ -92,6 +106,15 @@ def main(args):
     torch.manual_seed(seed)
     np.random.seed(seed)
     random.seed(seed)
+
+    checkpoint = None
+    if args.resume:
+        if args.resume.startswith('https'):
+            checkpoint = torch.hub.load_state_dict_from_url(
+                args.resume, map_location='cpu', check_hash=True)
+        else:
+            checkpoint = torch.load(args.resume, map_location='cpu', weights_only=False)
+        args = merge_checkpoint_args(args, checkpoint)
 
     # build model
     model, criterion = build_model(args)
@@ -118,13 +141,8 @@ def main(args):
 
     # load pretrained model
     cur_epoch = 0
-    if args.resume:
-        if args.resume.startswith('https'):
-            checkpoint = torch.hub.load_state_dict_from_url(
-                args.resume, map_location='cpu', check_hash=True)
-        else:
-            checkpoint = torch.load(args.resume, map_location='cpu', weights_only=False)
-        model_without_ddp.load_state_dict(checkpoint['model'])        
+    if checkpoint is not None:
+        model_without_ddp.load_state_dict(checkpoint['model'])
         cur_epoch = checkpoint['epoch'] if 'epoch' in checkpoint else 0
     
     # evaluation

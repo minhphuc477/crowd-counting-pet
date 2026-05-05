@@ -22,8 +22,9 @@ import argparse
 import json
 import subprocess
 import sys
-from pathlib import Path
 from collections import defaultdict
+from pathlib import Path
+
 import numpy as np
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -55,7 +56,7 @@ def get_backbone_from_dirname(dirname):
             }
             if any(candidate in normalized_dirname for candidate in candidates):
                 return backbone
-    
+
     if 'convnextv2' in dirname_lower:
         return 'convnextv2_base'
     if 'convnext' in dirname_lower:
@@ -76,38 +77,30 @@ def get_backbone_from_dirname(dirname):
         return 'edgenext_tiny'
     if 'repvit' in dirname_lower:
         return 'repvit_tiny'
-    
+
     if 'swinv2' in dirname_lower:
-        # SwinV2 models from timm
         if 'swinv2_base_window8_256' in dirname_lower:
             return 'swinv2_base_window8_256'
         if 'swinv2_small' in dirname_lower:
             return 'swinv2_small_window8_256'
-        # Default SwinV2
         return 'swinv2_base_window8_256'
-    
+
     if 'maxvit' in dirname_lower:
-        # Use 256-compatible MaxViT variants for PET's default crop/padding.
-        
-        # Try to match checkpoint names to actual timm model names
         if 'poly' in dirname_lower:
-            # "poly" suffix doesn't exist in timm, use rmlp_tiny_rw_256 as substitute
             return 'maxvit_rmlp_tiny_rw_256'
-        elif 'maxvit_rmlp_tiny_rw_256' in dirname_lower:
+        if 'maxvit_rmlp_tiny_rw_256' in dirname_lower:
             return 'maxvit_rmlp_tiny_rw_256'
-        elif 'maxvit_rmlp_small' in dirname_lower:
+        if 'maxvit_rmlp_small' in dirname_lower:
             return 'maxvit_rmlp_small_rw_256'
-        elif 'maxvit_small' in dirname_lower:
+        if 'maxvit_small' in dirname_lower:
             return 'maxvit_small'
-        elif 'maxvit_tiny' in dirname_lower:
+        if 'maxvit_tiny' in dirname_lower:
             return 'maxvit_tiny'
-        else:
-            # Default MaxViT
-            return 'maxvit_tiny'
-    
+        return 'maxvit_tiny'
+
     if 'vgg' in dirname_lower:
         return 'vgg16_bn'
-    
+
     return None
 
 
@@ -124,38 +117,39 @@ def run_eval(backbone, checkpoint_path, dataset_file, data_path, verbose=False):
     ]
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
-        
+        if result.returncode != 0:
+            if verbose:
+                print(f"    Eval failed with return code {result.returncode}")
+                if result.stderr:
+                    print(result.stderr)
+            return None
+
         output_text = result.stdout + '\n' + result.stderr
-        
-        # Extract MAE from output - try multiple patterns
         mae_value = None
-        
-        # Pattern 1: "mae: X" or "mae: X," or "mae = X"
-        for line in output_text.split('\n'):
-            line_lower = line.lower()
-            if 'mae' in line_lower and any(sep in line_lower for sep in [':', '=']):
-                # Find "mae:" or "mae="
-                for sep in ['mae:', 'mae =', 'mae=']:
-                    if sep in line_lower:
-                        idx = line_lower.find(sep)
-                        remainder = line[idx + len(sep):].strip()
-                        # Extract first number (handle cases like "123.45," or "123.45 " etc)
-                        num_str = ''
-                        for char in remainder:
-                            if char.isdigit() or char == '.':
-                                num_str += char
-                            elif num_str:
-                                break
-                        if num_str:
-                            try:
-                                mae_value = float(num_str)
-                                break
-                            except ValueError:
-                                pass
-                if mae_value is not None:
-                    break
-        
-        # If still no MAE and verbose, print debug info
+
+        for line in reversed(output_text.split('\n')):
+            line_lower = line.lower().strip()
+            if not line_lower.startswith('epoch:'):
+                continue
+            for sep in ['mae:', 'mae =', 'mae=']:
+                if sep in line_lower:
+                    idx = line_lower.find(sep)
+                    remainder = line_lower[idx + len(sep):].strip()
+                    num_str = ''
+                    for char in remainder:
+                        if char.isdigit() or char == '.':
+                            num_str += char
+                        elif num_str:
+                            break
+                    if num_str:
+                        try:
+                            mae_value = float(num_str)
+                            break
+                        except ValueError:
+                            pass
+            if mae_value is not None:
+                break
+
         if mae_value is None and verbose:
             print(f"    DEBUG: MAE extraction failed")
             print(f"    Return code: {result.returncode}")
@@ -171,7 +165,7 @@ def run_eval(backbone, checkpoint_path, dataset_file, data_path, verbose=False):
                 for line in out_lines:
                     if line.strip():
                         print(f"      {line}")
-        
+
         return mae_value
     except subprocess.TimeoutExpired:
         print(f"    Timeout evaluating {checkpoint_path}")
@@ -200,7 +194,6 @@ def main():
         print(f"Output directory not found: {outputs_dir}")
         return
 
-    # Collect all checkpoints
     checkpoints_to_eval = []
     for subdir in sorted(outputs_dir.iterdir()):
         if not subdir.is_dir():
@@ -208,7 +201,6 @@ def main():
         if args.backbone_filter and args.backbone_filter not in subdir.name:
             continue
 
-        # Check for best_checkpoint.pth
         checkpoint_path = subdir / 'best_checkpoint.pth'
         if checkpoint_path.exists():
             backbone = get_backbone_from_dirname(subdir.name)
@@ -225,7 +217,6 @@ def main():
         print("No checkpoints found to evaluate")
         return
 
-    # Run evaluations
     results = defaultdict(list)
     summary_path = outputs_dir / 'EVAL_SUMMARY.json'
 
@@ -244,7 +235,6 @@ def main():
         else:
             print(f"  Failed to get MAE")
 
-    # Aggregate by backbone
     summary = {}
     for backbone in sorted(results.keys()):
         maes = [r['mae'] for r in results[backbone]]
@@ -257,15 +247,13 @@ def main():
             'results': results[backbone],
         }
 
-    # Save summary
     with open(summary_path, 'w', encoding='utf-8') as f:
         json.dump(summary, f, indent=2)
     print(f"\n\nSummary saved to {summary_path}")
 
-    # Print summary
-    print("\n" + "="*80)
+    print("\n" + "=" * 80)
     print("EVALUATION SUMMARY")
-    print("="*80)
+    print("=" * 80)
     for backbone in sorted(summary.keys()):
         s = summary[backbone]
         print(f"\n{backbone}:")

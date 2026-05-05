@@ -311,7 +311,7 @@ def main(args):
             log_file.write("parameters: {}".format(n_parameters))
 
     # resume
-    best_mae, best_epoch = 1e8, 0
+    best_mae, best_mse, best_epoch = 1e8, 1e8, 0
     if args.resume:
         if args.resume.startswith('https'):
             checkpoint = torch.hub.load_state_dict_from_url(
@@ -379,6 +379,7 @@ def main(args):
             if mae < best_mae:
                 best_epoch = epoch
                 best_mae = mae
+                best_mse = mse
             print("\n==========================")
             print("\nepoch:", epoch, "mae:", mae, "mse:", mse, "\n\nbest mae:", best_mae, "best epoch:", best_epoch)
             print("==========================\n")
@@ -397,6 +398,18 @@ def main(args):
                 src_path = output_dir / 'checkpoint.pth'
                 dst_path = output_dir / 'best_checkpoint.pth'
                 shutil.copyfile(src_path, dst_path)
+
+    if utils.is_main_process():
+        with open(run_log_name, "a", encoding="utf-8") as log_file:
+            log_file.write('\n' + json.dumps({
+                'epoch': best_epoch,
+                'test_mae': float(best_mae),
+                'test_mse': float(best_mse),
+                'best_epoch': best_epoch,
+                'best_test_mae': float(best_mae),
+                'best_test_mse': float(best_mse),
+                'final': True,
+            }))
 
     total_time = time.time() - start_time
     total_time_str = str(datetime.timedelta(seconds=int(total_time)))

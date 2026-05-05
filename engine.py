@@ -141,6 +141,12 @@ def evaluate(model, data_loader, device, epoch=0, vis_dir=None):
     for samples, targets in metric_logger.log_every(data_loader, print_freq, header):
         samples = samples.to(device)
         img_h, img_w = samples.tensors.shape[-2:]
+        valid_h, valid_w = img_h, img_w
+        if samples.mask is not None:
+            valid_area = torch.where(~samples.mask[0])
+            if valid_area[0].numel() > 0:
+                valid_h = int(valid_area[0][-1].item()) + 1
+                valid_w = int(valid_area[1][-1].item()) + 1
 
         # inference
         outputs = model(samples, test=True, targets=targets)
@@ -150,9 +156,18 @@ def evaluate(model, data_loader, device, epoch=0, vis_dir=None):
         outputs_scores = outputs_scores_full[:, :, 1][0]  # Extract batch 0, then class 1 scores
         outputs_points = outputs['pred_points'][0]
         outputs_offsets = outputs['pred_offsets'][0]
+        query_points = outputs.get('points_queries')
         
         # process predicted points
         predict_cnt = len(outputs_scores)  # Count 1D array of scores
+        if query_points is not None:
+            if query_points.dim() == 3:
+                query_points = query_points[0]
+            if query_points.shape[0] == outputs_scores.shape[0]:
+                query_y = query_points[:, 0] * img_h
+                query_x = query_points[:, 1] * img_w
+                valid_mask = (query_y < valid_h) & (query_x < valid_w)
+                predict_cnt = int(valid_mask.sum().item())
         gt_cnt = targets[0]['points'].shape[0]
 
         # compute error

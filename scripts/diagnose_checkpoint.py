@@ -11,6 +11,7 @@ import argparse
 import sys
 import torch
 from pathlib import Path
+from types import SimpleNamespace
 
 
 def diagnose(checkpoint_path, backbone):
@@ -45,27 +46,38 @@ def diagnose(checkpoint_path, backbone):
     print("\n3. Building model...")
     try:
         from models import build_model
-        
-        class Args:
-            backbone = backbone
-            position_embedding = 'sine'
-            dec_layers = 2
-            dim_feedforward = 512
-            hidden_dim = 256
-            dropout = 0.0
-            nheads = 8
-            set_cost_class = 1.0
-            set_cost_point = 0.05
-            ce_loss_coef = 1.0
-            point_loss_coef = 5.0
-            eos_coef = 0.5
-            aux_loss = False
-            device = 'cpu'
-            num_classes = 1
-            sparse_stride = 8
-            dense_stride = 4
-        
-        model, criterion, postprocessors = build_model(Args())
+
+        args = SimpleNamespace(
+            backbone=backbone,
+            position_embedding='sine',
+            dec_layers=2,
+            dim_feedforward=512,
+            hidden_dim=256,
+            dropout=0.0,
+            nheads=8,
+            set_cost_class=1.0,
+            set_cost_point=0.05,
+            ce_loss_coef=1.0,
+            point_loss_coef=5.0,
+            eos_coef=0.5,
+            aux_loss=False,
+            device='cpu',
+            num_classes=1,
+            sparse_stride=8,
+            dense_stride=4,
+            negative_loss_coef=0.1,
+            non_div_loss_coef=0.25,
+            quadtree_loss_coef=0.1,
+            quadtree_prior_coef=0.025,
+            split_count_threshold=2,
+            split_pos_weight=1.0,
+            split_threshold=-1.0,
+            split_threshold_quantile=0.55,
+            score_threshold=0.5,
+            no_pretrained_backbone=True,
+        )
+
+        model, criterion = build_model(args)
         print("   OK - Model built")
     except Exception as e:
         print(f"   ERROR: {e}")
