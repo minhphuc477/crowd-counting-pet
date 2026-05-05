@@ -364,19 +364,8 @@ class PET(nn.Module):
         return split_map >= threshold
 
     def get_score_mask(self, scores):
-        if self.score_threshold >= 0:
-            threshold = torch.as_tensor(self.score_threshold, dtype=scores.dtype, device=scores.device)
-        else:
-            flat = scores.detach().reshape(-1).float()
-            if flat.numel() == 0:
-                # If no scores, return empty mask (no predictions)
-                return torch.zeros_like(scores, dtype=torch.bool)
-            else:
-                # Use adaptive threshold: 50th percentile (median) for inference to get some predictions
-                # During training, higher threshold keeps only confident predictions
-                threshold = torch.quantile(flat, 0.5).to(dtype=scores.dtype, device=scores.device)
-                threshold = threshold.clamp(0.05, 0.95)
-        return scores >= threshold
+        # Return all predictions without thresholding
+        return torch.ones_like(scores, dtype=torch.bool)
 
     def pet_forward(self, samples, features, pos, **kwargs):
         # context encoding
