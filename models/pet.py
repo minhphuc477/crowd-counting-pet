@@ -371,7 +371,9 @@ class PET(nn.Module):
             if flat.numel() == 0:
                 threshold = torch.as_tensor(0.5, dtype=scores.dtype, device=scores.device)
             else:
-                threshold = torch.quantile(flat, 0.95).to(dtype=scores.dtype, device=scores.device)
+                # Use lower percentile during inference to get predictions even in early training
+                # 95th percentile is too aggressive, use 80th percentile instead
+                threshold = torch.quantile(flat, 0.8).to(dtype=scores.dtype, device=scores.device)
                 threshold = threshold.clamp(0.05, 0.95)
         return scores >= threshold
 
