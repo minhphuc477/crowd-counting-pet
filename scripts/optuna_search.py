@@ -55,12 +55,13 @@ def objective(trial, args):
     lr_backbone = trial.suggest_float('lr_backbone', 1e-6, 1e-4, log=True)
     batch = trial.suggest_categorical('batch_size', [2, 4, 8])
     warmup = trial.suggest_int('warmup', 0, 10)
+    score_threshold = trial.suggest_float('score_threshold', 0.2, 0.6)
 
     config_name = f"opt_{datetime.now().strftime('%Y%m%d_%H%M%S')}_trial{trial.number}"
     out_dir = Path(args.output_dir) / args.backbone / config_name
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    extra = f"{args.extra_args} --lr {lr} --lr_backbone {lr_backbone} --batch_size {batch} --warmup_epochs {warmup}"
+    extra = f"{args.extra_args} --lr {lr} --lr_backbone {lr_backbone} --batch_size {batch} --warmup_epochs {warmup} --score_threshold {score_threshold}"
     maes = []
     for seed in args.seeds:
         seed_out_dir = out_dir / f"seed_{seed}"

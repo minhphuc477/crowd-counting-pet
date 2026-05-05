@@ -36,7 +36,7 @@ for backbone in $backbones; do
   echo "========================================"
   python3 scripts/optuna_search.py \
     --backbone "${backbone}" \
-    --trials 20 \
+    --trials 10 \
     --seeds 7 \
     --output_dir results
 
