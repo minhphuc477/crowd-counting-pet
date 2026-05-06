@@ -521,28 +521,14 @@ class SetCriterion(nn.Module):
         self.negative_loss_coef = negative_loss_coef
         self.non_div_loss_coef = non_div_loss_coef
 
-    def balanced_class_loss(self, raw_ce_loss, target_classes, weights=None, eps=1e-6):
+    def weighted_mean_loss(self, raw_loss, weights=None, eps=1e-6):
         if weights is None:
-            weights = torch.ones_like(raw_ce_loss)
-        else:
-            weights = weights.to(raw_ce_loss.device, dtype=raw_ce_loss.dtype).reshape_as(raw_ce_loss)
-
+            return raw_loss.mean()
+        weights = weights.to(raw_loss.device, dtype=raw_loss.dtype).reshape_as(raw_loss)
         valid = weights > 0
-        pos_mask = (target_classes > 0) & valid
-        neg_mask = (target_classes == 0) & valid
-        loss = raw_ce_loss.sum() * 0.0
-
-        if pos_mask.any():
-            pos_weight = weights[pos_mask]
-            loss = loss + (raw_ce_loss[pos_mask] * pos_weight).sum() / (pos_weight.sum() + eps)
-
-        if neg_mask.any():
-            neg_weight = weights[neg_mask]
-            neg_loss = (raw_ce_loss[neg_mask] * neg_weight).sum() / (neg_weight.sum() + eps)
-            scale = self.eos_coef if pos_mask.any() else self.eos_coef * self.negative_loss_coef
-            loss = loss + scale * neg_loss
-
-        return loss
+        if not valid.any():
+            return raw_loss.sum() * 0.0
+        return (raw_loss[valid] * weights[valid]).sum() / (weights[valid].sum() + eps)
     
     def loss_labels(self, outputs, targets, indices, num_points, log=True, **kwargs):
         """
@@ -560,17 +546,19 @@ class SetCriterion(nn.Module):
         target_classes[idx] = target_classes_o
 
         # compute classification loss
-        raw_ce_loss = F.cross_entropy(src_logits.transpose(1, 2), target_classes, ignore_index=-1, reduction='none')
+        raw_ce_loss = F.cross_entropy(
+            src_logits.transpose(1, 2),
+            target_classes,
+            weight=self.empty_weight,
+            ignore_index=-1,
+            reduction='none',
+        )
         if 'div' in kwargs:
             split_weight = kwargs['div'].to(src_logits.device, dtype=raw_ce_loss.dtype).reshape_as(raw_ce_loss).clamp(0, 1)
-            loss_ce = self.balanced_class_loss(raw_ce_loss, target_classes, split_weight)
-            loss_ce = loss_ce + self.non_div_loss_coef * self.balanced_class_loss(
-                raw_ce_loss,
-                target_classes,
-                1.0 - split_weight,
-            )
+            region_weight = split_weight + self.non_div_loss_coef * (1.0 - split_weight)
+            loss_ce = self.weighted_mean_loss(raw_ce_loss, region_weight)
         else:
-            loss_ce = self.balanced_class_loss(raw_ce_loss, target_classes)
+            loss_ce = self.weighted_mean_loss(raw_ce_loss)
 
         losses = {'loss_ce': loss_ce}
         return losses
@@ -596,16 +584,14 @@ class SetCriterion(nn.Module):
         if target_points.numel() > 0:
             target_points[:, 0] /= img_h
             target_points[:, 1] /= img_w
-        loss_points_raw = F.smooth_l1_loss(src_points, target_points, reduction='none')
+        loss_points_raw = F.smooth_l1_loss(src_points, target_points, reduction='none').sum(dim=-1)
 
         if 'div' in kwargs:
             eps = 1e-5
             split_map = kwargs['div'].to(outputs['pred_points'].device, dtype=loss_points_raw.dtype)
-            split_weight = split_map[idx].unsqueeze(-1).clamp(0, 1)
-            loss_points_div = (loss_points_raw * split_weight).sum() / (split_weight.sum() + eps)
-            non_div_weight = 1.0 - split_weight
-            loss_points_nondiv = (loss_points_raw * non_div_weight).sum() / (non_div_weight.sum() + eps)
-            losses['loss_points'] = loss_points_div + self.non_div_loss_coef * loss_points_nondiv
+            split_weight = split_map[idx].clamp(0, 1)
+            point_weight = split_weight + self.non_div_loss_coef * (1.0 - split_weight)
+            losses['loss_points'] = (loss_points_raw * point_weight).sum() / (point_weight.sum() + eps)
         else:
             losses['loss_points'] = loss_points_raw.sum() / num_points
         
