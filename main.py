@@ -169,10 +169,10 @@ def get_args_parser():
                         help='minimum people in a splitter cell before it should split')
     parser.add_argument('--split_pos_weight', default=1.0, type=float,
                         help='positive cell weight for quadtree quality loss')
-    parser.add_argument('--split_threshold', default=-1.0, type=float,
-                        help='split-map threshold; negative enables adaptive quantile thresholding')
+    parser.add_argument('--split_threshold', default=0.5, type=float,
+                        help='split-map threshold used to route sparse vs dense inference windows')
     parser.add_argument('--split_threshold_quantile', default=0.55, type=float,
-                        help='adaptive split-map quantile used when split_threshold is negative')
+                        help='legacy adaptive split-map quantile (unused when split_threshold is set)')
     parser.add_argument('--score_threshold', default=0.5, type=float,
                         help='point classification threshold; negative enables adaptive score thresholding')
 

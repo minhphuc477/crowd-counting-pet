@@ -50,7 +50,7 @@ def get_args_parser():
     parser.add_argument('--quadtree_prior_coef', default=0.025, type=float)
     parser.add_argument('--split_count_threshold', default=2, type=int)
     parser.add_argument('--split_pos_weight', default=1.0, type=float)
-    parser.add_argument('--split_threshold', default=-1.0, type=float)
+    parser.add_argument('--split_threshold', default=0.5, type=float)
     parser.add_argument('--split_threshold_quantile', default=0.55, type=float)
     parser.add_argument('--score_threshold', default=0.5, type=float)
 

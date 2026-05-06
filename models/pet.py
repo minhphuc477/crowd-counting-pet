@@ -358,12 +358,10 @@ class PET(nn.Module):
     def get_split_threshold(self, split_map):
         if self.split_threshold >= 0:
             return torch.as_tensor(self.split_threshold, dtype=split_map.dtype, device=split_map.device)
-        flat = split_map.detach().reshape(-1).float()
-        if flat.numel() == 0:
-            return torch.as_tensor(0.5, dtype=split_map.dtype, device=split_map.device)
-        quantile = min(max(self.split_threshold_quantile, 0.0), 1.0)
-        threshold = torch.quantile(flat, quantile).to(dtype=split_map.dtype, device=split_map.device)
-        return threshold.clamp(0.05, 0.95)
+        # Match official PET behavior. Quantile-based thresholds force a large
+        # fraction of windows into dense mode and are a major source of chronic
+        # overcounting on this branch.
+        return torch.as_tensor(0.5, dtype=split_map.dtype, device=split_map.device)
 
     def get_split_mask(self, split_map):
         threshold = self.get_split_threshold(split_map)

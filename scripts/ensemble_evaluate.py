@@ -253,7 +253,7 @@ def main():
             quadtree_prior_coef=0.025,
             split_count_threshold=2,
             split_pos_weight=1.0,
-            split_threshold=-1.0,
+            split_threshold=0.5,
             split_threshold_quantile=0.55,
             score_threshold=0.5,
             # Matcher parameters
