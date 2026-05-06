@@ -118,12 +118,10 @@ class WinDecoderTransformer(nn.Module):
     def forward(self, src, pos_embed, mask, pqs, **kwargs):
         bs, c, h, w = src.shape
         query_embed, points_queries, query_feats, v_idx = pqs
-        # dec_win_size is [width, height]
         self.dec_win_w, self.dec_win_h = kwargs['dec_win_size']
-
-        # Match the encoder window scale to the query branch.
-        # Dense query branches operate at twice the spatial resolution, so their
-        # encoder memory windows must be smaller to keep the batch dimensions aligned.
+        
+        # Match the official PET decoder path: prune the encoder memory with the
+        # same active-window index used for query generation.
         div_ratio = 1 if kwargs['pq_stride'] == 8 else 2
         memory_win, pos_embed_win, mask_win = enc_win_partition(
             src,
@@ -135,11 +133,14 @@ class WinDecoderTransformer(nn.Module):
         
         # dynamic decoder forward
         if 'test' in kwargs:
+            if v_idx is not None:
+                memory_win = memory_win[:, v_idx]
+                pos_embed_win = pos_embed_win[:, v_idx]
+                mask_win = mask_win[v_idx]
             hs = self.decoder_forward_dynamic(query_feats, query_embed, 
                                     memory_win, pos_embed_win, mask_win, self.dec_win_h, self.dec_win_w, src.shape, **kwargs)
             return hs
         else:
-            # decoder forward - training uses all windows
             hs = self.decoder_forward(query_feats, query_embed, 
                                     memory_win, pos_embed_win, mask_win, self.dec_win_h, self.dec_win_w, src.shape, **kwargs)
             return hs.transpose(1, 2)

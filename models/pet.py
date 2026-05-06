@@ -102,11 +102,15 @@ class BasePETCount(nn.Module):
         points_queries_win = window_partition(points_queries, window_size_h=dec_win_h, window_size_w=dec_win_w)
         query_feats_win = window_partition(query_feats, window_size_h=dec_win_h, window_size_w=dec_win_w)
 
-        # Keep all query windows during inference so the decoder batch stays
-        # aligned with the encoder memory windows. Confidence-based pruning is
-        # applied later in test_forward() instead of here.
-        points_queries_win = points_queries_win.reshape(-1, 2)
-        v_idx = None
+        # Match the official PET inference path: prune inactive windows before
+        # the decoder, then slice the encoder memory with the same v_idx.
+        div = kwargs.get('div_mask', kwargs['div'])
+        div_win = window_partition(div.unsqueeze(1), window_size_h=dec_win_h, window_size_w=dec_win_w)
+        valid_div = div_win.to(dtype=torch.int32).sum(dim=0)[:, 0]
+        v_idx = valid_div > 0
+        query_embed_win = query_embed_win[:, v_idx]
+        query_feats_win = query_feats_win[:, v_idx]
+        points_queries_win = points_queries_win[:, v_idx].reshape(-1, 2)
 
         return query_embed_win, points_queries_win, query_feats_win, v_idx
     
@@ -377,24 +381,6 @@ class PET(nn.Module):
                 threshold = threshold.clamp(0.05, 0.95)
         return scores >= threshold
 
-    def get_query_grid_shape(self, img_shape, stride):
-        img_h, img_w = img_shape
-        grid_h = (img_h + stride // 2 - 1) // stride
-        grid_w = (img_w + stride // 2 - 1) // stride
-        return grid_h, grid_w
-
-    def get_windowed_split_mask(self, split_mask, grid_shape, dec_win_size):
-        grid_h, grid_w = grid_shape
-        expected = grid_h * grid_w
-        if split_mask.shape[1] != expected:
-            raise RuntimeError(
-                f"split mask shape {tuple(split_mask.shape)} does not match query grid {(grid_h, grid_w)}"
-            )
-        win_w, win_h = dec_win_size
-        split_mask = split_mask.reshape(split_mask.shape[0], 1, grid_h, grid_w)
-        split_mask = window_partition(split_mask, window_size_h=win_h, window_size_w=win_w)
-        return split_mask.squeeze(-1).reshape(-1).to(dtype=torch.bool)
-
     def pet_forward(self, samples, features, pos, **kwargs):
         # context encoding
         src, mask = features[self.encode_feats].decompose()
@@ -422,17 +408,21 @@ class PET(nn.Module):
         
         # quadtree layer0 forward (sparse)
         if sparse_active:
-            kwargs['div'] = split_map_sparse.reshape(bs, sp_h, sp_w)
-            kwargs['dec_win_size'] = list(self.sparse_dec_win_size)
-            outputs_sparse = self.quadtree_sparse(samples, features, context_info, **kwargs)
+            sparse_kwargs = dict(kwargs)
+            sparse_kwargs['div'] = split_map_sparse.reshape(bs, sp_h, sp_w)
+            sparse_kwargs['div_mask'] = split_mask_sparse.reshape(bs, sp_h, sp_w)
+            sparse_kwargs['dec_win_size'] = list(self.sparse_dec_win_size)
+            outputs_sparse = self.quadtree_sparse(samples, features, context_info, **sparse_kwargs)
         else:
             outputs_sparse = None
         
         # quadtree layer1 forward (dense)
         if dense_active:
-            kwargs['div'] = split_map_dense.reshape(bs, ds_h, ds_w)
-            kwargs['dec_win_size'] = list(self.dense_dec_win_size)
-            outputs_dense = self.quadtree_dense(samples, features, context_info, **kwargs)
+            dense_kwargs = dict(kwargs)
+            dense_kwargs['div'] = split_map_dense.reshape(bs, ds_h, ds_w)
+            dense_kwargs['div_mask'] = split_mask_dense.reshape(bs, ds_h, ds_w)
+            dense_kwargs['dec_win_size'] = list(self.dense_dec_win_size)
+            outputs_dense = self.quadtree_dense(samples, features, context_info, **dense_kwargs)
         else:
             outputs_dense = None
         
@@ -460,26 +450,11 @@ class PET(nn.Module):
         outputs = self.pet_forward(samples, features, pos, **kwargs)
         out_dense, out_sparse = outputs['dense'], outputs['sparse']
         points_queries_out = None
-        img_shape = samples.tensors.shape[-2:]
         
         # process sparse point queries
-        # determine device for outputs
-        out_device = None
         if out_sparse is not None:
-            out_device = out_sparse['pred_logits'].device
             out_sparse_scores = torch.nn.functional.softmax(out_sparse['pred_logits'], -1)[..., 1]
-            valid_sparse = self.get_score_mask(out_sparse_scores).reshape(-1)
-            split_sparse = self.get_windowed_split_mask(
-                outputs['split_mask_sparse'],
-                self.get_query_grid_shape(img_shape, self.quadtree_sparse.pq_stride),
-                self.sparse_dec_win_size,
-            ).to(out_device)
-            if split_sparse.shape != valid_sparse.shape:
-                raise RuntimeError(
-                    f"sparse split mask shape {tuple(split_sparse.shape)} does not match score mask {tuple(valid_sparse.shape)}"
-                )
-            valid_sparse = valid_sparse & split_sparse
-            index_sparse = valid_sparse.to(out_device)
+            index_sparse = self.get_score_mask(out_sparse_scores).to(out_sparse['pred_logits'].device)
             points_queries_sparse = out_sparse['points_queries'][index_sparse].unsqueeze(0)
             points_queries_out = points_queries_sparse
         else:
@@ -487,21 +462,8 @@ class PET(nn.Module):
 
         # process dense point queries
         if outputs['dense'] is not None:
-            if out_device is None:
-                out_device = out_dense['pred_logits'].device
             out_dense_scores = torch.nn.functional.softmax(out_dense['pred_logits'], -1)[..., 1]
-            valid_dense = self.get_score_mask(out_dense_scores).reshape(-1)
-            split_dense = self.get_windowed_split_mask(
-                outputs['split_mask_dense'],
-                self.get_query_grid_shape(img_shape, self.quadtree_dense.pq_stride),
-                self.dense_dec_win_size,
-            ).to(out_device)
-            if split_dense.shape != valid_dense.shape:
-                raise RuntimeError(
-                    f"dense split mask shape {tuple(split_dense.shape)} does not match score mask {tuple(valid_dense.shape)}"
-                )
-            valid_dense = valid_dense & split_dense
-            index_dense = valid_dense.to(out_device)
+            index_dense = self.get_score_mask(out_dense_scores).to(out_dense['pred_logits'].device)
             points_queries_dense = out_dense['points_queries'][index_dense].unsqueeze(0)
             if points_queries_out is None:
                 points_queries_out = points_queries_dense
