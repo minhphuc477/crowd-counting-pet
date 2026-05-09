@@ -191,13 +191,26 @@ class TimmBackbone(TimmBackboneBase):
     def __init__(self, model_name='convnextv2_base', pretrained=True):
         timm = importlib.import_module('timm')
         actual_model_name = resolve_timm_backbone_name(model_name)
+        def _create(pretrained_flag):
+            try:
+                return timm.create_model(
+                    actual_model_name,
+                    pretrained=pretrained_flag,
+                    features_only=True,
+                    out_indices=(0, 1, 2, 3),
+                    dynamic_img_size=True,
+                )
+            except TypeError:
+                # Fallback for older timm without dynamic_img_size support
+                return timm.create_model(
+                    actual_model_name,
+                    pretrained=pretrained_flag,
+                    features_only=True,
+                    out_indices=(0, 1, 2, 3),
+                )
+
         try:
-            backbone = timm.create_model(
-                actual_model_name,
-                pretrained=pretrained,
-                features_only=True,
-                out_indices=(0, 1, 2, 3),
-            )
+            backbone = _create(pretrained)
         except (RuntimeError, OSError) as exc:
             if not pretrained:
                 raise
@@ -205,12 +218,7 @@ class TimmBackbone(TimmBackboneBase):
                 f'Could not load pretrained weights for {actual_model_name}: {exc}. Falling back to random init.',
                 RuntimeWarning,
             )
-            backbone = timm.create_model(
-                actual_model_name,
-                pretrained=False,
-                features_only=True,
-                out_indices=(0, 1, 2, 3),
-            )
+            backbone = _create(False)
         super().__init__(backbone, num_channels=256, model_name=actual_model_name)
 
 

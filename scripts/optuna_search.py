@@ -102,25 +102,62 @@ def objective(trial, args):
 
 def main():
     args = parse_args()
-    study = optuna.create_study(direction='minimize')
+
+    # Use SQLite storage for persistence and resume capability
+    storage_path = Path(args.output_dir) / args.backbone / 'optuna_study.db'
+    storage_path.parent.mkdir(parents=True, exist_ok=True)
+    storage_url = f'sqlite:///{storage_path}'
+
+    study = optuna.create_study(
+        study_name=f'{args.backbone}_{args.dataset_file}',
+        direction='minimize',
+        storage=storage_url,
+        load_if_exists=True,
+    )
+
+    # Count already completed trials for resume
+    completed_trials = len([t for t in study.trials if t.state == optuna.trial.TrialState.COMPLETE])
+    remaining_trials = max(0, args.trials - completed_trials)
+
+    if remaining_trials < args.trials:
+        print(f'Resuming study from {storage_url}: {completed_trials} trials already completed, running {remaining_trials} more.')
+
     func = lambda t: objective(t, args)
-    study.optimize(func, n_trials=args.trials)
+    study.optimize(func, n_trials=remaining_trials)
+
     best_params_path = Path(args.best_params_file) if args.best_params_file else Path(args.output_dir) / args.backbone / 'optuna_best.json'
     best_params_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Guard against "No trials are completed yet" error
+    completed_trials_final = [t for t in study.trials if t.state == optuna.trial.TrialState.COMPLETE]
+    if completed_trials_final:
+        best_trial = study.best_trial
+        best_value = float(study.best_value)
+        best_params = best_trial.params
+        best_trial_number = best_trial.number
+        per_seed_mae = best_trial.user_attrs.get('per_seed_mae')
+        print('Best trial:', best_params, 'MAE:', best_value)
+    else:
+        best_value = None
+        best_params = None
+        best_trial_number = None
+        per_seed_mae = None
+        print('Warning: No trials were completed successfully.')
+
     with open(best_params_path, 'w', encoding='utf-8') as f:
         json.dump({
             'backbone': args.backbone,
             'dataset_file': args.dataset_file,
             'trials': args.trials,
+            'trials_completed': len(completed_trials_final),
             'seed_aggregate': args.seed_aggregate,
             'extra_args': args.extra_args,
-            'best_value': float(study.best_value),
-            'best_params': study.best_trial.params,
-            'best_trial_number': study.best_trial.number,
-            'per_seed_mae': study.best_trial.user_attrs.get('per_seed_mae'),
+            'best_value': best_value,
+            'best_params': best_params,
+            'best_trial_number': best_trial_number,
+            'per_seed_mae': per_seed_mae,
         }, f, indent=2)
     print('Saved best params to', best_params_path)
-    print('Best trial:', study.best_trial.params, 'MAE:', study.best_value)
 
 
 if __name__ == '__main__':
