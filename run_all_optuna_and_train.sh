@@ -39,10 +39,15 @@ for backbone in $backbones; do
   
   # Check if training is already complete for this backbone
   final_train_dir="results/${backbone}/final_train"
-  if [ -d "$final_train_dir" ] && [ -f "$final_train_dir/run_log.txt" ]; then
-    echo "✓ Training already completed for ${backbone}. Skipping."
-    echo
-    continue
+  if [ -d "$final_train_dir" ]; then
+    echo "✓ Training already has output for ${backbone}. Checking if complete..."
+    if [ -f "$final_train_dir/run_log.txt" ] || [ -f "$final_train_dir/checkpoint.pth" ]; then
+      echo "✓ Training already completed for ${backbone}. Skipping."
+      echo
+      continue
+    else
+      echo "⚠ Training output exists but incomplete. Will retry training."
+    fi
   fi
   
   echo "Starting Optuna search for ${backbone}..."
@@ -51,7 +56,7 @@ for backbone in $backbones; do
   # Run optuna search with error handling - continue even if it fails
   if ! python3 scripts/optuna_search.py \
     --backbone "${backbone}" \
-    --trials 10 \
+    --trials 5 \
     --seeds 7 \
     --output_dir results; then
     echo "Warning: Optuna search for ${backbone} had issues. Check logs for details."
@@ -82,15 +87,17 @@ if not path.exists():
 
 try:
     data = json.loads(path.read_text(encoding="utf-8"))
-    trials_completed = data.get("trials_completed", 0)
     
-    if trials_completed == 0:
-        print("ERROR: No completed trials yet", file=sys.stderr)
-        sys.exit(1)
-    
+    # Check if best_params exists and is not None
     p = data.get("best_params")
     if p is None:
         print("ERROR: No best params found", file=sys.stderr)
+        sys.exit(1)
+    
+    # Check if best_value exists (indicates completed trial)
+    best_value = data.get("best_value")
+    if best_value is None:
+        print("ERROR: No best value found", file=sys.stderr)
         sys.exit(1)
     
     args = [
@@ -106,8 +113,8 @@ except Exception as e:
     sys.exit(1)
 PY
 ) || {
-    echo "Skipping training for ${backbone} - no successful Optuna trials yet."
-    echo "Run the script again to resume and complete the trials."
+    echo "Skipping training for ${backbone} - no valid best params found."
+    echo "Run Optuna again or check optuna_best.json"
     continue
   }
 
@@ -122,9 +129,12 @@ PY
     --seed 7 \
     --output_dir "results/${backbone}/final_train" \
     ${best_args}; then
-    echo "Completed training for ${backbone}"
+    echo "✓ Completed training for ${backbone}"
   else
-    echo "Warning: Training for ${backbone} had issues. Check logs for details."
+    EXIT_CODE=$?
+    echo "✗ Training for ${backbone} failed with exit code ${EXIT_CODE}"
+    echo "  Check results/${backbone}/final_train/ for error details"
+    echo "  This backbone will retry on next script run"
   fi
 
   echo
