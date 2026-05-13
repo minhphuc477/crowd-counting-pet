@@ -100,7 +100,7 @@ class SHA(Dataset):
                 if points.shape[0] > 0:
                     points *= scale
 
-        # random crop patch
+        # crop/resize patch
         if self.train:
             img, points = random_crop_with_retries(
                 img,
@@ -109,6 +109,10 @@ class SHA(Dataset):
                 attempts=self.crop_attempts,
                 min_points=self.min_crop_points,
             )
+        else:
+            # For validation/test, also resize to patch_size to match TIMM backbone expectations
+            # Use center crop logic to ensure consistent sizing
+            img, points = center_crop(img, points, patch_size=self.patch_size)
 
         # random flip
         if random.random() > 0.5 and self.train and self.flip:
@@ -208,6 +212,57 @@ def random_crop_with_retries(img, points, patch_size=256, attempts=8, min_points
     return best_img, best_points
 
 
+def center_crop(img, points, patch_size=256):
+    """Center crop and resize image to patch_size for validation/test."""
+    patch_h = patch_size
+    patch_w = patch_size
+    
+    # Get image dimensions
+    imgH, imgW = img.shape[-2:]
+    
+    # Calculate center crop coordinates
+    start_h = max(0, (imgH - patch_h) // 2)
+    start_w = max(0, (imgW - patch_w) // 2)
+    end_h = min(imgH, start_h + patch_h)
+    end_w = min(imgW, start_w + patch_w)
+    
+    # Adjust if crop size exceeds image boundaries
+    if end_h - start_h < patch_h:
+        start_h = max(0, imgH - patch_h)
+        end_h = imgH
+    if end_w - start_w < patch_w:
+        start_w = max(0, imgW - patch_w)
+        end_w = imgW
+    
+    # Apply crop
+    result_img = img[:, start_h:end_h, start_w:end_w]
+    result_points = points.copy()
+    
+    # Filter points within crop region
+    idx = (result_points[:, 0] >= start_h) & (result_points[:, 0] < end_h) & \
+          (result_points[:, 1] >= start_w) & (result_points[:, 1] < end_w)
+    result_points = result_points[idx]
+    
+    if result_points.shape[0] > 0:
+        result_points[:, 0] -= start_h
+        result_points[:, 1] -= start_w
+    
+    # Resize to patch_size
+    imgH_crop, imgW_crop = result_img.shape[-2:]
+    fH, fW = patch_h / max(1, imgH_crop), patch_w / max(1, imgW_crop)
+    result_img = F.interpolate(
+        result_img.unsqueeze(0),
+        (patch_h, patch_w),
+        mode='bilinear',
+        align_corners=False,
+    ).squeeze(0)
+    if result_points.shape[0] > 0:
+        result_points[:, 0] *= fH
+        result_points[:, 1] *= fW
+    
+    return result_img, result_points
+
+
 def build(image_set, args):
     transform = standard_transforms.Compose([
         standard_transforms.ToTensor(), standard_transforms.Normalize(mean=[0.485, 0.456, 0.406],
@@ -227,5 +282,6 @@ def build(image_set, args):
         )
         return train_set
     elif image_set == 'val':
-        val_set = SHA(data_root, train=False, transform=transform, patch_size=args.patch_size)
+        # For validation, we need to ensure images are resized to patch_size to match TIMM backbone expectations
+        val_set = SHA(data_root, train=False, transform=transform, patch_size=args.patch_size, crop_attempts=1, min_crop_points=0)
         return val_set
