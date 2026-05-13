@@ -122,12 +122,21 @@ PY
   echo "Starting training for ${backbone}..."
   echo "========================================"
   
+  # Check if we need to resume from checkpoint
+  resume_flag=""
+  checkpoint_path="results/${backbone}/final_train/checkpoint.pth"
+  if [ -f "$checkpoint_path" ]; then
+    echo "Found existing checkpoint. Will resume training from $checkpoint_path"
+    resume_flag="--resume $checkpoint_path"
+  fi
+  
   if python3 main.py \
     --backbone "${backbone}" \
     --epochs 1500 \
     --patch_size 256 \
     --seed 7 \
     --output_dir "results/${backbone}/final_train" \
+    ${resume_flag} \
     ${best_args}; then
     echo "✓ Completed training for ${backbone}"
   else
