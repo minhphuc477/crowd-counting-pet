@@ -34,6 +34,17 @@ repvit_small
 
 for backbone in $backbones; do
   echo "========================================"
+  echo "Starting processing for ${backbone}..."
+  echo "========================================"
+  
+  # Check if training is already complete for this backbone
+  final_train_dir="results/${backbone}/final_train"
+  if [ -d "$final_train_dir" ] && [ -f "$final_train_dir/run_log.txt" ]; then
+    echo "✓ Training already completed for ${backbone}. Skipping."
+    echo
+    continue
+  fi
+  
   echo "Starting Optuna search for ${backbone}..."
   echo "========================================"
   
