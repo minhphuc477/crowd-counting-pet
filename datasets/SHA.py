@@ -213,52 +213,31 @@ def random_crop_with_retries(img, points, patch_size=256, attempts=8, min_points
 
 
 def center_crop(img, points, patch_size=256):
-    """Center crop and resize image to patch_size for validation/test."""
+    """Resize image to patch_size for validation/test without losing points."""
+    # For validation, resize to patch_size without cropping to avoid losing data
     patch_h = patch_size
     patch_w = patch_size
     
-    # Get image dimensions
+    # Get current image dimensions
     imgH, imgW = img.shape[-2:]
     
-    # Calculate center crop coordinates
-    start_h = max(0, (imgH - patch_h) // 2)
-    start_w = max(0, (imgW - patch_w) // 2)
-    end_h = min(imgH, start_h + patch_h)
-    end_w = min(imgW, start_w + patch_w)
+    # Calculate scale factors
+    scale_h = patch_h / imgH
+    scale_w = patch_w / imgW
     
-    # Adjust if crop size exceeds image boundaries
-    if end_h - start_h < patch_h:
-        start_h = max(0, imgH - patch_h)
-        end_h = imgH
-    if end_w - start_w < patch_w:
-        start_w = max(0, imgW - patch_w)
-        end_w = imgW
-    
-    # Apply crop
-    result_img = img[:, start_h:end_h, start_w:end_w]
-    result_points = points.copy()
-    
-    # Filter points within crop region
-    idx = (result_points[:, 0] >= start_h) & (result_points[:, 0] < end_h) & \
-          (result_points[:, 1] >= start_w) & (result_points[:, 1] < end_w)
-    result_points = result_points[idx]
-    
-    if result_points.shape[0] > 0:
-        result_points[:, 0] -= start_h
-        result_points[:, 1] -= start_w
-    
-    # Resize to patch_size
-    imgH_crop, imgW_crop = result_img.shape[-2:]
-    fH, fW = patch_h / max(1, imgH_crop), patch_w / max(1, imgW_crop)
+    # Resize image
     result_img = F.interpolate(
-        result_img.unsqueeze(0),
+        img.unsqueeze(0),
         (patch_h, patch_w),
         mode='bilinear',
         align_corners=False,
     ).squeeze(0)
+    
+    # Scale all points (no cropping, so all points are preserved)
+    result_points = points.copy()
     if result_points.shape[0] > 0:
-        result_points[:, 0] *= fH
-        result_points[:, 1] *= fW
+        result_points[:, 0] *= scale_h
+        result_points[:, 1] *= scale_w
     
     return result_img, result_points
 
