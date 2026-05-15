@@ -102,11 +102,10 @@ class BasePETCount(nn.Module):
         points_queries_win = window_partition(points_queries, window_size_h=dec_win_h, window_size_w=dec_win_w)
         query_feats_win = window_partition(query_feats, window_size_h=dec_win_h, window_size_w=dec_win_w)
 
-        # Match the official PET inference path: prune inactive windows before
-        # the decoder, then slice the encoder memory with the same v_idx.
-        div = kwargs.get('div_mask', kwargs['div'])
+        # Prune inactive windows before the decoder (matches original PET).
+        div = kwargs['div']
         div_win = window_partition(div.unsqueeze(1), window_size_h=dec_win_h, window_size_w=dec_win_w)
-        valid_div = div_win.to(dtype=torch.int32).sum(dim=0)[:, 0]
+        valid_div = (div_win > 0.5).sum(dim=0)[:, 0]
         v_idx = valid_div > 0
         query_embed_win = query_embed_win[:, v_idx]
         query_feats_win = query_feats_win[:, v_idx]
@@ -140,9 +139,11 @@ class BasePETCount(nn.Module):
         outputs_offsets = (self.coord_embed(hs).sigmoid() - 0.5) * 2.0
 
         # normalize point-query coordinates
+        # Clone to avoid in-place mutation: predict() is called once for sparse
+        # and once for dense; without clone the second call gets pre-normalized values.
         img_shape = samples.tensors.shape[-2:]
         img_h, img_w = img_shape
-        points_queries = points_queries.float().to(samples.tensors.device)
+        points_queries = points_queries.float().to(samples.tensors.device).clone()
         points_queries[:, 0] /= img_h
         points_queries[:, 1] /= img_w
 
@@ -408,7 +409,6 @@ class PET(nn.Module):
         if sparse_active:
             sparse_kwargs = dict(kwargs)
             sparse_kwargs['div'] = split_map_sparse.reshape(bs, sp_h, sp_w)
-            sparse_kwargs['div_mask'] = split_mask_sparse.reshape(bs, sp_h, sp_w)
             sparse_kwargs['dec_win_size'] = list(self.sparse_dec_win_size)
             outputs_sparse = self.quadtree_sparse(samples, features, context_info, **sparse_kwargs)
         else:
@@ -418,7 +418,6 @@ class PET(nn.Module):
         if dense_active:
             dense_kwargs = dict(kwargs)
             dense_kwargs['div'] = split_map_dense.reshape(bs, ds_h, ds_w)
-            dense_kwargs['div_mask'] = split_mask_dense.reshape(bs, ds_h, ds_w)
             dense_kwargs['dec_win_size'] = list(self.dense_dec_win_size)
             outputs_dense = self.quadtree_dense(samples, features, context_info, **dense_kwargs)
         else:

@@ -230,6 +230,8 @@ def merge_checkpoint_args(args, checkpoint):
     runtime_keys = {
         'resume', 'device', 'output_dir', 'seed', 'start_epoch',
         'num_workers', 'world_size', 'dist_url', 'list_backbones', 'syn_bn',
+        # allow overriding schedule/eval settings at resume time
+        'epochs', 'eval_freq', 'data_path',
     }
     for key in runtime_keys:
         setattr(merged, key, getattr(args, key))
@@ -379,6 +381,8 @@ def main(args):
                 'epoch': epoch,
                 'args': args,
                 'best_mae': best_mae,
+                'best_mse': best_mse,
+                'best_epoch': best_epoch,
             }, checkpoint_path)
 
         log_stats = {**{f'train_{k}': v for k, v in train_stats.items()},

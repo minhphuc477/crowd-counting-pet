@@ -109,10 +109,10 @@ class SHA(Dataset):
                 attempts=self.crop_attempts,
                 min_points=self.min_crop_points,
             )
-        else:
-            # For validation/test, also resize to patch_size to match TIMM backbone expectations
-            # Use center crop logic to ensure consistent sizing
-            img, points = center_crop(img, points, patch_size=self.patch_size)
+        # NOTE: validation/test images are kept at full resolution.
+        # PET is fully convolutional and handles arbitrary image sizes at inference.
+        # Resizing test images to a fixed patch_size was destroying crowd density
+        # distributions and caused a ~145 MAE plateau.
 
         # random flip
         if random.random() > 0.5 and self.train and self.flip:
@@ -212,34 +212,7 @@ def random_crop_with_retries(img, points, patch_size=256, attempts=8, min_points
     return best_img, best_points
 
 
-def center_crop(img, points, patch_size=256):
-    """Resize image to patch_size for validation/test without losing points."""
-    # For validation, resize to patch_size without cropping to avoid losing data
-    patch_h = patch_size
-    patch_w = patch_size
-    
-    # Get current image dimensions
-    imgH, imgW = img.shape[-2:]
-    
-    # Calculate scale factors
-    scale_h = patch_h / imgH
-    scale_w = patch_w / imgW
-    
-    # Resize image
-    result_img = F.interpolate(
-        img.unsqueeze(0),
-        (patch_h, patch_w),
-        mode='bilinear',
-        align_corners=False,
-    ).squeeze(0)
-    
-    # Scale all points (no cropping, so all points are preserved)
-    result_points = points.copy()
-    if result_points.shape[0] > 0:
-        result_points[:, 0] *= scale_h
-        result_points[:, 1] *= scale_w
-    
-    return result_img, result_points
+# center_crop removed: validation images are evaluated at full resolution.
 
 
 def build(image_set, args):
@@ -261,6 +234,6 @@ def build(image_set, args):
         )
         return train_set
     elif image_set == 'val':
-        # For validation, we need to ensure images are resized to patch_size to match TIMM backbone expectations
-        val_set = SHA(data_root, train=False, transform=transform, patch_size=args.patch_size, crop_attempts=1, min_crop_points=0)
+        # Evaluate at full resolution — PET is fully convolutional
+        val_set = SHA(data_root, train=False, transform=transform)
         return val_set
