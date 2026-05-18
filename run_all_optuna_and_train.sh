@@ -20,6 +20,11 @@ efficientvit_tiny
 efficientvit_small
 efficientnetv2_tiny
 efficientnetv2_small
+efficientnet_b0
+efficientnet_b1
+resnet18
+resnet50
+resnet101
 mobilenetv4_small
 mobilenetv4_hybrid
 hgnetv2_tiny
@@ -36,8 +41,16 @@ for backbone in $backbones; do
   echo "========================================"
   echo "Starting processing for ${backbone}..."
   echo "========================================"
-  
-  final_train_dir="results/${backbone}/final_train"
+
+  dataset_file="SHA"
+  train_output_rel="results/${backbone}/final_train"
+  final_train_dir="outputs/${dataset_file}/${train_output_rel}"
+  legacy_final_train_dir="${train_output_rel}"
+  if [ ! -d "$final_train_dir" ] && [ -d "$legacy_final_train_dir" ]; then
+    # Backward compatibility in case checkpoints were saved outside outputs/<dataset>/.
+    final_train_dir="$legacy_final_train_dir"
+  fi
+
   eval_results_file="results/${backbone}/eval_results.json"
 
   # ── Phase 1: Check if everything is already done ──
@@ -151,14 +164,14 @@ PY
       --epochs 1500 \
       --patch_size 256 \
       --seed 7 \
-      --output_dir "results/${backbone}/final_train" \
+      --output_dir "${train_output_rel}" \
       ${resume_flag} \
       ${best_args}; then
       echo "✓ Completed training for ${backbone}"
     else
       EXIT_CODE=$?
       echo "✗ Training for ${backbone} failed with exit code ${EXIT_CODE}"
-      echo "  Check results/${backbone}/final_train/ for error details"
+      echo "  Check ${final_train_dir}/ for error details"
       echo "  This backbone will retry on next script run"
       echo
       continue

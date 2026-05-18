@@ -54,6 +54,7 @@ HEAVY_BACKBONE_PREFIXES = (
     'convnextv2_huge',
     'swinv2',
     'maxvit',
+    'resnet',
     'pvt_v2',
     'pvtv2',
 )
@@ -64,8 +65,10 @@ MOBILE_BACKBONE_PREFIXES = (
     'convnextv2_small',
     'fastvit',
     'efficientvit',
+    'efficientnet_',
     'efficientnetv2',
     'tf_efficientnetv2',
+    'tf_efficientnet_',
     'mobilenetv4',
     'hgnet',
     'hgnetv2',
