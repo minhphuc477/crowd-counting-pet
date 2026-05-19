@@ -198,6 +198,12 @@ def main():
     for checkpoint_path in sorted(outputs_dir.rglob('best_checkpoint.pth')):
         relative_parent = checkpoint_path.parent.relative_to(outputs_dir)
         candidate_name = relative_parent.as_posix()
+
+        # Skip checkpoints inside Optuna trial output folders (e.g. opt_YYYYMMDD_...)
+        parts = [p.lower() for p in relative_parent.parts]
+        if any(p.startswith('opt_') for p in parts):
+            # ignore optuna trial outputs
+            continue
         if args.backbone_filter and args.backbone_filter not in candidate_name:
             continue
 
