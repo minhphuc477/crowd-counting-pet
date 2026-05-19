@@ -195,23 +195,21 @@ def main():
         return
 
     checkpoints_to_eval = []
-    for subdir in sorted(outputs_dir.iterdir()):
-        if not subdir.is_dir():
-            continue
-        if args.backbone_filter and args.backbone_filter not in subdir.name:
+    for checkpoint_path in sorted(outputs_dir.rglob('best_checkpoint.pth')):
+        relative_parent = checkpoint_path.parent.relative_to(outputs_dir)
+        candidate_name = relative_parent.as_posix()
+        if args.backbone_filter and args.backbone_filter not in candidate_name:
             continue
 
-        checkpoint_path = subdir / 'best_checkpoint.pth'
-        if checkpoint_path.exists():
-            backbone = get_backbone_from_dirname(subdir.name)
-            if backbone:
-                checkpoints_to_eval.append({
-                    'dir': subdir.name,
-                    'checkpoint': checkpoint_path,
-                    'backbone': backbone,
-                })
-            else:
-                print(f"Warning: Could not infer backbone for {subdir.name}")
+        backbone = get_backbone_from_dirname(candidate_name)
+        if backbone:
+            checkpoints_to_eval.append({
+                'dir': candidate_name,
+                'checkpoint': checkpoint_path,
+                'backbone': backbone,
+            })
+        else:
+            print(f"Warning: Could not infer backbone for {candidate_name}")
 
     if not checkpoints_to_eval:
         print("No checkpoints found to evaluate")
