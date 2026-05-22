@@ -2,10 +2,10 @@
 """
 Batch evaluation script for PET checkpoints.
 
-By default this scans outputs/<dataset_file> and evaluates one final checkpoint
-per completed run directory. The checkpoint preference is:
-
-  best_checkpoint.pth -> final_checkpoint.pth -> checkpoint.pth
+By default this scans outputs/<dataset_file> and evaluates best_checkpoint.pth
+for each completed run directory. Use --include_fallback_checkpoints to also
+consider final_checkpoint.pth or checkpoint.pth when best_checkpoint.pth is
+missing.
 
 Examples:
   python scripts/batch_eval.py --dataset_file SHA --data_path ./data/ShanghaiTech/part_A
@@ -38,8 +38,11 @@ _RESOLVE_TIMM_BACKBONE_NAME = lambda name: name
 _BACKBONE_HELPERS_LOADED = False
 
 
-DEFAULT_CHECKPOINT_NAMES = (
+BEST_CHECKPOINT_NAMES = (
     'best_checkpoint.pth',
+)
+
+FALLBACK_CHECKPOINT_NAMES = (
     'final_checkpoint.pth',
     'checkpoint.pth',
 )
@@ -193,6 +196,39 @@ def parse_eval_metrics(output_text):
     return None
 
 
+def read_checkpoint_metadata(checkpoint_path):
+    """Read lightweight training metadata from a checkpoint, if available."""
+    try:
+        import torch
+
+        checkpoint = torch.load(checkpoint_path, map_location='cpu', weights_only=False)
+    except Exception as exc:
+        return {'checkpoint_metadata_error': str(exc)}
+
+    metadata = {}
+    for source_key, output_key in (
+        ('best_mae', 'train_best_mae'),
+        ('best_mse', 'train_best_mse'),
+        ('best_epoch', 'best_epoch'),
+        ('epoch', 'checkpoint_epoch'),
+    ):
+        value = checkpoint.get(source_key)
+        if value is None:
+            continue
+        try:
+            if hasattr(value, 'item'):
+                value = value.item()
+            if isinstance(value, float):
+                metadata[output_key] = float(value)
+            elif isinstance(value, int):
+                metadata[output_key] = int(value)
+            else:
+                metadata[output_key] = value
+        except Exception:
+            metadata[output_key] = str(value)
+    return metadata
+
+
 def run_eval(item, args, log_path):
     """Run eval.py for a single checkpoint and return parsed metrics."""
     cmd = [
@@ -307,8 +343,13 @@ def parse_args():
     parser.add_argument(
         '--checkpoint_names',
         nargs='+',
-        default=list(DEFAULT_CHECKPOINT_NAMES),
+        default=None,
         help='Checkpoint filenames to consider, in preference order.',
+    )
+    parser.add_argument(
+        '--include_fallback_checkpoints',
+        action='store_true',
+        help='Also evaluate final_checkpoint.pth/checkpoint.pth when best_checkpoint.pth is missing.',
     )
     parser.add_argument('--results_dir', default='', help='Where to write eval logs/results. Defaults under scan root.')
     parser.add_argument('--skip_existing', action='store_true', help='Skip runs with an existing eval_results.json')
@@ -329,6 +370,11 @@ def parse_args():
 
 def main():
     args = parse_args()
+
+    if args.checkpoint_names is None:
+        args.checkpoint_names = list(BEST_CHECKPOINT_NAMES)
+        if args.include_fallback_checkpoints:
+            args.checkpoint_names.extend(FALLBACK_CHECKPOINT_NAMES)
 
     scan_root = Path(args.checkpoint_root) if args.checkpoint_root else Path(args.output_dir) / args.dataset_file
     if not scan_root.exists():
@@ -378,6 +424,8 @@ def main():
                         'mae': float(saved['eval_mae']),
                         'mse': float(saved['eval_mse']) if saved.get('eval_mse') is not None else None,
                         'checkpoint': saved.get('checkpoint', str(item['checkpoint'])),
+                        'train_best_mae': saved.get('train_best_mae'),
+                        'best_epoch': saved.get('best_epoch'),
                     })
             except Exception as exc:
                 print(f"  Warning: could not read existing result: {exc}")
@@ -385,6 +433,7 @@ def main():
 
         print(f"\n[{i}/{len(checkpoints_to_eval)}] Evaluating {item['dir']} ({item['backbone']})")
         print(f"  Checkpoint: {item['checkpoint']}")
+        checkpoint_metadata = read_checkpoint_metadata(item['checkpoint'])
         eval_result = run_eval(item, args, log_path)
 
         metrics = eval_result['metrics'] or {}
@@ -402,6 +451,7 @@ def main():
             'log_path': eval_result['log_path'],
             'evaluated_at': datetime.now().isoformat(timespec='seconds'),
         }
+        result_doc.update(checkpoint_metadata)
         result_path.write_text(json.dumps(result_doc, indent=2) + '\n', encoding='utf-8')
 
         if eval_result['ok']:
@@ -412,6 +462,8 @@ def main():
                 'mae': mae,
                 'mse': mse,
                 'checkpoint': str(item['checkpoint']),
+                'train_best_mae': checkpoint_metadata.get('train_best_mae'),
+                'best_epoch': checkpoint_metadata.get('best_epoch'),
             })
             print(f"  Eval MAE: {mae:.4f} | Eval MSE: {mse:.4f}")
         else:
@@ -423,6 +475,11 @@ def main():
     for backbone in sorted(results.keys()):
         maes = [r['mae'] for r in results[backbone]]
         mses = [r['mse'] for r in results[backbone] if r['mse'] is not None]
+        train_best_maes = [
+            float(r['train_best_mae'])
+            for r in results[backbone]
+            if r.get('train_best_mae') is not None
+        ]
         summary[backbone] = {
             'count': len(maes),
             'mean_mae': float(np.mean(maes)),
@@ -430,6 +487,7 @@ def main():
             'min_mae': float(np.min(maes)),
             'max_mae': float(np.max(maes)),
             'mean_mse': float(np.mean(mses)) if mses else None,
+            'min_train_best_mae': float(np.min(train_best_maes)) if train_best_maes else None,
             'results': results[backbone],
         }
 
@@ -461,9 +519,16 @@ def main():
         print(f"  Mean MAE: {s['mean_mae']:.4f} +/- {s['std_mae']:.4f}")
         print(f"  Mean MSE: {mean_mse}")
         print(f"  MAE range: [{s['min_mae']:.4f}, {s['max_mae']:.4f}]")
+        if s['min_train_best_mae'] is not None:
+            print(f"  Best stored train/eval MAE: {s['min_train_best_mae']:.4f}")
         for row in s['results']:
             mse = 'N/A' if row['mse'] is None else f"{row['mse']:.4f}"
-            print(f"    - {row['dir']}: MAE {row['mae']:.4f}, MSE {mse}")
+            train_best = (
+                'N/A'
+                if row.get('train_best_mae') is None
+                else f"{float(row['train_best_mae']):.4f}"
+            )
+            print(f"    - {row['dir']}: Eval MAE {row['mae']:.4f}, Eval MSE {mse}, Stored best MAE {train_best}")
 
     if failures:
         print(f"\nFailures: {len(failures)}")
