@@ -20,10 +20,12 @@ def get_args_parser():
 
     # model parameters
     # - backbone
-    parser.add_argument('--backbone', default='convnextv2_base', type=str,
+    parser.add_argument('--backbone', default='vgg16_bn', type=str,
                         help="Name of the convolutional backbone to use")
     parser.add_argument('--no_pretrained_backbone', action='store_true',
                         help='initialize the backbone randomly instead of loading timm/ImageNet weights')
+    parser.add_argument('--allow_random_backbone_fallback', action='store_true',
+                        help='allow timm backbones to continue with random init if pretrained weights cannot load')
     parser.add_argument('--position_embedding', default='sine', type=str, choices=('sine', 'learned', 'fourier'),
                         help="Type of positional embedding to use on top of the image features")
     # - transformer
@@ -49,6 +51,7 @@ def get_args_parser():
     parser.add_argument('--point_loss_coef', default=5.0, type=float)    # regression loss coefficient
     parser.add_argument('--eos_coef', default=0.5, type=float,
                         help="Relative classification weight of the no-object class")   # cross-entropy weights
+    parser.add_argument('--pet_loss_variant', default='paper', choices=('paper', 'balanced'))
     parser.add_argument('--negative_loss_coef', default=0.1, type=float)
     parser.add_argument('--non_div_loss_coef', default=0.25, type=float)
     parser.add_argument('--quadtree_loss_coef', default=0.1, type=float)
@@ -64,8 +67,8 @@ def get_args_parser():
     parser.add_argument('--data_path', default="", type=str)
     parser.add_argument('--patch_size', default=256, type=int,
                         help='training crop size for SHA')
-    parser.add_argument('--crop_attempts', default=8, type=int)
-    parser.add_argument('--min_crop_points', default=1, type=int)
+    parser.add_argument('--crop_attempts', default=1, type=int)
+    parser.add_argument('--min_crop_points', default=0, type=int)
 
     # misc parameters
     parser.add_argument('--device', default='cuda',
@@ -136,6 +139,7 @@ def main(args):
         else:
             checkpoint = torch.load(args.resume, map_location='cpu', weights_only=False)
         args = merge_checkpoint_args(args, checkpoint)
+        args.no_pretrained_backbone = True
     args = apply_eval_overrides(args)
     print(args)
 

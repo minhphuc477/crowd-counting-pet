@@ -22,8 +22,8 @@ class SHA(Dataset):
         train=False,
         flip=False,
         patch_size=256,
-        crop_attempts=8,
-        min_crop_points=1,
+        crop_attempts=1,
+        min_crop_points=0,
     ):
         self.root_path = data_root
         
@@ -229,8 +229,8 @@ def build(image_set, args):
             transform=transform,
             flip=True,
             patch_size=args.patch_size,
-            crop_attempts=getattr(args, 'crop_attempts', 8),
-            min_crop_points=getattr(args, 'min_crop_points', 1),
+            crop_attempts=getattr(args, 'crop_attempts', 1),
+            min_crop_points=getattr(args, 'min_crop_points', 0),
         )
         return train_set
     elif image_set == 'val':

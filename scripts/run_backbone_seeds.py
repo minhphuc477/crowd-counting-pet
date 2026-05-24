@@ -24,6 +24,7 @@ import json
 import subprocess
 import sys
 import shlex
+import re
 from pathlib import Path
 from datetime import datetime
 import numpy as np
@@ -105,8 +106,18 @@ def get_args():
     parser.add_argument(
         "--extra_args",
         type=str,
-        default="--epochs 1500 --patch_size 256",
+        default="--epochs 1500 --patch_size 256 --pet_loss_variant paper",
         help="Additional arguments to pass to main.py (as a quoted string)",
+    )
+    parser.add_argument(
+        "--dataset_file",
+        default="SHA",
+        help="Dataset name used under outputs/<dataset_file>/ (default: SHA)",
+    )
+    parser.add_argument(
+        "--data_path",
+        default="",
+        help="Optional dataset path passed to main.py/eval.py",
     )
     parser.add_argument(
         "--output_dir",
@@ -125,6 +136,26 @@ def get_args():
         default=None,
         help="Continue from a specific seed (skip earlier seeds)",
     )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Run training even when best_checkpoint.pth already exists",
+    )
+    parser.add_argument(
+        "--no_resume",
+        action="store_true",
+        help="Do not resume from checkpoint.pth when it exists",
+    )
+    parser.add_argument(
+        "--eval_after_training",
+        action="store_true",
+        help="Run eval.py on best_checkpoint.pth after each completed run",
+    )
+    parser.add_argument(
+        "--check_contract",
+        action="store_true",
+        help="Run scripts/check_backbone_contract.py for each backbone before training",
+    )
     return parser.parse_args()
 
 
@@ -137,26 +168,38 @@ def resolve_backbones(args):
 
 
 def run_training(
-    backbone, seed, extra_args, output_dir, dry_run=False
+    backbone, seed, args
 ):
     """Run training for a single seed."""
     
     # Create output directory for this seed
-    seed_output_dir = Path(output_dir) / backbone / f"seed_{seed}"
+    seed_output_dir = Path(args.output_dir) / backbone / f"seed_{seed}"
     seed_output_dir.mkdir(parents=True, exist_ok=True)
+    actual_output_dir = Path("outputs") / args.dataset_file / seed_output_dir
+    best_checkpoint = actual_output_dir / "best_checkpoint.pth"
+    latest_checkpoint = actual_output_dir / "checkpoint.pth"
+
+    if best_checkpoint.exists() and not args.force:
+        print(f"\nSkipping {backbone} seed {seed}: {best_checkpoint} already exists")
+        return True, seed_output_dir
     
     # Build the command
     cmd = [
         sys.executable,
         "main.py",
         "--backbone", backbone,
+        "--dataset_file", args.dataset_file,
         "--seed", str(seed),
         "--output_dir", str(seed_output_dir),
     ]
+    if args.data_path:
+        cmd.extend(["--data_path", args.data_path])
+    if latest_checkpoint.exists() and not args.no_resume:
+        cmd.extend(["--resume", str(latest_checkpoint)])
     
     # Parse and add extra arguments
-    if extra_args:
-        extra_args_list = shlex.split(extra_args)
+    if args.extra_args:
+        extra_args_list = shlex.split(args.extra_args)
         cmd.extend(extra_args_list)
     
     print(f"\n{'='*80}")
@@ -165,7 +208,7 @@ def run_training(
     print(f"Command: {' '.join(cmd)}")
     print(f"{'='*80}\n")
     
-    if dry_run:
+    if args.dry_run:
         return True, None
     
     try:
@@ -180,7 +223,63 @@ def run_training(
         return False, seed_output_dir
 
 
-def collect_results(backbone, seeds, output_dir):
+def run_eval(backbone, seed, args):
+    seed_output_dir = Path(args.output_dir) / backbone / f"seed_{seed}"
+    actual_output_dir = Path("outputs") / args.dataset_file / seed_output_dir
+    checkpoint = actual_output_dir / "best_checkpoint.pth"
+    if not checkpoint.exists():
+        checkpoint = actual_output_dir / "checkpoint.pth"
+    if not checkpoint.exists():
+        print(f"  Eval skipped for {backbone} seed {seed}: no checkpoint found")
+        return None
+
+    eval_log = actual_output_dir / "eval_log.txt"
+    cmd = [
+        sys.executable,
+        "eval.py",
+        "--backbone", backbone,
+        "--dataset_file", args.dataset_file,
+        "--resume", str(checkpoint),
+    ]
+    if args.data_path:
+        cmd.extend(["--data_path", args.data_path])
+
+    print(f"  Eval command: {' '.join(cmd)}")
+    if args.dry_run:
+        return None
+
+    with eval_log.open("w", encoding="utf-8", errors="replace") as log:
+        result = subprocess.run(
+            cmd,
+            cwd=Path(__file__).parent.parent,
+            stdout=log,
+            stderr=subprocess.STDOUT,
+            check=False,
+            text=True,
+        )
+    if result.returncode != 0:
+        print(f"  Eval failed for {backbone} seed {seed}; see {eval_log}")
+        return None
+
+    text = eval_log.read_text(encoding="utf-8", errors="replace")
+    match = re.search(r"epoch:\s*(\d+).*?mae:\s*([0-9.]+).*?mse:\s*([0-9.]+)", text, re.S)
+    if not match:
+        print(f"  Eval finished but metrics were not parsed from {eval_log}")
+        return None
+    eval_result = {
+        "epoch": int(match.group(1)),
+        "eval_mae": float(match.group(2)),
+        "eval_mse": float(match.group(3)),
+        "checkpoint": str(checkpoint),
+        "eval_log": str(eval_log),
+    }
+    eval_result_path = actual_output_dir / "eval_results.json"
+    eval_result_path.write_text(json.dumps(eval_result, indent=2) + "\n", encoding="utf-8")
+    print(f"  Eval MAE = {eval_result['eval_mae']:.4f}, MSE = {eval_result['eval_mse']:.4f}")
+    return eval_result
+
+
+def collect_results(backbone, seeds, output_dir, dataset_file):
     """Collect MAE metrics from all seed runs."""
     
     results = {}
@@ -188,7 +287,7 @@ def collect_results(backbone, seeds, output_dir):
     
     for seed in seeds:
         seed_output_dir = Path(output_dir) / backbone / f"seed_{seed}"
-        actual_output_dir = Path("outputs") / "SHA" / seed_output_dir
+        actual_output_dir = Path("outputs") / dataset_file / seed_output_dir
         
         # Look for log file with metrics
         stats_file = actual_output_dir / "run_log.txt"
@@ -271,6 +370,22 @@ def main():
     failed_runs = []
 
     for backbone in backbones:
+        if args.check_contract:
+            contract_cmd = [
+                sys.executable,
+                "scripts/check_backbone_contract.py",
+                "--backbone",
+                backbone,
+                "--device",
+                "cpu",
+            ]
+            print(f"Checking PET contract for {backbone}: {' '.join(contract_cmd)}")
+            if not args.dry_run:
+                contract = subprocess.run(contract_cmd, cwd=Path(__file__).parent.parent, check=False)
+                if contract.returncode != 0:
+                    print(f"Skipping {backbone}: PET contract check failed")
+                    continue
+
         successful_seeds = []
         failed_seeds = []
 
@@ -282,14 +397,14 @@ def main():
             success, _ = run_training(
                 backbone,
                 seed,
-                args.extra_args,
-                str(output_dir),
-                dry_run=args.dry_run,
+                args,
             )
 
             if success:
                 successful_seeds.append(seed)
                 successful_runs += 1
+                if args.eval_after_training:
+                    run_eval(backbone, seed, args)
             else:
                 failed_seeds.append(seed)
                 failed_runs.append((backbone, seed))
@@ -298,7 +413,7 @@ def main():
         print(f"Training Complete for {backbone} - Collecting Results")
         print(f"{'='*80}\n")
 
-        results = collect_results(backbone, args.seeds, str(output_dir))
+        results = collect_results(backbone, args.seeds, str(output_dir), args.dataset_file)
         all_results[backbone] = results
 
         if not args.dry_run:

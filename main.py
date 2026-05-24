@@ -115,9 +115,11 @@ def get_args_parser():
     parser.add_argument('--batch_size', default=8, type=int)
     parser.add_argument('--weight_decay', default=1e-4, type=float)
     parser.add_argument('--epochs', default=1500, type=int)
-    parser.add_argument('--lr_scheduler', default='warmup_hold_cosine', type=str,
-                        choices=('warmup_hold_cosine',),
+    parser.add_argument('--lr_scheduler', default='step', type=str,
+                        choices=('step', 'warmup_hold_cosine'),
                         help='learning-rate schedule to use')
+    parser.add_argument('--auto_backbone_recipe', action='store_true',
+                        help='opt into backbone-specific lr/batch/warmup defaults')
     parser.add_argument('--warmup_epochs', default=5, type=int,
                         help='number of warmup epochs')
     parser.add_argument('--hold_epochs', default=-1, type=int,
@@ -129,12 +131,14 @@ def get_args_parser():
 
     # model parameters
     # - backbone
-    parser.add_argument('--backbone', default='convnextv2_base', type=str,
+    parser.add_argument('--backbone', default='vgg16_bn', type=str,
                         help="Name of the convolutional backbone to use")
     parser.add_argument('--list_backbones', action='store_true',
                         help='print supported timm ablation backbones and exit')
     parser.add_argument('--no_pretrained_backbone', action='store_true',
                         help='initialize the backbone randomly instead of loading timm/ImageNet weights')
+    parser.add_argument('--allow_random_backbone_fallback', action='store_true',
+                        help='allow timm backbones to continue with random init if pretrained weights cannot load')
     parser.add_argument('--position_embedding', default='sine', type=str, choices=('sine', 'learned', 'fourier'),
                         help="Type of positional embedding to use on top of the image features")
     # - transformer
@@ -160,6 +164,8 @@ def get_args_parser():
     parser.add_argument('--point_loss_coef', default=5.0, type=float)
     parser.add_argument('--eos_coef', default=0.5, type=float,
                         help="Relative classification weight of the no-object class")
+    parser.add_argument('--pet_loss_variant', default='paper', choices=('paper', 'balanced'),
+                        help='paper matches official PET; balanced enables experimental zero/negative-region losses')
     parser.add_argument('--negative_loss_coef', default=0.1, type=float,
                         help='extra scale for all-negative classification and split-map regions')
     parser.add_argument('--non_div_loss_coef', default=0.25, type=float,
@@ -184,9 +190,9 @@ def get_args_parser():
     parser.add_argument('--data_path', default="", type=str)
     parser.add_argument('--patch_size', default=256, type=int,
                         help='training crop size for SHA')
-    parser.add_argument('--crop_attempts', default=8, type=int,
+    parser.add_argument('--crop_attempts', default=1, type=int,
                         help='number of random crop candidates tried per positive training image')
-    parser.add_argument('--min_crop_points', default=1, type=int,
+    parser.add_argument('--min_crop_points', default=0, type=int,
                         help='minimum people desired in a positive training crop')
 
     # misc parameters
@@ -257,8 +263,10 @@ def main(args):
         else:
             checkpoint = torch.load(args.resume, map_location='cpu', weights_only=False)
         args = merge_checkpoint_args(args, checkpoint)
+        args.no_pretrained_backbone = True
 
-    apply_backbone_recipe(args)
+    if getattr(args, 'auto_backbone_recipe', False):
+        apply_backbone_recipe(args)
     print(args)
     device = torch.device(args.device)
 
@@ -290,27 +298,30 @@ def main(args):
     ]
     optimizer = torch.optim.AdamW(param_dicts, lr=args.lr,
                                   weight_decay=args.weight_decay)
-    warmup_epochs = min(max(0, int(args.warmup_epochs)), max(args.epochs - 1, 0))
-    hold_epochs = int(args.hold_epochs)
-    if hold_epochs < 0:
-        hold_epochs = max(0, args.epochs // 15)
-    hold_epochs = min(max(0, hold_epochs), max(args.epochs - warmup_epochs - 1, 0))
-    decay_epochs = max(1, args.epochs - warmup_epochs - hold_epochs)
-    min_lr_ratio = float(args.min_lr) / max(float(args.lr), 1e-12)
+    if args.lr_scheduler == 'step':
+        lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, args.epochs)
+    else:
+        warmup_epochs = min(max(0, int(args.warmup_epochs)), max(args.epochs - 1, 0))
+        hold_epochs = int(args.hold_epochs)
+        if hold_epochs < 0:
+            hold_epochs = max(0, args.epochs // 15)
+        hold_epochs = min(max(0, hold_epochs), max(args.epochs - warmup_epochs - 1, 0))
+        decay_epochs = max(1, args.epochs - warmup_epochs - hold_epochs)
+        min_lr_ratio = float(args.min_lr) / max(float(args.lr), 1e-12)
 
-    def warmup_hold_cosine_factor(epoch_idx):
-        if args.epochs <= 1:
-            return 1.0
-        if warmup_epochs > 0 and epoch_idx < warmup_epochs:
-            warmup_progress = float(epoch_idx + 1) / float(warmup_epochs)
-            return max(1e-3, warmup_progress)
-        if epoch_idx < warmup_epochs + hold_epochs:
-            return 1.0
-        decay_progress = min(max(epoch_idx - warmup_epochs - hold_epochs, 0), decay_epochs) / float(decay_epochs)
-        cosine_factor = 0.5 * (1.0 + math.cos(math.pi * decay_progress))
-        return max(min_lr_ratio, cosine_factor)
+        def warmup_hold_cosine_factor(epoch_idx):
+            if args.epochs <= 1:
+                return 1.0
+            if warmup_epochs > 0 and epoch_idx < warmup_epochs:
+                warmup_progress = float(epoch_idx + 1) / float(warmup_epochs)
+                return max(1e-3, warmup_progress)
+            if epoch_idx < warmup_epochs + hold_epochs:
+                return 1.0
+            decay_progress = min(max(epoch_idx - warmup_epochs - hold_epochs, 0), decay_epochs) / float(decay_epochs)
+            cosine_factor = 0.5 * (1.0 + math.cos(math.pi * decay_progress))
+            return max(min_lr_ratio, cosine_factor)
 
-    lr_scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=warmup_hold_cosine_factor)
+        lr_scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=warmup_hold_cosine_factor)
 
     # build dataset
     dataset_train = build_dataset(image_set='train', args=args)

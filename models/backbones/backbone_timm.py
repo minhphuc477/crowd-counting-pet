@@ -201,7 +201,7 @@ class TimmBackboneBase(nn.Module):
 
 
 class TimmBackbone(TimmBackboneBase):
-    def __init__(self, model_name='convnextv2_base', pretrained=True):
+    def __init__(self, model_name='convnextv2_base', pretrained=True, allow_pretrained_fallback=False):
         timm = importlib.import_module('timm')
         actual_model_name = resolve_timm_backbone_name(model_name)
         def _create(pretrained_flag):
@@ -227,6 +227,12 @@ class TimmBackbone(TimmBackboneBase):
         except (RuntimeError, OSError) as exc:
             if not pretrained:
                 raise
+            if not allow_pretrained_fallback:
+                raise RuntimeError(
+                    f'Could not load pretrained weights for {actual_model_name}. '
+                    'Install/cache the timm pretrained weights, pass --no_pretrained_backbone, '
+                    'or pass --allow_random_backbone_fallback if random initialization is intentional.'
+                ) from exc
             warnings.warn(
                 f'Could not load pretrained weights for {actual_model_name}: {exc}. Falling back to random init.',
                 RuntimeWarning,
@@ -257,7 +263,11 @@ def build_backbone_timm(args):
     if not is_timm_backbone(name):
         raise ValueError(f'Unsupported timm backbone: {name}')
     position_embedding = build_position_encoding(args)
-    backbone = TimmBackbone(model_name=name, pretrained=not getattr(args, 'no_pretrained_backbone', False))
+    backbone = TimmBackbone(
+        model_name=name,
+        pretrained=not getattr(args, 'no_pretrained_backbone', False),
+        allow_pretrained_fallback=getattr(args, 'allow_random_backbone_fallback', False),
+    )
     model = Joiner(backbone, position_embedding)
     model.num_channels = backbone.num_channels
     return model

@@ -118,6 +118,7 @@ try:
         sys.exit(1)
     
     args = [
+        "--lr_scheduler", "warmup_hold_cosine",
         "--lr", str(p["lr"]),
         "--lr_backbone", str(p["lr_backbone"]),
         "--batch_size", str(p["batch_size"]),

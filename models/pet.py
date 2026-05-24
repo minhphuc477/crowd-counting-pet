@@ -223,6 +223,7 @@ class PET(nn.Module):
         self.split_threshold = float(getattr(args, 'split_threshold', -1.0))
         self.split_threshold_quantile = float(getattr(args, 'split_threshold_quantile', 0.55))
         self.score_threshold = float(getattr(args, 'score_threshold', 0.5))
+        self.pet_loss_variant = getattr(args, 'pet_loss_variant', 'paper')
         self.sparse_dec_win_size = (16, 8)
         self.dense_dec_win_size = (8, 4)
 
@@ -283,6 +284,14 @@ class PET(nn.Module):
         else:
             loss_split_ds = outputs['split_map_raw'].sum() * 0.0
 
+        loss_split_prior = loss_split_sp + loss_split_ds
+        if self.pet_loss_variant == 'paper':
+            weight_split = self.quadtree_loss_coef if epoch >= warmup_ep else 0.0
+            loss_dict['loss_split'] = loss_split_prior
+            weight_dict['loss_split'] = weight_split
+            losses += loss_split_prior * weight_split
+            return {'loss_dict':loss_dict, 'weight_dict':weight_dict, 'losses':losses}
+
         split_target = self.build_split_targets(targets, outputs['split_map_raw'], samples.tensors.shape[-2:])
         loss_split_quality = self.balanced_binary_loss(
             outputs['split_map_raw'],
@@ -290,7 +299,6 @@ class PET(nn.Module):
             pos_weight=self.split_pos_weight,
             neg_weight=self.negative_loss_coef,
         )
-        loss_split_prior = loss_split_sp + loss_split_ds
         weight_split_quality = self.quadtree_loss_coef if epoch >= warmup_ep else 0.0
         weight_split_prior = self.quadtree_prior_coef if epoch >= warmup_ep else 0.0
         loss_dict['loss_split_quality'] = loss_split_quality
@@ -497,7 +505,7 @@ class SetCriterion(nn.Module):
         2) supervise each pair of matched ground-truth / prediction and split map
     """
     def __init__(self, num_classes, matcher, weight_dict, eos_coef, losses,
-                 negative_loss_coef=0.1, non_div_loss_coef=0.25):
+                 negative_loss_coef=0.1, non_div_loss_coef=0.25, pet_loss_variant='paper'):
         """
         Parameters:
             num_classes: one-class in crowd counting
@@ -517,6 +525,8 @@ class SetCriterion(nn.Module):
         self.register_buffer('empty_weight', empty_weight)
         self.negative_loss_coef = negative_loss_coef
         self.non_div_loss_coef = non_div_loss_coef
+        self.pet_loss_variant = pet_loss_variant
+        self.div_thrs_dict = {8: 0.0, 4: 0.5}
 
     def weighted_mean_loss(self, raw_loss, weights=None, eps=1e-6):
         if weights is None:
@@ -536,13 +546,52 @@ class SetCriterion(nn.Module):
         src_logits = outputs['pred_logits']
         idx = self._get_src_permutation_idx(indices)
         idx = (idx[0].to(src_logits.device), idx[1].to(src_logits.device))
-        target_classes_o = torch.cat([
-            t["labels"][J.to(t["labels"].device)] for t, (_, J) in zip(targets, indices)
-        ]).to(src_logits.device)
+        if idx[0].numel() > 0:
+            target_classes_o = torch.cat([
+                t["labels"][J.to(t["labels"].device)] for t, (_, J) in zip(targets, indices)
+            ]).to(src_logits.device)
+        else:
+            target_classes_o = torch.empty(0, dtype=torch.int64, device=src_logits.device)
         target_classes = torch.zeros(src_logits.shape[:2], dtype=torch.int64, device=src_logits.device)
         target_classes[idx] = target_classes_o
 
         # compute classification loss
+        if self.pet_loss_variant == 'paper':
+            if 'div' in kwargs:
+                den = torch.stack([target['density'].reshape(()) for target in targets]).to(src_logits.device)
+                den_sort = torch.sort(den)[1]
+                ds_idx = den_sort[:len(den_sort)//2]
+                sp_idx = den_sort[len(den_sort)//2:]
+                eps = 1e-5
+
+                weights = target_classes.clone().float()
+                weights[weights == 0] = self.empty_weight[0]
+                weights[weights == 1] = self.empty_weight[1]
+                raw_ce_loss = F.cross_entropy(
+                    src_logits.transpose(1, 2),
+                    target_classes,
+                    ignore_index=-1,
+                    reduction='none',
+                )
+
+                split_map = kwargs['div'].to(src_logits.device)
+                div_thrs = self.div_thrs_dict[outputs['pq_stride']]
+                div_mask = split_map > div_thrs
+
+                loss_ce_sp = (raw_ce_loss * weights * div_mask)[sp_idx].sum() / ((weights * div_mask)[sp_idx].sum() + eps)
+                loss_ce_ds = (raw_ce_loss * weights * div_mask)[ds_idx].sum() / ((weights * div_mask)[ds_idx].sum() + eps)
+                non_div_mask = split_map <= div_thrs
+                loss_ce_nondiv = (raw_ce_loss * weights * non_div_mask).sum() / ((weights * non_div_mask).sum() + eps)
+                loss_ce = loss_ce_sp + loss_ce_ds + loss_ce_nondiv
+            else:
+                loss_ce = F.cross_entropy(
+                    src_logits.transpose(1, 2),
+                    target_classes,
+                    self.empty_weight,
+                    ignore_index=-1,
+                )
+            return {'loss_ce': loss_ce}
+
         raw_ce_loss = F.cross_entropy(
             src_logits.transpose(1, 2),
             target_classes,
@@ -570,9 +619,12 @@ class SetCriterion(nn.Module):
         idx = self._get_src_permutation_idx(indices)
         idx = (idx[0].to(outputs['pred_points'].device), idx[1].to(outputs['pred_points'].device))
         src_points = outputs['pred_points'][idx]
-        target_points = torch.cat([
-            t['points'][i.to(t['points'].device)] for t, (_, i) in zip(targets, indices)
-        ], dim=0).to(outputs['pred_points'].device)
+        if idx[0].numel() > 0:
+            target_points = torch.cat([
+                t['points'][i.to(t['points'].device)] for t, (_, i) in zip(targets, indices)
+            ], dim=0).to(outputs['pred_points'].device)
+        else:
+            target_points = torch.empty((0, 2), dtype=outputs['pred_points'].dtype, device=outputs['pred_points'].device)
 
         # compute regression loss
         losses = {}
@@ -581,7 +633,39 @@ class SetCriterion(nn.Module):
         if target_points.numel() > 0:
             target_points[:, 0] /= img_h
             target_points[:, 1] /= img_w
-        loss_points_raw = F.smooth_l1_loss(src_points, target_points, reduction='none').sum(dim=-1)
+        loss_points_raw = F.smooth_l1_loss(src_points, target_points, reduction='none')
+
+        if self.pet_loss_variant == 'paper':
+            if loss_points_raw.numel() == 0:
+                losses['loss_points'] = outputs['pred_points'].sum() * 0.0
+                return losses
+
+            if 'div' in kwargs:
+                den = torch.stack([target['density'].reshape(()) for target in targets]).to(outputs['pred_points'].device)
+                den_sort = torch.sort(den)[1]
+                img_ds_idx = den_sort[:len(den_sort)//2]
+                img_sp_idx = den_sort[len(den_sort)//2:]
+                ds_parts = [torch.where(idx[0] == bs_id)[0] for bs_id in img_ds_idx]
+                sp_parts = [torch.where(idx[0] == bs_id)[0] for bs_id in img_sp_idx]
+                pt_ds_idx = torch.cat(ds_parts) if ds_parts else torch.empty(0, dtype=torch.int64, device=idx[0].device)
+                pt_sp_idx = torch.cat(sp_parts) if sp_parts else torch.empty(0, dtype=torch.int64, device=idx[0].device)
+
+                eps = 1e-5
+                split_map = kwargs['div'].to(outputs['pred_points'].device)
+                div_thrs = self.div_thrs_dict[outputs['pq_stride']]
+                div_mask = split_map > div_thrs
+                loss_points_div = loss_points_raw * div_mask[idx].unsqueeze(-1)
+                loss_points_div_sp = loss_points_div[pt_sp_idx].sum() / (len(pt_sp_idx) + eps)
+                loss_points_div_ds = loss_points_div[pt_ds_idx].sum() / (len(pt_ds_idx) + eps)
+
+                non_div_mask = split_map <= div_thrs
+                loss_points_nondiv = (loss_points_raw * non_div_mask[idx].unsqueeze(-1)).sum() / (non_div_mask[idx].sum() + eps)
+                losses['loss_points'] = loss_points_div_sp + loss_points_div_ds + loss_points_nondiv
+            else:
+                losses['loss_points'] = loss_points_raw.sum() / num_points
+            return losses
+
+        loss_points_raw = loss_points_raw.sum(dim=-1)
 
         if 'div' in kwargs:
             eps = 1e-5
@@ -680,6 +764,7 @@ def build_pet(args):
     criterion = SetCriterion(num_classes, matcher=matcher, weight_dict=weight_dict,
                              eos_coef=args.eos_coef, losses=losses,
                              negative_loss_coef=getattr(args, 'negative_loss_coef', 0.1),
-                             non_div_loss_coef=getattr(args, 'non_div_loss_coef', 0.25))
+                             non_div_loss_coef=getattr(args, 'non_div_loss_coef', 0.25),
+                             pet_loss_variant=getattr(args, 'pet_loss_variant', 'paper'))
     criterion.to(device)
     return model, criterion

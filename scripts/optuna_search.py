@@ -28,7 +28,7 @@ def parse_args():
     parser.add_argument('--trials', type=int, default=20)
     parser.add_argument('--seeds', nargs='+', type=int, default=[42, 7, 13])
     parser.add_argument('--seed_aggregate', choices=('mean', 'median'), default='mean')
-    parser.add_argument('--extra_args', type=str, default='--epochs 150 --patch_size 256')
+    parser.add_argument('--extra_args', type=str, default='--epochs 150 --patch_size 256 --lr_scheduler warmup_hold_cosine')
     parser.add_argument('--output_dir', type=str, default='results')
     parser.add_argument('--best_params_file', type=str, default=None)
     return parser.parse_args()

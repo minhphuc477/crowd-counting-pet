@@ -1,222 +1,122 @@
-# Multi-Seed Training Scripts for PET
+# PET Experiment Scripts
 
-This directory contains utilities for running PET training with multiple random seeds and evaluating ensemble results.
+This folder contains the maintained scripts for training, evaluating, and checking PET backbones.
 
-## Quick Start
+## Maintained Scripts
 
-### Single Multi-Seed Training Run
+- `check_backbone_contract.py`: verifies that a backbone produces PET-compatible 4x/8x feature maps and can run one synthetic forward pass.
+- `run_backbone_seeds.py`: trains one or more backbones across seeds, with resume/skip support and optional eval after each run.
+- `batch_eval.py`: evaluates existing `best_checkpoint.pth` files and writes per-run logs plus an aggregate summary.
+- `find_best_checkpoint.py`: scans checkpoints and logs for stored MAE/MSE metadata.
+- `optuna_search.py`: runs Optuna for one backbone and writes `optuna_best.json`.
+- `ensemble_evaluate.py`: evaluates a set of seed checkpoints for one backbone.
 
-Train `convnextv2_base` backbone with 5 different seeds:
+## Paper Baseline
+
+The default code path is paper-compatible PET:
+
+```bash
+python main.py \
+  --backbone vgg16_bn \
+  --dataset_file SHA \
+  --data_path ./data/ShanghaiTech/part_A \
+  --output_dir paper_vgg16_bn \
+  --epochs 1500 \
+  --eval_freq 5 \
+  --lr_scheduler step \
+  --pet_loss_variant paper
+```
+
+## Backbone Contract Check
+
+Run this before training a new timm backbone:
+
+```bash
+python scripts/check_backbone_contract.py --backbone convnextv2_base --device cpu
+```
+
+Check every supported backbone:
+
+```bash
+python scripts/check_backbone_contract.py --all --device cpu
+```
+
+## Batch Training
+
+Train several backbones with one seed:
 
 ```bash
 python scripts/run_backbone_seeds.py \
-    --backbone convnextv2_base \
-    --seeds 42 7 13 99 1234 \
-    --extra_args "--epochs 1500 --patch_size 256 --lr_scheduler warmup_hold_cosine"
+  --backbones convnextv2_base convnext_base fastvit_tiny efficientvit_tiny \
+  --seeds 7 \
+  --data_path ./data/ShanghaiTech/part_A \
+  --extra_args "--epochs 1500 --patch_size 256 --lr_scheduler warmup_hold_cosine --pet_loss_variant paper" \
+  --check_contract \
+  --eval_after_training
 ```
 
-For ConvNeXtV2, the current training code now applies a stronger default recipe than the original VGG path: `lr=5e-5`, `lr_backbone=5e-6`, `batch_size=4`, and `warmup_epochs=10` when those values are left at their defaults.
-
-The same idea is now implemented as a backbone recipe table in `main.py`, so heavier backbones and latency-focused backbones get separate conservative defaults.
-
-### Backbone Ablation Presets
+Use a preset:
 
 ```bash
-# Dense crowd accuracy candidates
 python scripts/run_backbone_seeds.py \
-    --preset crowd_dense \
-    --seeds 42 7 \
-    --extra_args "--dataset_file SHA --data_path ./data/ShanghaiTech/part_A --epochs 300 --patch_size 256"
-
-# Latency candidates
-python scripts/run_backbone_seeds.py \
-    --preset latency \
-    --seeds 42 7 \
-    --extra_args "--dataset_file SHA --data_path ./data/ShanghaiTech/part_A --epochs 300 --patch_size 256"
-
-# Explicit custom set
-python scripts/run_backbone_seeds.py \
-    --backbones convnextv2_base fastvit_tiny efficientvit_tiny repvit_tiny \
-    --seeds 42 \
-    --extra_args "--dataset_file SHA --data_path ./data/ShanghaiTech/part_A --epochs 300 --patch_size 256"
+  --preset crowd_dense \
+  --seeds 7 \
+  --data_path ./data/ShanghaiTech/part_A \
+  --extra_args "--epochs 1500 --patch_size 256 --lr_scheduler warmup_hold_cosine --pet_loss_variant paper" \
+  --check_contract \
+  --eval_after_training
 ```
 
-Use `python main.py --list_backbones` to print supported timm aliases.
+Useful flags:
 
-### Key Arguments
+- `--force`: retrain even if `best_checkpoint.pth` already exists.
+- `--no_resume`: ignore an existing `checkpoint.pth`.
+- `--dry_run`: print commands without running them.
+- `--eval_after_training`: run `eval.py` after each seed.
+- `--check_contract`: validate each backbone before training.
 
-- `--backbone`: Model backbone to train (default: `convnextv2_base`)
-- `--backbones`: Multiple backbone names for one ablation run
-- `--preset`: Named ablation set: `crowd_dense`, `latency`, or `full`
-- `--seeds`: List of random seeds (default: `42 7 13 99 1234`)
-- `--extra_args`: Additional arguments passed to `main.py` as a single quoted string
-- `--output_dir`: Base output directory (default: `results`)
-- `--dry_run`: Print commands without executing them
-- `--continue_from_seed N`: Resume from seed N (skip earlier seeds)
+## Batch Evaluation
 
-### Output Structure
-
-Results are organized as:
-```
-results/
-  {backbone}/
-    seed_{seed}/
-      checkpoints/
-      stats.json
-      logs.txt
-    experiment_log.json
-```
-
-## Scripts
-
-### 1. `run_backbone_seeds.py`
-
-Orchestrates multi-seed training experiments.
-
-**Features:**
-- Runs training sequentially for each seed
-- Saves results per seed in organized directories
-- Collects and aggregates MAE metrics across seeds
-- Generates experiment log with summary statistics
-- Supports resuming from a specific seed
-
-**Usage Examples:**
+Evaluate all completed runs under `outputs/SHA`:
 
 ```bash
-# Basic: Train with default 5 seeds
-python scripts/run_backbone_seeds.py --backbone convnextv2_base
-
-# Advanced: Custom seeds and settings
-python scripts/run_backbone_seeds.py \
-    --backbone convnextv2_base \
-    --seeds 42 7 13 99 1234 \
-    --extra_args "--epochs 1500 --patch_size 256" \
-    --output_dir /path/to/results
-
-# Dry run: Preview commands without executing
-python scripts/run_backbone_seeds.py \
-    --backbone convnextv2_base \
-    --dry_run
-
-# Resume: Continue from seed 13
-python scripts/run_backbone_seeds.py \
-    --backbone convnextv2_base \
-    --continue_from_seed 13
+python scripts/batch_eval.py \
+  --dataset_file SHA \
+  --data_path ./data/ShanghaiTech/part_A \
+  --verbose
 ```
 
-**Output:**
-- Individual seed checkpoints and logs
-- `experiment_log.json` with aggregate MAE statistics (mean, std, min, max)
-
-### 2. `ensemble_evaluate.py`
-
-Loads trained models from multiple seeds and evaluates them on a validation set.
-
-**Features:**
-- Loads checkpoints from all seeds
-- Evaluates each model independently
-- Computes aggregate statistics
-- Saves results to `ensemble_results.json`
-
-**Usage:**
+Point to another checkpoint root:
 
 ```bash
-# Evaluate with default seeds
-python scripts/ensemble_evaluate.py \
-    --backbone convnextv2_base
-
-# Custom dataset and settings
-python scripts/ensemble_evaluate.py \
-    --backbone convnextv2_base \
-    --seeds 42 7 13 99 1234 \
-    --dataset_file SHA \
-    --batch_size 8 \
-    --patch_size 256
+python scripts/batch_eval.py \
+  --checkpoint_root /path/to/outputs/SHA \
+  --dataset_file SHA \
+  --data_path ./data/ShanghaiTech/part_A \
+  --verbose
 ```
 
-**Output:**
-- Per-seed MAE values
-- Aggregate statistics (mean ± std, min, max, median)
-- Results saved to `results/{backbone}/ensemble_results.json`
+Preview only:
 
-## Typical Workflow
-
-1. **Run multi-seed training:**
-   ```bash
-   python scripts/run_backbone_seeds.py \
-       --backbone convnextv2_base \
-       --seeds 42 7 13 99 1234 \
-       --extra_args "--epochs 1500 --patch_size 256 --lr_scheduler warmup_hold_cosine"
-   ```
-
-2. **Check intermediate results:**
-   ```bash
-   cat results/convnextv2_base/experiment_log.json | jq .metrics
-   ```
-
-3. **Evaluate ensemble on validation set:**
-   ```bash
-   python scripts/ensemble_evaluate.py --backbone convnextv2_base
-   ```
-
-4. **View results:**
-   ```bash
-   cat results/convnextv2_base/ensemble_results.json | jq .
-   ```
-
-## Expected Output
-
-After running a multi-seed training experiment, you should see:
-
-```
-================================================================================
-Multi-seed Training Experiment: convnextv2_base_20260430_143022
-Backbone: convnextv2_base
-Seeds: [42, 7, 13, 99, 1234]
-Extra arguments: --epochs 1500 --patch_size 256 --lr_scheduler warmup_hold_cosine
-================================================================================
-
-================================================================================
-Training convnextv2_base with seed 42
-Output directory: results/convnextv2_base/seed_42
-Command: python main.py --backbone convnextv2_base --seed 42 ...
-================================================================================
-
-[Training proceeds...]
-
-================================================================================
-Final Summary
-================================================================================
-Successful runs: 5/5
-Output directory: results/convnextv2_base
-================================================================================
-
-Summary for convnextv2_base:
-  Mean MAE:   42.15 ± 1.32
-  Min MAE:    40.89
-  Max MAE:    43.52
-  Seeds with results: [42, 7, 13, 99, 1234]
+```bash
+python scripts/batch_eval.py --dataset_file SHA --dry_run
 ```
 
-## Notes
+## Find Stored Best Checkpoints
 
-- The `--seed` argument is already defined in `main.py`, so multi-seed scripts will automatically use different seeds
-- Output directories are created automatically per seed
-- Training logs and checkpoints are saved in each seed directory
-- Experiment logs are aggregated in the backbone directory for easy comparison across seeds
+```bash
+python scripts/find_best_checkpoint.py \
+  --root outputs \
+  --backbone_filter convnextv2_base \
+  --top_k 20
+```
 
-## Troubleshooting
+Search logs and JSON for a specific value:
 
-**Issue: "Checkpoint not found"**
-- Ensure training completed successfully for that seed
-- Check `results/{backbone}/seed_{seed}/checkpoint.pth` exists
-
-**Issue: CUDA/device errors**
-- Verify `--device cuda` is set and GPU is available
-- Check memory requirements for batch size
-- Reduce batch size if out of memory
-
-**Issue: Training diverges for some seeds**
-- Review learning rate settings in `--extra_args`
-- Check if warmup_epochs is appropriate for learning rate scheduler
-- Verify batch size and loss scaling
+```bash
+python scripts/find_best_checkpoint.py \
+  --root . \
+  --target_mae 49.6 \
+  --tolerance 1.0 \
+  --search_logs
+```
