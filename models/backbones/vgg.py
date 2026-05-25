@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import torch
 import torch.nn as nn
 
@@ -23,6 +25,23 @@ model_urls = {
 model_paths = {
     'vgg16_bn': './pretrained/vgg16_bn-6c64b313.pth',
 }
+
+
+def load_pretrained_state_dict(arch, progress=True):
+    model_path = Path(model_paths.get(arch, f'./pretrained/{arch}.pth'))
+    if model_path.exists():
+        return torch.load(model_path, map_location='cpu', weights_only=False)
+
+    model_path.parent.mkdir(parents=True, exist_ok=True)
+    if arch not in model_urls:
+        raise ValueError(f'No pretrained URL configured for {arch}')
+    return torch.hub.load_state_dict_from_url(
+        model_urls[arch],
+        model_dir=str(model_path.parent),
+        map_location='cpu',
+        progress=progress,
+        check_hash=True,
+    )
 
 
 class VGG(nn.Module):
@@ -96,7 +115,7 @@ def _vgg(arch, cfg, batch_norm, pretrained, progress, sync=False, **kwargs):
         kwargs['init_weights'] = False
     model = VGG(make_layers(cfgs[cfg], batch_norm=batch_norm, sync=sync), **kwargs)
     if pretrained:
-        state_dict = torch.load(model_paths[arch], weights_only=False)
+        state_dict = load_pretrained_state_dict(arch, progress=progress)
         model.load_state_dict(state_dict)
     return model
 
