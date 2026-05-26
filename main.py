@@ -151,6 +151,8 @@ def get_args_parser():
                         help='initialize the backbone randomly instead of loading timm/ImageNet weights')
     parser.add_argument('--allow_random_backbone_fallback', action='store_true',
                         help='allow timm backbones to continue with random init if pretrained weights cannot load')
+    parser.add_argument('--timm_adapter', default='direct', choices=('direct', 'fpn'),
+                        help='adapter used to map timm features into PET 4x/8x features')
     parser.add_argument('--position_embedding', default='sine', type=str, choices=('sine', 'learned', 'fourier'),
                         help="Type of positional embedding to use on top of the image features")
     # - transformer
@@ -273,6 +275,7 @@ def build_optimizer_param_groups(model_without_ddp, args):
     timm_feature_prefix = 'backbone.backbone.backbone.'
     adapter_prefixes = (
         'backbone.backbone.fpn.',  # timm Joiner -> TimmBackbone -> BackboneFPN
+        'backbone.backbone.direct_adapter.',  # timm Joiner -> TimmBackbone -> DirectFeatureAdapter
         'backbone.0.fpn.',         # VGG Joiner -> Backbone_VGG -> FeatsFusion
     )
     adapter_lr = float(getattr(args, 'lr_backbone_adapter', -1.0))

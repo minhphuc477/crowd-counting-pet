@@ -23,10 +23,11 @@ from models.backbones import get_supported_timm_backbones
 from util.misc import nested_tensor_from_tensor_list
 
 
-def make_args(backbone, device):
+def make_args(backbone, device, timm_adapter):
     return SimpleNamespace(
         device=device,
         backbone=backbone,
+        timm_adapter=timm_adapter,
         no_pretrained_backbone=True,
         position_embedding='sine',
         dec_layers=2,
@@ -52,8 +53,8 @@ def make_args(backbone, device):
     )
 
 
-def check_backbone(backbone, image_size, device):
-    args = make_args(backbone, device)
+def check_backbone(backbone, image_size, device, timm_adapter):
+    args = make_args(backbone, device, timm_adapter)
     model, _ = build_model(args)
     model.to(device).eval()
 
@@ -76,6 +77,7 @@ def check_backbone(backbone, image_size, device):
 def parse_args():
     parser = argparse.ArgumentParser(description='Validate PET backbone compatibility')
     parser.add_argument('--backbone', default='convnextv2_base')
+    parser.add_argument('--timm_adapter', default='direct', choices=('direct', 'fpn'))
     parser.add_argument('--all', action='store_true', help='Check vgg16_bn and every supported timm backbone')
     parser.add_argument('--height', type=int, default=256)
     parser.add_argument('--width', type=int, default=256)
@@ -89,7 +91,7 @@ def main():
     failures = []
     for backbone in backbones:
         try:
-            check_backbone(backbone, (args.height, args.width), args.device)
+            check_backbone(backbone, (args.height, args.width), args.device, args.timm_adapter)
         except Exception as exc:
             failures.append((backbone, exc))
             print(f'{backbone}: FAIL - {exc}')

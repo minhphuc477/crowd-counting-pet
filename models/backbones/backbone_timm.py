@@ -141,12 +141,26 @@ class BackboneFPN(nn.Module):
         ]
 
 
+class DirectFeatureAdapter(nn.Module):
+    """Project timm's native 4x/8x features into PET's 256-channel contract."""
+    def __init__(self, stage_channels, reduction_to_index, out_size=256):
+        super().__init__()
+        self.index_4x = reduction_to_index[4]
+        self.index_8x = reduction_to_index[8]
+        self.proj_4x = nn.Conv2d(stage_channels[self.index_4x], out_size, kernel_size=1)
+        self.proj_8x = nn.Conv2d(stage_channels[self.index_8x], out_size, kernel_size=1)
+
+    def forward(self, inputs):
+        return self.proj_4x(inputs[self.index_4x]), self.proj_8x(inputs[self.index_8x])
+
+
 class TimmBackboneBase(nn.Module):
-    def __init__(self, backbone: nn.Module, num_channels: int, model_name: str):
+    def __init__(self, backbone: nn.Module, num_channels: int, model_name: str, adapter: str = 'fpn'):
         super().__init__()
         self.backbone = backbone
         self.num_channels = num_channels
         self.model_name = model_name
+        self.adapter = adapter
 
         self.feature_info = backbone.feature_info.get_dicts()
         self.stage_channels = [info['num_chs'] for info in self.feature_info]
@@ -166,7 +180,18 @@ class TimmBackboneBase(nn.Module):
                 f'Got reductions {self.stage_reductions}; missing {missing_reductions}.'
             )
 
-        self.fpn = BackboneFPN(self.stage_channels, hidden_size=num_channels, out_size=num_channels, out_kernel=3)
+        if adapter == 'fpn':
+            self.fpn = BackboneFPN(self.stage_channels, hidden_size=num_channels, out_size=num_channels, out_kernel=3)
+            self.direct_adapter = None
+        elif adapter == 'direct':
+            self.fpn = None
+            self.direct_adapter = DirectFeatureAdapter(
+                self.stage_channels,
+                self.output_reduction_to_index,
+                out_size=num_channels,
+            )
+        else:
+            raise ValueError(f'Unsupported timm adapter: {adapter}. Use "direct" or "fpn".')
 
     @staticmethod
     def _to_nchw(feature: torch.Tensor, expected_channels: int) -> torch.Tensor:
@@ -184,24 +209,26 @@ class TimmBackboneBase(nn.Module):
     def forward(self, tensor_list: NestedTensor):
         feats = self.backbone(tensor_list.tensors)
         feats = [self._to_nchw(feat, ch) for feat, ch in zip(feats, self.stage_channels)]
-        features_fpn = self.fpn(feats)
-
-        features_fpn_4x = features_fpn[self.output_reduction_to_index[4]]
-        features_fpn_8x = features_fpn[self.output_reduction_to_index[8]]
+        if self.adapter == 'fpn':
+            features_fpn = self.fpn(feats)
+            features_4x = features_fpn[self.output_reduction_to_index[4]]
+            features_8x = features_fpn[self.output_reduction_to_index[8]]
+        else:
+            features_4x, features_8x = self.direct_adapter(feats)
 
         mask = tensor_list.mask
         assert mask is not None
-        mask_4x = F.interpolate(mask[None].float(), size=features_fpn_4x.shape[-2:]).to(torch.bool)[0]
-        mask_8x = F.interpolate(mask[None].float(), size=features_fpn_8x.shape[-2:]).to(torch.bool)[0]
+        mask_4x = F.interpolate(mask[None].float(), size=features_4x.shape[-2:]).to(torch.bool)[0]
+        mask_8x = F.interpolate(mask[None].float(), size=features_8x.shape[-2:]).to(torch.bool)[0]
 
         return {
-            '4x': NestedTensor(features_fpn_4x, mask_4x),
-            '8x': NestedTensor(features_fpn_8x, mask_8x),
+            '4x': NestedTensor(features_4x, mask_4x),
+            '8x': NestedTensor(features_8x, mask_8x),
         }
 
 
 class TimmBackbone(TimmBackboneBase):
-    def __init__(self, model_name='convnextv2_base', pretrained=True, allow_pretrained_fallback=False):
+    def __init__(self, model_name='convnextv2_base', pretrained=True, allow_pretrained_fallback=False, adapter='fpn'):
         timm = importlib.import_module('timm')
         actual_model_name = resolve_timm_backbone_name(model_name)
         def _create(pretrained_flag):
@@ -238,7 +265,7 @@ class TimmBackbone(TimmBackboneBase):
                 RuntimeWarning,
             )
             backbone = _create(False)
-        super().__init__(backbone, num_channels=256, model_name=actual_model_name)
+        super().__init__(backbone, num_channels=256, model_name=actual_model_name, adapter=adapter)
 
 
 class Joiner(nn.Module):
@@ -262,11 +289,13 @@ def build_backbone_timm(args):
     name = getattr(args, 'backbone', 'convnextv2_base')
     if not is_timm_backbone(name):
         raise ValueError(f'Unsupported timm backbone: {name}')
+    adapter = getattr(args, 'timm_adapter', 'fpn')
     position_embedding = build_position_encoding(args)
     backbone = TimmBackbone(
         model_name=name,
         pretrained=not getattr(args, 'no_pretrained_backbone', False),
         allow_pretrained_fallback=getattr(args, 'allow_random_backbone_fallback', False),
+        adapter=adapter,
     )
     model = Joiner(backbone, position_embedding)
     model.num_channels = backbone.num_channels
