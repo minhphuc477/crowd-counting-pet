@@ -22,8 +22,10 @@ from models.backbones import get_supported_timm_backbones, is_timm_backbone
 BASE_TRAINING_DEFAULTS = {
     'lr': 1e-4,
     'lr_backbone': 1e-5,
+    'lr_backbone_adapter': -1.0,
     'batch_size': 8,
     'warmup_epochs': 5,
+    'freeze_backbone_epochs': 0,
 }
 
 BACKBONE_RECIPES = {
@@ -31,19 +33,25 @@ BACKBONE_RECIPES = {
         'batch_size': 4,
         'lr': 5e-5,
         'lr_backbone': 5e-6,
+        'lr_backbone_adapter': 1e-4,
         'warmup_epochs': 10,
+        'freeze_backbone_epochs': 5,
     },
     'mobile': {
         'batch_size': 8,
         'lr': 7.5e-5,
         'lr_backbone': 7.5e-6,
+        'lr_backbone_adapter': 1e-4,
         'warmup_epochs': 8,
+        'freeze_backbone_epochs': 3,
     },
     'vgg': {
         'batch_size': 8,
         'lr': 1e-4,
         'lr_backbone': 1e-5,
+        'lr_backbone_adapter': 1e-4,
         'warmup_epochs': 5,
+        'freeze_backbone_epochs': 0,
     },
 }
 
@@ -114,6 +122,8 @@ def get_args_parser():
     parser.add_argument('--lr_backbone', default=1e-5, type=float)
     parser.add_argument('--lr_backbone_adapter', default=-1.0, type=float,
                         help='learning rate for randomly initialized backbone adapters/FPN; negative uses --lr')
+    parser.add_argument('--freeze_backbone_epochs', default=0, type=int,
+                        help='freeze pretrained backbone feature extractor for this many initial epochs')
     parser.add_argument('--batch_size', default=8, type=int)
     parser.add_argument('--weight_decay', default=1e-4, type=float)
     parser.add_argument('--epochs', default=1500, type=int)
@@ -233,7 +243,7 @@ def apply_backbone_recipe(args):
 
     for key, tuned_value in recipe.items():
         default_value = BASE_TRAINING_DEFAULTS.get(key)
-        current_value = getattr(args, key)
+        current_value = getattr(args, key, default_value)
         if default_value is not None and current_value == default_value:
             setattr(args, key, tuned_value)
 
@@ -258,10 +268,13 @@ def merge_checkpoint_args(args, checkpoint):
 
 
 def build_optimizer_param_groups(model_without_ddp, args):
-    """Keep pretrained timm weights on low LR while training new adapters at main LR."""
+    """Keep pretrained backbone weights on low LR while training new adapters at main LR."""
     use_timm = is_timm_backbone(getattr(args, 'backbone', ''))
     timm_feature_prefix = 'backbone.backbone.backbone.'
-    timm_adapter_prefix = 'backbone.backbone.fpn.'
+    adapter_prefixes = (
+        'backbone.backbone.fpn.',  # timm Joiner -> TimmBackbone -> BackboneFPN
+        'backbone.0.fpn.',         # VGG Joiner -> Backbone_VGG -> FeatsFusion
+    )
     adapter_lr = float(getattr(args, 'lr_backbone_adapter', -1.0))
 
     main_params, adapter_params, backbone_params = [], [], []
@@ -270,7 +283,7 @@ def build_optimizer_param_groups(model_without_ddp, args):
             continue
         if use_timm and name.startswith(timm_feature_prefix):
             backbone_params.append(param)
-        elif use_timm and name.startswith(timm_adapter_prefix):
+        elif any(name.startswith(prefix) for prefix in adapter_prefixes):
             adapter_params.append(param)
         elif 'backbone' in name:
             backbone_params.append(param)
@@ -294,6 +307,23 @@ def build_optimizer_param_groups(model_without_ddp, args):
         group_summary.append(('backbone', len(backbone_params), sum(p.numel() for p in backbone_params), args.lr_backbone))
 
     return param_groups, group_summary
+
+
+def set_raw_backbone_trainability(model_without_ddp, args, trainable):
+    use_timm = is_timm_backbone(getattr(args, 'backbone', ''))
+    raw_backbone_prefixes = (
+        ('backbone.backbone.backbone.',) if use_timm else ('backbone.0.body',)
+    )
+    changed = 0
+    total = 0
+    for name, param in model_without_ddp.named_parameters():
+        if not any(name.startswith(prefix) for prefix in raw_backbone_prefixes):
+            continue
+        total += 1
+        if param.requires_grad != trainable:
+            param.requires_grad = trainable
+            changed += 1
+    return total, changed
 
 
 def main(args):
@@ -416,6 +446,18 @@ def main(args):
     for epoch in range(args.start_epoch, args.epochs):
         if args.distributed:
             sampler_train.set_epoch(epoch)
+
+        freeze_epochs = int(getattr(args, 'freeze_backbone_epochs', 0))
+        if freeze_epochs > 0:
+            backbone_trainable = epoch >= freeze_epochs
+            total_raw_backbone, changed_raw_backbone = set_raw_backbone_trainability(
+                model_without_ddp,
+                args,
+                trainable=backbone_trainable,
+            )
+            if utils.is_main_process() and (epoch == args.start_epoch or changed_raw_backbone):
+                state = 'trainable' if backbone_trainable else 'frozen'
+                print(f'raw backbone is {state}: tensors={total_raw_backbone}, freeze_backbone_epochs={freeze_epochs}')
         
         t1 = time.time()
         train_stats = train_one_epoch(
