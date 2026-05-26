@@ -154,6 +154,23 @@ class DirectFeatureAdapter(nn.Module):
         return self.proj_4x(inputs[self.index_4x]), self.proj_8x(inputs[self.index_8x])
 
 
+class LiteFPNAdapter(nn.Module):
+    """Top-down semantic fusion without the heavier 3x3 output convolutions."""
+    def __init__(self, stage_channels, reduction_to_index, hidden_size=256):
+        super().__init__()
+        self.reduction_to_index = reduction_to_index
+        self.lateral_convs = nn.ModuleList(
+            nn.Conv2d(ch, hidden_size, kernel_size=1, stride=1, padding=0)
+            for ch in stage_channels
+        )
+
+    def forward(self, inputs):
+        p = [conv(feat) for conv, feat in zip(self.lateral_convs, inputs)]
+        for idx in range(len(p) - 2, -1, -1):
+            p[idx] = p[idx] + F.interpolate(p[idx + 1], size=p[idx].shape[-2:], mode='nearest')
+        return p[self.reduction_to_index[4]], p[self.reduction_to_index[8]]
+
+
 class TimmBackboneBase(nn.Module):
     def __init__(self, backbone: nn.Module, num_channels: int, model_name: str, adapter: str = 'fpn'):
         super().__init__()
@@ -182,16 +199,26 @@ class TimmBackboneBase(nn.Module):
 
         if adapter == 'fpn':
             self.fpn = BackboneFPN(self.stage_channels, hidden_size=num_channels, out_size=num_channels, out_kernel=3)
+            self.lite_fpn = None
+            self.direct_adapter = None
+        elif adapter == 'lite_fpn':
+            self.fpn = None
+            self.lite_fpn = LiteFPNAdapter(
+                self.stage_channels,
+                self.output_reduction_to_index,
+                hidden_size=num_channels,
+            )
             self.direct_adapter = None
         elif adapter == 'direct':
             self.fpn = None
+            self.lite_fpn = None
             self.direct_adapter = DirectFeatureAdapter(
                 self.stage_channels,
                 self.output_reduction_to_index,
                 out_size=num_channels,
             )
         else:
-            raise ValueError(f'Unsupported timm adapter: {adapter}. Use "direct" or "fpn".')
+            raise ValueError(f'Unsupported timm adapter: {adapter}. Use "lite_fpn", "direct", or "fpn".')
 
     @staticmethod
     def _to_nchw(feature: torch.Tensor, expected_channels: int) -> torch.Tensor:
@@ -213,6 +240,8 @@ class TimmBackboneBase(nn.Module):
             features_fpn = self.fpn(feats)
             features_4x = features_fpn[self.output_reduction_to_index[4]]
             features_8x = features_fpn[self.output_reduction_to_index[8]]
+        elif self.adapter == 'lite_fpn':
+            features_4x, features_8x = self.lite_fpn(feats)
         else:
             features_4x, features_8x = self.direct_adapter(feats)
 

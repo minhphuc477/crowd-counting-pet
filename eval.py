@@ -26,7 +26,7 @@ def get_args_parser():
                         help='initialize the backbone randomly instead of loading timm/ImageNet weights')
     parser.add_argument('--allow_random_backbone_fallback', action='store_true',
                         help='allow timm backbones to continue with random init if pretrained weights cannot load')
-    parser.add_argument('--timm_adapter', default='direct', choices=('direct', 'fpn'),
+    parser.add_argument('--timm_adapter', default='lite_fpn', choices=('lite_fpn', 'direct', 'fpn'),
                         help='adapter used to map timm features into PET 4x/8x features')
     parser.add_argument('--position_embedding', default='sine', type=str, choices=('sine', 'learned', 'fourier'),
                         help="Type of positional embedding to use on top of the image features")

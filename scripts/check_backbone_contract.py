@@ -77,7 +77,7 @@ def check_backbone(backbone, image_size, device, timm_adapter):
 def parse_args():
     parser = argparse.ArgumentParser(description='Validate PET backbone compatibility')
     parser.add_argument('--backbone', default='convnextv2_base')
-    parser.add_argument('--timm_adapter', default='direct', choices=('direct', 'fpn'))
+    parser.add_argument('--timm_adapter', default='lite_fpn', choices=('lite_fpn', 'direct', 'fpn'))
     parser.add_argument('--all', action='store_true', help='Check vgg16_bn and every supported timm backbone')
     parser.add_argument('--height', type=int, default=256)
     parser.add_argument('--width', type=int, default=256)
