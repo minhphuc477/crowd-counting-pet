@@ -19,6 +19,8 @@ def get_args_parser():
                         help="Name of the convolutional backbone to use")
     parser.add_argument('--no_pretrained_backbone', action='store_true',
                         help='initialize the backbone randomly instead of loading timm/ImageNet weights')
+    parser.add_argument('--allow_random_backbone_fallback', action='store_true',
+                        help='allow timm backbones to continue with random init if pretrained weights cannot load')
     parser.add_argument('--position_embedding', default='sine', type=str, choices=('sine', 'learned', 'fourier'),
                         help="Type of positional embedding to use on top of the image features")
     # - transformer
@@ -32,6 +34,14 @@ def get_args_parser():
                         help="Dropout applied in the transformer")
     parser.add_argument('--nheads', default=8, type=int,
                         help="Number of attention heads inside the transformer's attentions")
+    parser.add_argument('--enc_win_sizes', default='', type=str,
+                        help='encoder window sizes as "w,h;w,h;..."; empty keeps paper PET defaults')
+    parser.add_argument('--sparse_dec_win_size', default='', type=str,
+                        help='sparse decoder window size as "w,h"; empty keeps paper PET default')
+    parser.add_argument('--dense_dec_win_size', default='', type=str,
+                        help='dense decoder window size as "w,h"; empty keeps paper PET default')
+    parser.add_argument('--context_patch_size', default='', type=str,
+                        help='quadtree splitter context patch size as "w,h"; empty keeps paper PET default')
     
     # loss parameters
     # - matcher
@@ -226,6 +236,7 @@ def main(args):
 
     checkpoint = torch.load(args.resume, map_location='cpu', weights_only=False)
     args = merge_checkpoint_args(args, checkpoint)
+    args.no_pretrained_backbone = True
     args = apply_eval_overrides(args)
 
     # build model

@@ -16,7 +16,7 @@ import util.misc as utils
 from datasets import build_dataset
 from engine import evaluate, train_one_epoch
 from models import build_model
-from models.backbones import get_supported_timm_backbones
+from models.backbones import get_supported_timm_backbones, is_timm_backbone
 
 
 BASE_TRAINING_DEFAULTS = {
@@ -112,6 +112,8 @@ def get_args_parser():
     # training Parameters
     parser.add_argument('--lr', default=1e-4, type=float)
     parser.add_argument('--lr_backbone', default=1e-5, type=float)
+    parser.add_argument('--lr_backbone_adapter', default=-1.0, type=float,
+                        help='learning rate for randomly initialized backbone adapters/FPN; negative uses --lr')
     parser.add_argument('--batch_size', default=8, type=int)
     parser.add_argument('--weight_decay', default=1e-4, type=float)
     parser.add_argument('--epochs', default=1500, type=int)
@@ -152,6 +154,14 @@ def get_args_parser():
                         help="Dropout applied in the transformer")
     parser.add_argument('--nheads', default=8, type=int,
                         help="Number of attention heads inside the transformer's attentions")
+    parser.add_argument('--enc_win_sizes', default='', type=str,
+                        help='encoder window sizes as "w,h;w,h;..."; empty keeps paper PET defaults')
+    parser.add_argument('--sparse_dec_win_size', default='', type=str,
+                        help='sparse decoder window size as "w,h"; empty keeps paper PET default')
+    parser.add_argument('--dense_dec_win_size', default='', type=str,
+                        help='dense decoder window size as "w,h"; empty keeps paper PET default')
+    parser.add_argument('--context_patch_size', default='', type=str,
+                        help='quadtree splitter context patch size as "w,h"; empty keeps paper PET default')
 
     # loss parameters
     # - matcher
@@ -247,6 +257,45 @@ def merge_checkpoint_args(args, checkpoint):
     return merged
 
 
+def build_optimizer_param_groups(model_without_ddp, args):
+    """Keep pretrained timm weights on low LR while training new adapters at main LR."""
+    use_timm = is_timm_backbone(getattr(args, 'backbone', ''))
+    timm_feature_prefix = 'backbone.backbone.backbone.'
+    timm_adapter_prefix = 'backbone.backbone.fpn.'
+    adapter_lr = float(getattr(args, 'lr_backbone_adapter', -1.0))
+
+    main_params, adapter_params, backbone_params = [], [], []
+    for name, param in model_without_ddp.named_parameters():
+        if not param.requires_grad:
+            continue
+        if use_timm and name.startswith(timm_feature_prefix):
+            backbone_params.append(param)
+        elif use_timm and name.startswith(timm_adapter_prefix):
+            adapter_params.append(param)
+        elif 'backbone' in name:
+            backbone_params.append(param)
+        else:
+            main_params.append(param)
+
+    param_groups = []
+    group_summary = []
+    if main_params:
+        param_groups.append({'params': main_params})
+        group_summary.append(('main', len(main_params), sum(p.numel() for p in main_params), args.lr))
+    if adapter_params:
+        adapter_group = {'params': adapter_params}
+        effective_adapter_lr = args.lr if adapter_lr < 0 else adapter_lr
+        if adapter_lr >= 0:
+            adapter_group['lr'] = adapter_lr
+        param_groups.append(adapter_group)
+        group_summary.append(('backbone_adapter', len(adapter_params), sum(p.numel() for p in adapter_params), effective_adapter_lr))
+    if backbone_params:
+        param_groups.append({'params': backbone_params, 'lr': args.lr_backbone})
+        group_summary.append(('backbone', len(backbone_params), sum(p.numel() for p in backbone_params), args.lr_backbone))
+
+    return param_groups, group_summary
+
+
 def main(args):
     utils.init_distributed_mode(args)
     if args.list_backbones:
@@ -289,13 +338,10 @@ def main(args):
     n_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)
 
     # build optimizer
-    param_dicts = [
-        {"params": [p for n, p in model_without_ddp.named_parameters() if "backbone" not in n and p.requires_grad]},
-        {
-            "params": [p for n, p in model_without_ddp.named_parameters() if "backbone" in n and p.requires_grad],
-            "lr": args.lr_backbone,
-        },
-    ]
+    param_dicts, param_group_summary = build_optimizer_param_groups(model_without_ddp, args)
+    if utils.is_main_process():
+        for group_name, n_tensors, n_params, lr in param_group_summary:
+            print(f'optimizer group {group_name}: tensors={n_tensors}, params={n_params}, lr={lr}')
     optimizer = torch.optim.AdamW(param_dicts, lr=args.lr,
                                   weight_decay=args.weight_decay)
     if args.lr_scheduler == 'step':

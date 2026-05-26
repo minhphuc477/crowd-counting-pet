@@ -39,6 +39,14 @@ def get_args_parser():
                         help="Dropout applied in the transformer")
     parser.add_argument('--nheads', default=8, type=int,
                         help="Number of attention heads inside the transformer's attentions")
+    parser.add_argument('--enc_win_sizes', default='', type=str,
+                        help='encoder window sizes as "w,h;w,h;..."; empty keeps paper PET defaults')
+    parser.add_argument('--sparse_dec_win_size', default='', type=str,
+                        help='sparse decoder window size as "w,h"; empty keeps paper PET default')
+    parser.add_argument('--dense_dec_win_size', default='', type=str,
+                        help='dense decoder window size as "w,h"; empty keeps paper PET default')
+    parser.add_argument('--context_patch_size', default='', type=str,
+                        help='quadtree splitter context patch size as "w,h"; empty keeps paper PET default')
     
     # loss parameters
     # - matcher

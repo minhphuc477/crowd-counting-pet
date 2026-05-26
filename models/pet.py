@@ -14,6 +14,32 @@ from .transformer import *
 from .position_encoding import build_position_encoding
 
 
+def _parse_size_pair(value, default, name):
+    if value is None or value == '':
+        return tuple(default)
+    if isinstance(value, str):
+        parts = [part.strip() for part in value.lower().replace('x', ',').split(',') if part.strip()]
+    else:
+        parts = list(value)
+    if len(parts) != 2:
+        raise ValueError(f'{name} must be a pair formatted as "w,h", got {value!r}')
+    pair = tuple(int(part) for part in parts)
+    if pair[0] <= 0 or pair[1] <= 0:
+        raise ValueError(f'{name} values must be positive, got {pair}')
+    return pair
+
+
+def _parse_size_pair_list(value, default, name):
+    if value is None or value == '':
+        return [tuple(pair) for pair in default]
+    if isinstance(value, str):
+        chunks = [chunk.strip() for chunk in value.split(';') if chunk.strip()]
+        if not chunks:
+            return [tuple(pair) for pair in default]
+        return [_parse_size_pair(chunk, None, name) for chunk in chunks]
+    return [_parse_size_pair(pair, None, name) for pair in value]
+
+
 class BasePETCount(nn.Module):
     """ 
     Base PET model
@@ -196,12 +222,16 @@ class PET(nn.Module):
 
         # context encoder
         self.encode_feats = '8x'
-        enc_win_list = [(32, 16), (32, 16), (16, 8), (16, 8)]  # encoder window size
+        enc_win_list = _parse_size_pair_list(
+            getattr(args, 'enc_win_sizes', ''),
+            [(32, 16), (32, 16), (16, 8), (16, 8)],
+            'enc_win_sizes',
+        )  # encoder window size
         args.enc_layers = len(enc_win_list)
         self.context_encoder = build_encoder(args, enc_win_list=enc_win_list)
 
         # quadtree splitter
-        context_patch = (128, 64)
+        context_patch = _parse_size_pair(getattr(args, 'context_patch_size', ''), (128, 64), 'context_patch_size')
         context_w, context_h = context_patch[0]//int(self.encode_feats[:-1]), context_patch[1]//int(self.encode_feats[:-1])
         self.quadtree_splitter = nn.Sequential(
             nn.AvgPool2d((context_h, context_w), stride=(context_h ,context_w)),
@@ -224,8 +254,16 @@ class PET(nn.Module):
         self.split_threshold_quantile = float(getattr(args, 'split_threshold_quantile', 0.55))
         self.score_threshold = float(getattr(args, 'score_threshold', 0.5))
         self.pet_loss_variant = getattr(args, 'pet_loss_variant', 'paper')
-        self.sparse_dec_win_size = (16, 8)
-        self.dense_dec_win_size = (8, 4)
+        self.sparse_dec_win_size = _parse_size_pair(
+            getattr(args, 'sparse_dec_win_size', ''),
+            (16, 8),
+            'sparse_dec_win_size',
+        )
+        self.dense_dec_win_size = _parse_size_pair(
+            getattr(args, 'dense_dec_win_size', ''),
+            (8, 4),
+            'dense_dec_win_size',
+        )
 
     def compute_loss(self, outputs, criterion, targets, epoch, samples):
         """
