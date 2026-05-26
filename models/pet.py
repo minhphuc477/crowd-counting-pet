@@ -201,6 +201,44 @@ class BasePETCount(nn.Module):
         return outputs
     
 
+def _make_group_norm(num_channels):
+    groups = min(32, num_channels)
+    while num_channels % groups != 0:
+        groups -= 1
+    return nn.GroupNorm(groups, num_channels)
+
+
+class QuadtreeSplitter(nn.Module):
+    def __init__(self, hidden_dim, context_h, context_w, head='pool', mid_dim=128):
+        super().__init__()
+        context_h = max(1, int(context_h))
+        context_w = max(1, int(context_w))
+        if head == 'pool':
+            self.net = nn.Sequential(
+                nn.AvgPool2d((context_h, context_w), stride=(context_h, context_w)),
+                nn.Conv2d(hidden_dim, 1, 1),
+                nn.Sigmoid(),
+            )
+        elif head == 'conv':
+            mid_dim = max(1, int(mid_dim))
+            self.net = nn.Sequential(
+                nn.Conv2d(hidden_dim, mid_dim, 3, padding=1, bias=False),
+                _make_group_norm(mid_dim),
+                nn.ReLU(inplace=True),
+                nn.Conv2d(mid_dim, mid_dim, 3, padding=2, dilation=2, bias=False),
+                _make_group_norm(mid_dim),
+                nn.ReLU(inplace=True),
+                nn.AvgPool2d((context_h, context_w), stride=(context_h, context_w)),
+                nn.Conv2d(mid_dim, 1, 1),
+                nn.Sigmoid(),
+            )
+        else:
+            raise ValueError(f'Unsupported splitter head: {head}. Use "pool" or "conv".')
+
+    def forward(self, x):
+        return self.net(x)
+
+
 class PET(nn.Module):
     """ 
     Point quEry Transformer
@@ -233,10 +271,12 @@ class PET(nn.Module):
         # quadtree splitter
         context_patch = _parse_size_pair(getattr(args, 'context_patch_size', ''), (128, 64), 'context_patch_size')
         context_w, context_h = context_patch[0]//int(self.encode_feats[:-1]), context_patch[1]//int(self.encode_feats[:-1])
-        self.quadtree_splitter = nn.Sequential(
-            nn.AvgPool2d((context_h, context_w), stride=(context_h ,context_w)),
-            nn.Conv2d(hidden_dim, 1, 1),
-            nn.Sigmoid(),
+        self.quadtree_splitter = QuadtreeSplitter(
+            hidden_dim,
+            context_h,
+            context_w,
+            head=getattr(args, 'splitter_head', 'pool'),
+            mid_dim=getattr(args, 'splitter_hidden_dim', 128),
         )
 
         # point-query quadtree
@@ -254,6 +294,14 @@ class PET(nn.Module):
         self.split_threshold_quantile = float(getattr(args, 'split_threshold_quantile', 0.55))
         self.score_threshold = float(getattr(args, 'score_threshold', 0.5))
         self.pet_loss_variant = getattr(args, 'pet_loss_variant', 'paper')
+        self.count_loss_coef = float(getattr(args, 'count_loss_coef', 0.0))
+        self.count_loss_gate = getattr(args, 'count_loss_gate', 'detach')
+        if self.count_loss_gate not in ('detach', 'soft', 'hard'):
+            raise ValueError('count_loss_gate must be one of "detach", "soft", or "hard"')
+        self.count_loss_type = getattr(args, 'count_loss_type', 'log_l1')
+        if self.count_loss_type not in ('log_l1', 'l1', 'smooth_l1'):
+            raise ValueError('count_loss_type must be one of "log_l1", "l1", or "smooth_l1"')
+        self.count_loss_start_epoch = int(getattr(args, 'count_loss_start_epoch', -1))
         self.sparse_dec_win_size = _parse_size_pair(
             getattr(args, 'sparse_dec_win_size', ''),
             (16, 8),
@@ -323,6 +371,14 @@ class PET(nn.Module):
             loss_split_ds = outputs['split_map_raw'].sum() * 0.0
 
         loss_split_prior = loss_split_sp + loss_split_ds
+        if self.count_loss_coef > 0:
+            loss_count = self.compute_count_loss(outputs, targets)
+            count_start_epoch = warmup_ep if self.count_loss_start_epoch < 0 else self.count_loss_start_epoch
+            weight_count = self.count_loss_coef if epoch >= count_start_epoch else 0.0
+            loss_dict['loss_count'] = loss_count
+            weight_dict['loss_count'] = weight_count
+            losses += loss_count * weight_count
+
         if self.pet_loss_variant == 'paper':
             weight_split = self.quadtree_loss_coef if epoch >= warmup_ep else 0.0
             loss_dict['loss_split'] = loss_split_prior
@@ -347,6 +403,38 @@ class PET(nn.Module):
         # final loss
         losses += loss_split_quality * weight_split_quality + loss_split_prior * weight_split_prior
         return {'loss_dict':loss_dict, 'weight_dict':weight_dict, 'losses':losses}
+
+    def compute_count_loss(self, outputs, targets):
+        output_sparse, output_dense = outputs['sparse'], outputs['dense']
+        device = output_sparse['pred_logits'].device
+        dtype = output_sparse['pred_logits'].dtype
+        target_counts = torch.as_tensor(
+            [target['points'].shape[0] for target in targets],
+            dtype=dtype,
+            device=device,
+        )
+
+        sparse_scores = F.softmax(output_sparse['pred_logits'], -1)[..., 1]
+        dense_scores = F.softmax(output_dense['pred_logits'], -1)[..., 1]
+
+        if self.count_loss_gate == 'hard':
+            threshold = outputs['split_threshold'].to(device=device, dtype=dtype)
+            sparse_gate = ((1.0 - outputs['split_map_sparse'].to(device=device, dtype=dtype)) <= threshold).to(dtype)
+            dense_gate = (outputs['split_map_dense'].to(device=device, dtype=dtype) > threshold).to(dtype)
+        else:
+            sparse_gate = outputs['split_map_sparse'].to(device=device, dtype=dtype)
+            dense_gate = outputs['split_map_dense'].to(device=device, dtype=dtype)
+            if self.count_loss_gate == 'detach':
+                sparse_gate = sparse_gate.detach()
+                dense_gate = dense_gate.detach()
+
+        pred_counts = (sparse_scores * sparse_gate.reshape_as(sparse_scores)).sum(dim=1)
+        pred_counts = pred_counts + (dense_scores * dense_gate.reshape_as(dense_scores)).sum(dim=1)
+        if self.count_loss_type == 'l1':
+            return F.l1_loss(pred_counts, target_counts)
+        if self.count_loss_type == 'smooth_l1':
+            return F.smooth_l1_loss(pred_counts, target_counts)
+        return F.l1_loss(torch.log1p(pred_counts), torch.log1p(target_counts))
 
     def build_split_targets(self, targets, split_map, img_shape):
         bs, _, split_h, split_w = split_map.shape

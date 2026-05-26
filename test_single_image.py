@@ -44,6 +44,8 @@ def get_args_parser():
                         help='dense decoder window size as "w,h"; empty keeps paper PET default')
     parser.add_argument('--context_patch_size', default='', type=str,
                         help='quadtree splitter context patch size as "w,h"; empty keeps paper PET default')
+    parser.add_argument('--splitter_head', default='pool', choices=('pool', 'conv'))
+    parser.add_argument('--splitter_hidden_dim', default=128, type=int)
     
     # loss parameters
     # - matcher
@@ -54,6 +56,10 @@ def get_args_parser():
     # - loss coefficients
     parser.add_argument('--ce_loss_coef', default=1.0, type=float)       # classification loss coefficient
     parser.add_argument('--point_loss_coef', default=5.0, type=float)    # regression loss coefficient
+    parser.add_argument('--count_loss_coef', default=0.0, type=float)
+    parser.add_argument('--count_loss_gate', default='detach', choices=('detach', 'soft', 'hard'))
+    parser.add_argument('--count_loss_type', default='log_l1', choices=('log_l1', 'l1', 'smooth_l1'))
+    parser.add_argument('--count_loss_start_epoch', default=-1, type=int)
     parser.add_argument('--eos_coef', default=0.5, type=float,
                         help="Relative classification weight of the no-object class")   # cross-entropy weights
     parser.add_argument('--negative_loss_coef', default=0.1, type=float)

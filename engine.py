@@ -98,6 +98,9 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
 
         # reduce losses over all GPUs for logging purposes
         loss_dict_reduced = utils.reduce_dict(loss_dict)
+        missing_loss_weights = sorted(set(loss_dict_reduced) - set(weight_dict))
+        if missing_loss_weights:
+            raise RuntimeError(f'Loss keys missing weights: {missing_loss_weights}')
         loss_dict_reduced_unscaled = {f'{k}_unscaled': v
                                       for k, v in loss_dict_reduced.items()}
         loss_dict_reduced_scaled = {k: v * weight_dict[k]

@@ -174,6 +174,10 @@ def get_args_parser():
                         help='dense decoder window size as "w,h"; empty keeps paper PET default')
     parser.add_argument('--context_patch_size', default='', type=str,
                         help='quadtree splitter context patch size as "w,h"; empty keeps paper PET default')
+    parser.add_argument('--splitter_head', default='pool', choices=('pool', 'conv'),
+                        help='quadtree splitter head; pool matches official PET, conv adds local context')
+    parser.add_argument('--splitter_hidden_dim', default=128, type=int,
+                        help='hidden channels for --splitter_head conv')
 
     # loss parameters
     # - matcher
@@ -184,6 +188,14 @@ def get_args_parser():
     # - loss coefficients
     parser.add_argument('--ce_loss_coef', default=1.0, type=float)
     parser.add_argument('--point_loss_coef', default=5.0, type=float)
+    parser.add_argument('--count_loss_coef', default=0.0, type=float,
+                        help='optional L1 loss on soft predicted count; 0 disables it')
+    parser.add_argument('--count_loss_gate', default='detach', choices=('detach', 'soft', 'hard'),
+                        help='routing gates used by count loss; detach calibrates scores without splitter gradients')
+    parser.add_argument('--count_loss_type', default='log_l1', choices=('log_l1', 'l1', 'smooth_l1'),
+                        help='count-loss scale; log_l1 is safer early in training')
+    parser.add_argument('--count_loss_start_epoch', default=-1, type=int,
+                        help='epoch to enable count loss; negative uses warmup_epochs')
     parser.add_argument('--eos_coef', default=0.5, type=float,
                         help="Relative classification weight of the no-object class")
     parser.add_argument('--pet_loss_variant', default='paper', choices=('paper', 'balanced'),
