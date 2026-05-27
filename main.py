@@ -533,6 +533,8 @@ def main(args):
                     'epoch': epoch,
                     'test_mae': float(mae),
                     'test_mse': float(mse),
+                    'pred_cnt': float(test_stats.get('pred_cnt', 0.0)),
+                    'gt_cnt': float(test_stats.get('gt_cnt', 0.0)),
                     'best_epoch': int(best_epoch),
                     'best_test_mae': float(best_mae),
                     'best_test_mse': float(best_mse),

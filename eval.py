@@ -209,6 +209,8 @@ def main(args):
             'epoch': int(cur_epoch),
             'eval_mae': float(mae),
             'eval_mse': float(mse),
+            'pred_cnt': float(test_stats.get('pred_cnt', 0.0)),
+            'gt_cnt': float(test_stats.get('gt_cnt', 0.0)),
             'checkpoint': args.resume,
         }, indent=2) + "\n", encoding="utf-8")
         print(f'eval results saved to: {results_file}')
