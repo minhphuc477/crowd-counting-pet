@@ -204,7 +204,8 @@ def run_training(
     
     print(f"\n{'='*80}")
     print(f"Training {backbone} with seed {seed}")
-    print(f"Output directory: {seed_output_dir}")
+    print(f"Output directory argument: {seed_output_dir}")
+    print(f"Actual save directory: {actual_output_dir}")
     print(f"Command: {' '.join(cmd)}")
     print(f"{'='*80}\n")
     
@@ -293,17 +294,15 @@ def collect_results(backbone, seeds, output_dir, dataset_file):
         stats_file = actual_output_dir / "run_log.txt"
         if stats_file.exists():
             try:
-                with open(stats_file, "r", encoding="utf-8") as f:
-                    lines = [line.strip() for line in f if line.strip()]
-                for line in reversed(lines):
-                    if line.startswith('{'):
-                        stats = json.loads(line)
-                        if 'test_mae' in stats:
-                            mae = stats['test_mae']
-                            results[seed] = mae
-                            mae_values.append(mae)
-                            print(f"  Seed {seed}: MAE = {mae:.2f}")
-                            break
+                text = stats_file.read_text(encoding="utf-8", errors="replace")
+                json_candidates = re.findall(r'\{[^{}]*"test_mae"[^{}]*\}', text)
+                for candidate in reversed(json_candidates):
+                    stats = json.loads(candidate)
+                    mae = stats['test_mae']
+                    results[seed] = mae
+                    mae_values.append(mae)
+                    print(f"  Seed {seed}: MAE = {mae:.2f}")
+                    break
             except (OSError, json.JSONDecodeError) as e:
                 print(f"  Seed {seed}: Could not read stats ({e})")
     

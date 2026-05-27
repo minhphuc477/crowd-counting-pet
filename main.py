@@ -442,8 +442,8 @@ def main(args):
         run_log_name = os.path.join(output_dir, 'run_log.txt')
         with open(run_log_name, "a", encoding="utf-8") as log_file:
             log_file.write('Run Log %s\n' % time.strftime("%c"))
-            log_file.write("{}".format(args))
-            log_file.write("parameters: {}".format(n_parameters))
+            log_file.write("{}\n".format(args))
+            log_file.write("parameters: {}\n".format(n_parameters))
 
     best_mae, best_mse, best_epoch = 1e8, 1e8, 0
     if checkpoint is not None:
@@ -485,7 +485,7 @@ def main(args):
         
         if utils.is_main_process():
             with open(run_log_name, "a", encoding="utf-8") as log_file:
-                log_file.write('\n[ep %d][lr %.7f][%.2fs]' % (epoch, optimizer.param_groups[0]['lr'], t2 - t1))
+                log_file.write('[ep %d][lr %.7f][%.2fs]\n' % (epoch, optimizer.param_groups[0]['lr'], t2 - t1))
 
         lr_scheduler.step()
 
@@ -530,13 +530,13 @@ def main(args):
             print("==========================\n")
             if utils.is_main_process():
                 with open(run_log_name, "a", encoding="utf-8") as log_file:
-                    log_file.write("\nepoch:{}, mae:{}, mse:{}, time{}, \n\nbest mae:{}, best epoch: {}\n\n".format(
+                    log_file.write("epoch:{}, mae:{}, mse:{}, time{}, \n\nbest mae:{}, best epoch: {}\n".format(
                                                 epoch, mae, mse, t2 - t1, best_mae, best_epoch))
-                    log_file.write('\n' + json.dumps({
+                    log_file.write(json.dumps({
                         'epoch': epoch,
                         'test_mae': float(mae),
                         'test_mse': float(mse),
-                    }))
+                    }) + "\n")
 
             if improved and utils.is_main_process():
                 utils.save_on_master({
@@ -555,7 +555,7 @@ def main(args):
 
     if utils.is_main_process():
         with open(run_log_name, "a", encoding="utf-8") as log_file:
-            log_file.write('\n' + json.dumps({
+            log_file.write(json.dumps({
                 'epoch': best_epoch,
                 'test_mae': float(best_mae),
                 'test_mse': float(best_mse),
@@ -563,7 +563,7 @@ def main(args):
                 'best_test_mae': float(best_mae),
                 'best_test_mse': float(best_mse),
                 'final': True,
-            }))
+            }) + "\n")
 
     total_time = time.time() - start_time
     total_time_str = str(datetime.timedelta(seconds=int(total_time)))
