@@ -15,11 +15,12 @@ class WinEncoderTransformer(nn.Module):
     """
     def __init__(self, d_model=256, nhead=8, num_encoder_layers=4,
                  dim_feedforward=512, dropout=0.0,
-                 activation="relu", 
+                 activation="relu",
+                 norm_style="post",
                  **kwargs):
         super().__init__()
         encoder_layer = EncoderLayer(d_model, nhead, dim_feedforward,
-                                                    dropout, activation)
+                                                    dropout, activation, norm_style=norm_style)
         self.encoder = TransformerEncoder(encoder_layer, num_encoder_layers, **kwargs)
         self._reset_parameters()
 
@@ -62,12 +63,13 @@ class WinDecoderTransformer(nn.Module):
     def __init__(self, d_model=256, nhead=8, num_decoder_layers=2, 
                  dim_feedforward=512, dropout=0.0,
                  activation="relu",
+                 norm_style="post",
                  return_intermediate_dec=False,
                  dec_win_w=16, dec_win_h=8,
                  ):
         super().__init__()
         decoder_layer = DecoderLayer(d_model, nhead, dim_feedforward,
-                                                dropout, activation)
+                                                dropout, activation, norm_style=norm_style)
 
         decoder_norm = nn.LayerNorm(d_model)
         self.decoder = TransformerDecoder(decoder_layer, num_decoder_layers, decoder_norm,
@@ -240,7 +242,7 @@ class TransformerDecoder(nn.Module):
 
 class EncoderLayer(nn.Module):
     def __init__(self, d_model, nhead, dim_feedforward=512, dropout=0.0,
-                 activation="relu"):
+                 activation="relu", norm_style="post"):
         super().__init__()
         self.self_attn = nn.MultiheadAttention(d_model, nhead, dropout=dropout)
 
@@ -250,14 +252,15 @@ class EncoderLayer(nn.Module):
         self.norm1 = nn.LayerNorm(d_model)
         self.norm2 = nn.LayerNorm(d_model)
         self.activation = _get_activation_fn(activation)
+        self.normalize_before = norm_style == "pre"
 
     def with_pos_embed(self, tensor, pos: Optional[Tensor]):
         return tensor if pos is None else tensor + pos
 
-    def forward(self, src,
-                     src_mask: Optional[Tensor] = None,
-                     src_key_padding_mask: Optional[Tensor] = None,
-                     pos: Optional[Tensor] = None):
+    def forward_post(self, src,
+                     src_mask: Optional[Tensor],
+                     src_key_padding_mask: Optional[Tensor],
+                     pos: Optional[Tensor]):
         q = k = self.with_pos_embed(src, pos)
         src2 = self.self_attn(q, k, value=src, attn_mask=src_mask,
                               key_padding_mask=src_key_padding_mask)[0]
@@ -269,10 +272,33 @@ class EncoderLayer(nn.Module):
         src = self.norm2(src)
         return src
 
+    def forward_pre(self, src,
+                    src_mask: Optional[Tensor],
+                    src_key_padding_mask: Optional[Tensor],
+                    pos: Optional[Tensor]):
+        src_norm = self.norm1(src)
+        q = k = self.with_pos_embed(src_norm, pos)
+        src2 = self.self_attn(q, k, value=src_norm, attn_mask=src_mask,
+                              key_padding_mask=src_key_padding_mask)[0]
+        src = src + src2
+
+        src_norm = self.norm2(src)
+        src2 = self.linear2(self.activation(self.linear1(src_norm)))
+        src = src + src2
+        return src
+
+    def forward(self, src,
+                     src_mask: Optional[Tensor] = None,
+                     src_key_padding_mask: Optional[Tensor] = None,
+                     pos: Optional[Tensor] = None):
+        if self.normalize_before:
+            return self.forward_pre(src, src_mask, src_key_padding_mask, pos)
+        return self.forward_post(src, src_mask, src_key_padding_mask, pos)
+
 
 class DecoderLayer(nn.Module):
     def __init__(self, d_model, nhead, dim_feedforward=512, dropout=0.0,
-                 activation="relu"):
+                 activation="relu", norm_style="post"):
         super().__init__()
         self.self_attn = nn.MultiheadAttention(d_model, nhead, dropout=dropout)
         self.multihead_attn = nn.MultiheadAttention(d_model, nhead, dropout=dropout)
@@ -286,20 +312,18 @@ class DecoderLayer(nn.Module):
         self.activation = _get_activation_fn(activation)
         self.nhead = nhead
         self.d_model = d_model
+        self.normalize_before = norm_style == "pre"
 
     def with_pos_embed(self, tensor, pos: Optional[Tensor]):
         return tensor if pos is None else tensor + pos
 
-    def forward(self, tgt, memory,
-                     tgt_mask: Optional[Tensor] = None,
-                     memory_mask: Optional[Tensor] = None,
-                     tgt_key_padding_mask: Optional[Tensor] = None,
-                     memory_key_padding_mask: Optional[Tensor] = None,
-                     pos: Optional[Tensor] = None,
-                     query_pos: Optional[Tensor] = None,
-                     ):
-        
-        # decoder self attention
+    def forward_post(self, tgt, memory,
+                     tgt_mask: Optional[Tensor],
+                     memory_mask: Optional[Tensor],
+                     tgt_key_padding_mask: Optional[Tensor],
+                     memory_key_padding_mask: Optional[Tensor],
+                     pos: Optional[Tensor],
+                     query_pos: Optional[Tensor]):
         q = k = self.with_pos_embed(tgt, query_pos)
         tgt2 = self.self_attn(q, k, value=tgt, attn_mask=tgt_mask, key_padding_mask=tgt_key_padding_mask)[0]
         tgt = tgt + tgt2
@@ -319,6 +343,48 @@ class DecoderLayer(nn.Module):
         tgt = self.norm3(tgt)
         return tgt
 
+    def forward_pre(self, tgt, memory,
+                    tgt_mask: Optional[Tensor],
+                    memory_mask: Optional[Tensor],
+                    tgt_key_padding_mask: Optional[Tensor],
+                    memory_key_padding_mask: Optional[Tensor],
+                    pos: Optional[Tensor],
+                    query_pos: Optional[Tensor]):
+        tgt_norm = self.norm1(tgt)
+        q = k = self.with_pos_embed(tgt_norm, query_pos)
+        tgt2 = self.self_attn(q, k, value=tgt_norm, attn_mask=tgt_mask, key_padding_mask=tgt_key_padding_mask)[0]
+        tgt = tgt + tgt2
+
+        tgt_norm = self.norm2(tgt)
+        tgt2 = self.multihead_attn(query=self.with_pos_embed(tgt_norm, query_pos),
+                                   key=self.with_pos_embed(memory, pos),
+                                   value=memory, attn_mask=memory_mask,
+                                   key_padding_mask=memory_key_padding_mask)[0]
+        tgt = tgt + tgt2
+
+        tgt_norm = self.norm3(tgt)
+        tgt2 = self.linear2(self.activation(self.linear1(tgt_norm)))
+        tgt = tgt + tgt2
+        return tgt
+
+    def forward(self, tgt, memory,
+                     tgt_mask: Optional[Tensor] = None,
+                     memory_mask: Optional[Tensor] = None,
+                     tgt_key_padding_mask: Optional[Tensor] = None,
+                     memory_key_padding_mask: Optional[Tensor] = None,
+                     pos: Optional[Tensor] = None,
+                     query_pos: Optional[Tensor] = None,
+                     ):
+        if self.normalize_before:
+            return self.forward_pre(
+                tgt, memory, tgt_mask, memory_mask, tgt_key_padding_mask,
+                memory_key_padding_mask, pos, query_pos,
+            )
+        return self.forward_post(
+            tgt, memory, tgt_mask, memory_mask, tgt_key_padding_mask,
+            memory_key_padding_mask, pos, query_pos,
+        )
+
 
 def _get_clones(module, N):
     return nn.ModuleList([copy.deepcopy(module) for i in range(N)])
@@ -331,6 +397,8 @@ def build_encoder(args, **kwargs):
         nhead=args.nheads,
         dim_feedforward=args.dim_feedforward,
         num_encoder_layers=args.enc_layers,
+        activation=getattr(args, 'transformer_activation', 'relu'),
+        norm_style=getattr(args, 'transformer_norm_style', 'post'),
         **kwargs,
     )
 
@@ -342,6 +410,8 @@ def build_decoder(args, **kwargs):
         nhead=args.nheads,
         dim_feedforward=args.dim_feedforward,
         num_decoder_layers=args.dec_layers,
+        activation=getattr(args, 'transformer_activation', 'relu'),
+        norm_style=getattr(args, 'transformer_norm_style', 'post'),
         return_intermediate_dec=True,
     )
 

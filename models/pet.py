@@ -209,10 +209,18 @@ def _make_group_norm(num_channels):
 
 
 class QuadtreeSplitter(nn.Module):
-    def __init__(self, hidden_dim, context_h, context_w, head='pool', mid_dim=128):
+    def __init__(self, hidden_dim, context_h, context_w, head='pool', mid_dim=128, activation='gelu'):
         super().__init__()
         context_h = max(1, int(context_h))
         context_w = max(1, int(context_w))
+        if activation == 'gelu':
+            act1 = nn.GELU()
+            act2 = nn.GELU()
+        elif activation == 'relu':
+            act1 = nn.ReLU(inplace=True)
+            act2 = nn.ReLU(inplace=True)
+        else:
+            raise ValueError(f'Unsupported splitter activation: {activation}. Use "gelu" or "relu".')
         if head == 'pool':
             self.net = nn.Sequential(
                 nn.AvgPool2d((context_h, context_w), stride=(context_h, context_w)),
@@ -224,10 +232,10 @@ class QuadtreeSplitter(nn.Module):
             self.net = nn.Sequential(
                 nn.Conv2d(hidden_dim, mid_dim, 3, padding=1, bias=False),
                 _make_group_norm(mid_dim),
-                nn.ReLU(inplace=True),
+                act1,
                 nn.Conv2d(mid_dim, mid_dim, 3, padding=2, dilation=2, bias=False),
                 _make_group_norm(mid_dim),
-                nn.ReLU(inplace=True),
+                act2,
                 nn.AvgPool2d((context_h, context_w), stride=(context_h, context_w)),
                 nn.Conv2d(mid_dim, 1, 1),
                 nn.Sigmoid(),
@@ -277,6 +285,7 @@ class PET(nn.Module):
             context_w,
             head=getattr(args, 'splitter_head', 'pool'),
             mid_dim=getattr(args, 'splitter_hidden_dim', 128),
+            activation=getattr(args, 'splitter_activation', 'gelu'),
         )
 
         # point-query quadtree

@@ -166,6 +166,10 @@ def get_args_parser():
                         help="Dropout applied in the transformer")
     parser.add_argument('--nheads', default=8, type=int,
                         help="Number of attention heads inside the transformer's attentions")
+    parser.add_argument('--transformer_activation', default='relu', choices=('relu', 'gelu'),
+                        help='activation used in transformer feed-forward blocks')
+    parser.add_argument('--transformer_norm_style', default='post', choices=('post', 'pre'),
+                        help='post matches official PET; pre is more stable for deeper transformer stacks')
     parser.add_argument('--enc_win_sizes', default='', type=str,
                         help='encoder window sizes as "w,h;w,h;..."; empty keeps paper PET defaults')
     parser.add_argument('--sparse_dec_win_size', default='', type=str,
@@ -178,6 +182,8 @@ def get_args_parser():
                         help='quadtree splitter head; pool matches official PET, conv adds local context')
     parser.add_argument('--splitter_hidden_dim', default=128, type=int,
                         help='hidden channels for --splitter_head conv')
+    parser.add_argument('--splitter_activation', default='gelu', choices=('relu', 'gelu'),
+                        help='activation used by --splitter_head conv')
 
     # loss parameters
     # - matcher
