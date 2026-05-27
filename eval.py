@@ -1,4 +1,5 @@
 import argparse
+import json
 import random
 from pathlib import Path
 import os
@@ -92,6 +93,8 @@ def get_args_parser():
     parser.add_argument('--seed', default=42, type=int)
     parser.add_argument('--resume', default='', help='resume from checkpoint')
     parser.add_argument('--vis_dir', default="")
+    parser.add_argument('--results_file', default='',
+                        help='where to save eval metrics; empty writes eval_results.json next to checkpoint')
     parser.add_argument('--override_score_threshold', default=None, type=float,
                         help='override the checkpoint score threshold at evaluation time')
     parser.add_argument('--override_split_threshold', default=None, type=float,
@@ -116,7 +119,7 @@ def merge_checkpoint_args(args, checkpoint):
 
     merged = argparse.Namespace(**vars(checkpoint_args))
     runtime_keys = {
-        'resume', 'device', 'vis_dir', 'data_path', 'dataset_file', 'num_workers', 'seed',
+        'resume', 'device', 'vis_dir', 'results_file', 'data_path', 'dataset_file', 'num_workers', 'seed',
         'override_score_threshold', 'override_split_threshold', 'override_split_threshold_quantile',
     }
     for key in runtime_keys:
@@ -194,6 +197,21 @@ def main(args):
     mae, mse = test_stats['mae'], test_stats['mse']
     line = f'\nepoch: {cur_epoch}, mae: {mae}, mse: {mse}' 
     print(line)
+    if utils.is_main_process():
+        if args.results_file:
+            results_file = Path(args.results_file)
+        elif args.resume and not args.resume.startswith('https'):
+            results_file = Path(args.resume).resolve().parent / 'eval_results.json'
+        else:
+            results_file = Path('eval_results.json')
+        results_file.parent.mkdir(parents=True, exist_ok=True)
+        results_file.write_text(json.dumps({
+            'epoch': int(cur_epoch),
+            'eval_mae': float(mae),
+            'eval_mse': float(mse),
+            'checkpoint': args.resume,
+        }, indent=2) + "\n", encoding="utf-8")
+        print(f'eval results saved to: {results_file}')
 
 
 if __name__ == '__main__':
