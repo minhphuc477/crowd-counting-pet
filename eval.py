@@ -105,6 +105,8 @@ def get_args_parser():
     parser.add_argument('--override_split_threshold_quantile', default=None, type=float,
                         help='override the checkpoint split-threshold quantile at evaluation time')
     parser.add_argument('--num_workers', default=2, type=int)
+    parser.add_argument('--deterministic', dest='deterministic', action='store_true', default=True)
+    parser.add_argument('--no_deterministic', dest='deterministic', action='store_false')
 
     # distributed training parameters
     parser.add_argument('--world_size', default=1, type=int,
@@ -124,6 +126,7 @@ def merge_checkpoint_args(args, checkpoint):
     runtime_keys = {
         'resume', 'device', 'vis_dir', 'results_file', 'data_path', 'dataset_file', 'num_workers', 'seed',
         'override_score_threshold', 'override_split_threshold', 'override_split_threshold_quantile',
+        'deterministic',
     }
     for key in runtime_keys:
         setattr(merged, key, getattr(args, key))
@@ -143,15 +146,31 @@ def apply_eval_overrides(args):
     return args
 
 
+def seed_worker(worker_id):
+    worker_seed = torch.initial_seed() % 2**32
+    np.random.seed(worker_seed)
+    random.seed(worker_seed)
+
+
+def set_reproducibility(seed, deterministic=True):
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    np.random.seed(seed)
+    random.seed(seed)
+    if deterministic:
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
+
+
 def main(args):
     utils.init_distributed_mode(args)
     device = torch.device(args.device)
 
     # fix the seed for reproducibility
     seed = args.seed + utils.get_rank()
-    torch.manual_seed(seed)
-    np.random.seed(seed)
-    random.seed(seed)
+    set_reproducibility(seed, deterministic=getattr(args, 'deterministic', True))
+    data_loader_generator = torch.Generator()
+    data_loader_generator.manual_seed(seed)
 
     checkpoint = None
     if args.resume:
@@ -186,7 +205,8 @@ def main(args):
         sampler_val = torch.utils.data.SequentialSampler(dataset_val)
 
     data_loader_val = DataLoader(dataset_val, 1, sampler=sampler_val,
-                                 drop_last=False, collate_fn=utils.collate_fn, num_workers=args.num_workers)
+                                 drop_last=False, collate_fn=utils.collate_fn, num_workers=args.num_workers,
+                                 worker_init_fn=seed_worker, generator=data_loader_generator)
 
     # load pretrained model
     cur_epoch = 0

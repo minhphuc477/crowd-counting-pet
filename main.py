@@ -247,6 +247,10 @@ def get_args_parser():
     parser.add_argument('--num_workers', default=2, type=int)
     parser.add_argument('--eval_freq', default=5, type=int)
     parser.add_argument('--syn_bn', default=0, type=int)
+    parser.add_argument('--deterministic', dest='deterministic', action='store_true', default=True,
+                        help='enable deterministic CuDNN and seeded DataLoader workers')
+    parser.add_argument('--no_deterministic', dest='deterministic', action='store_false',
+                        help='disable deterministic CuDNN mode')
 
     # distributed training parameters
     parser.add_argument('--world_size', default=1, type=int,
@@ -278,7 +282,7 @@ def merge_checkpoint_args(args, checkpoint):
     merged = argparse.Namespace(**vars(checkpoint_args))
     runtime_keys = {
         'resume', 'device', 'output_dir', 'seed', 'start_epoch',
-        'num_workers', 'world_size', 'dist_url', 'list_backbones', 'syn_bn',
+        'num_workers', 'world_size', 'dist_url', 'list_backbones', 'syn_bn', 'deterministic',
         # allow overriding schedule/eval settings at resume time
         'epochs', 'eval_freq', 'data_path',
     }
@@ -348,6 +352,22 @@ def set_raw_backbone_trainability(model_without_ddp, args, trainable):
     return total, changed
 
 
+def seed_worker(worker_id):
+    worker_seed = torch.initial_seed() % 2**32
+    np.random.seed(worker_seed)
+    random.seed(worker_seed)
+
+
+def set_reproducibility(seed, deterministic=True):
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    np.random.seed(seed)
+    random.seed(seed)
+    if deterministic:
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
+
+
 def main(args):
     utils.init_distributed_mode(args)
     if args.list_backbones:
@@ -373,9 +393,9 @@ def main(args):
 
     # fix the seed for reproducibility
     seed = args.seed + utils.get_rank()
-    torch.manual_seed(seed)
-    np.random.seed(seed)
-    random.seed(seed)
+    set_reproducibility(seed, deterministic=getattr(args, 'deterministic', True))
+    data_loader_generator = torch.Generator()
+    data_loader_generator.manual_seed(seed)
 
     # build model
     model, criterion = build_model(args)
@@ -426,19 +446,21 @@ def main(args):
     dataset_val = build_dataset(image_set='val', args=args)
 
     if args.distributed:
-        sampler_train = DistributedSampler(dataset_train)
+        sampler_train = DistributedSampler(dataset_train, seed=args.seed)
         sampler_val = DistributedSampler(dataset_val, shuffle=False)
     else:
-        sampler_train = torch.utils.data.RandomSampler(dataset_train)
+        sampler_train = torch.utils.data.RandomSampler(dataset_train, generator=data_loader_generator)
         sampler_val = torch.utils.data.SequentialSampler(dataset_val)
 
     batch_sampler_train = torch.utils.data.BatchSampler(
         sampler_train, args.batch_size, drop_last=True)
 
     data_loader_train = DataLoader(dataset_train, batch_sampler=batch_sampler_train,
-                                collate_fn=utils.collate_fn, num_workers=args.num_workers)
+                                collate_fn=utils.collate_fn, num_workers=args.num_workers,
+                                worker_init_fn=seed_worker, generator=data_loader_generator)
     data_loader_val = DataLoader(dataset_val, 1, sampler=sampler_val,
-                                drop_last=False, collate_fn=utils.collate_fn, num_workers=args.num_workers)
+                                drop_last=False, collate_fn=utils.collate_fn, num_workers=args.num_workers,
+                                worker_init_fn=seed_worker, generator=data_loader_generator)
 
     # output directory and log
     output_dir = Path("./outputs") / args.dataset_file / args.output_dir
