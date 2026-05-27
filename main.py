@@ -1,4 +1,5 @@
 import argparse
+import copy
 import datetime
 import json
 import math
@@ -6,7 +7,6 @@ import random
 import time
 from pathlib import Path
 import os
-import shutil
 
 import numpy as np
 import torch
@@ -247,6 +247,8 @@ def get_args_parser():
     parser.add_argument('--num_workers', default=2, type=int)
     parser.add_argument('--eval_freq', default=5, type=int)
     parser.add_argument('--syn_bn', default=0, type=int)
+    parser.add_argument('--ema_decay', default=0.0, type=float,
+                        help='exponential moving average decay for eval/checkpointing; 0 disables EMA')
     parser.add_argument('--deterministic', dest='deterministic', action='store_true', default=True,
                         help='enable deterministic CuDNN and seeded DataLoader workers')
     parser.add_argument('--no_deterministic', dest='deterministic', action='store_false',
@@ -368,6 +370,38 @@ def set_reproducibility(seed, deterministic=True):
         torch.backends.cudnn.benchmark = False
 
 
+class ModelEma:
+    def __init__(self, model, decay):
+        self.module = copy.deepcopy(model).eval()
+        self.decay = float(decay)
+        for param in self.module.parameters():
+            param.requires_grad_(False)
+
+    @torch.no_grad()
+    def set(self, model):
+        self.module.load_state_dict(model.state_dict())
+
+    @torch.no_grad()
+    def update(self, model):
+        model_state = model.state_dict()
+        ema_state = self.module.state_dict()
+        for name, ema_value in ema_state.items():
+            model_value = model_state[name].detach()
+            if ema_value.dtype.is_floating_point:
+                ema_value.mul_(self.decay).add_(
+                    model_value.to(device=ema_value.device, dtype=ema_value.dtype),
+                    alpha=1.0 - self.decay,
+                )
+            else:
+                ema_value.copy_(model_value.to(device=ema_value.device, dtype=ema_value.dtype))
+
+    def state_dict(self):
+        return self.module.state_dict()
+
+    def load_state_dict(self, state_dict):
+        self.module.load_state_dict(state_dict)
+
+
 def main(args):
     utils.init_distributed_mode(args)
     if args.list_backbones:
@@ -408,6 +442,7 @@ def main(args):
         model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu], find_unused_parameters=True)
         model_without_ddp = model.module
     n_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    model_ema = ModelEma(model_without_ddp, args.ema_decay) if args.ema_decay > 0 else None
 
     # build optimizer
     param_dicts, param_group_summary = build_optimizer_param_groups(model_without_ddp, args)
@@ -475,7 +510,15 @@ def main(args):
 
     best_mae, best_mse, best_epoch = 1e8, 1e8, 0
     if checkpoint is not None:
-        model_without_ddp.load_state_dict(checkpoint['model'])
+        model_key = 'model_raw' if model_ema is not None and 'model_raw' in checkpoint else 'model'
+        model_without_ddp.load_state_dict(checkpoint[model_key])
+        if model_ema is not None:
+            if 'model_ema' in checkpoint:
+                model_ema.load_state_dict(checkpoint['model_ema'])
+            elif model_key == 'model_raw' and 'model' in checkpoint:
+                model_ema.load_state_dict(checkpoint['model'])
+            else:
+                model_ema.set(model_without_ddp)
         if 'optimizer' in checkpoint and 'lr_scheduler' in checkpoint and 'epoch' in checkpoint:
             optimizer.load_state_dict(checkpoint['optimizer'])
             lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])
@@ -483,6 +526,24 @@ def main(args):
             best_mae = checkpoint.get('best_mae', best_mae)
             best_mse = checkpoint.get('best_mse', best_mse)
             best_epoch = checkpoint.get('best_epoch', best_epoch)
+
+    def checkpoint_payload(epoch, model_state=None, include_raw_model=False):
+        payload = {
+            'model': model_without_ddp.state_dict() if model_state is None else model_state,
+            'optimizer': optimizer.state_dict(),
+            'lr_scheduler': lr_scheduler.state_dict(),
+            'epoch': epoch,
+            'args': args,
+            'best_mae': best_mae,
+            'best_mse': best_mse,
+            'best_epoch': best_epoch,
+        }
+        if model_ema is not None:
+            payload['model_ema'] = model_ema.state_dict()
+            payload['ema_decay'] = args.ema_decay
+        if include_raw_model:
+            payload['model_raw'] = model_without_ddp.state_dict()
+        return payload
 
     # training
     print("Start training")
@@ -506,7 +567,7 @@ def main(args):
         t1 = time.time()
         train_stats = train_one_epoch(
             model, criterion, data_loader_train, optimizer, device, epoch,
-            args.clip_max_norm)
+            args.clip_max_norm, model_ema=model_ema, model_without_ddp=model_without_ddp)
         t2 = time.time()
         print('[ep %d][lr %.7f][%.2fs]' % \
               (epoch, optimizer.param_groups[0]['lr'], t2 - t1))
@@ -520,16 +581,7 @@ def main(args):
         # save checkpoint
         checkpoint_paths = [output_dir / 'checkpoint.pth']
         for checkpoint_path in checkpoint_paths:
-            utils.save_on_master({
-                'model': model_without_ddp.state_dict(),
-                'optimizer': optimizer.state_dict(),
-                'lr_scheduler': lr_scheduler.state_dict(),
-                'epoch': epoch,
-                'args': args,
-                'best_mae': best_mae,
-                'best_mse': best_mse,
-                'best_epoch': best_epoch,
-            }, checkpoint_path)
+            utils.save_on_master(checkpoint_payload(epoch), checkpoint_path)
 
         log_stats = {**{f'train_{k}': v for k, v in train_stats.items()},
                      'epoch': epoch,
@@ -543,7 +595,9 @@ def main(args):
         # evaluation
         if epoch % args.eval_freq == 0 and epoch > 0:
             t1 = time.time()
-            test_stats = evaluate(model, data_loader_val, device, epoch, None)
+            eval_model = model_ema.module if model_ema is not None else model
+            eval_model_name = 'ema' if model_ema is not None else 'raw'
+            test_stats = evaluate(eval_model, data_loader_val, device, epoch, None)
             t2 = time.time()
 
             # output results
@@ -568,6 +622,7 @@ def main(args):
                     'best_test_mse': float(best_mse),
                     'improved': bool(improved),
                     'eval_time': float(t2 - t1),
+                    'eval_model': eval_model_name,
                 }
                 with open(run_log_name, "a", encoding="utf-8") as log_file:
                     log_file.write("epoch:{}, mae:{}, mse:{}, time{}, \n\nbest mae:{}, best epoch: {}\n".format(
@@ -581,23 +636,20 @@ def main(args):
                 )
 
             if improved and utils.is_main_process():
+                utils.save_on_master(checkpoint_payload(epoch), output_dir / 'checkpoint.pth')
                 (output_dir / 'best_eval_results.json').write_text(
                     json.dumps(eval_record, indent=2) + "\n",
                     encoding="utf-8",
                 )
-                utils.save_on_master({
-                    'model': model_without_ddp.state_dict(),
-                    'optimizer': optimizer.state_dict(),
-                    'lr_scheduler': lr_scheduler.state_dict(),
-                    'epoch': epoch,
-                    'args': args,
-                    'best_mae': best_mae,
-                    'best_mse': best_mse,
-                    'best_epoch': best_epoch,
-                }, output_dir / 'checkpoint.pth')
-                src_path = output_dir / 'checkpoint.pth'
-                dst_path = output_dir / 'best_checkpoint.pth'
-                shutil.copyfile(src_path, dst_path)
+                best_model_state = model_ema.state_dict() if model_ema is not None else model_without_ddp.state_dict()
+                utils.save_on_master(
+                    checkpoint_payload(
+                        epoch,
+                        model_state=best_model_state,
+                        include_raw_model=model_ema is not None,
+                    ),
+                    output_dir / 'best_checkpoint.pth',
+                )
 
     if utils.is_main_process():
         final_record = {
@@ -608,6 +660,7 @@ def main(args):
             'best_test_mae': float(best_mae),
             'best_test_mse': float(best_mse),
             'final': True,
+            'eval_model': 'ema' if model_ema is not None else 'raw',
         }
         with open(run_log_name, "a", encoding="utf-8") as log_file:
             log_file.write(json.dumps(final_record) + "\n")

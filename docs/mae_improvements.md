@@ -30,11 +30,37 @@ The branch adds:
   - `hard`: uses thresholded route masks.
 - `--splitter_head conv`: replaces the original `AvgPool2d -> Conv1x1` splitter
   with a small local-context conv head before pooling.
+- `--ema_decay`: evaluates and saves an exponential moving average of model
+  weights. This targets the common PET pattern where training loss continues to
+  decrease after validation MAE has already peaked.
 
 Official PET reproduction remains:
 
 ```bash
 --splitter_head pool --count_loss_coef 0.0 --transformer_activation relu --transformer_norm_style post
+```
+
+## Recommended VGG Improvement Run
+
+For best MAE, keep the VGG backbone and paper loss, then add EMA:
+
+```bash
+CUDA_VISIBLE_DEVICES=0 python main.py \
+  --dataset_file SHA \
+  --data_path ./data/ShanghaiTech/part_A \
+  --backbone vgg16_bn \
+  --output_dir vgg16_bn_step_ema \
+  --epochs 1500 \
+  --eval_freq 5 \
+  --batch_size 8 \
+  --lr 1e-4 \
+  --lr_backbone 1e-5 \
+  --lr_scheduler step \
+  --ema_decay 0.999 \
+  --pet_loss_variant paper \
+  --score_threshold 0.5 \
+  --split_threshold 0.5 \
+  --seed 42
 ```
 
 ## Recommended Timm Run
