@@ -434,12 +434,12 @@ def main(args):
     data_loader_val = DataLoader(dataset_val, 1, sampler=sampler_val,
                                 drop_last=False, collate_fn=utils.collate_fn, num_workers=args.num_workers)
 
-    # output directory and log 
+    # output directory and log
+    output_dir = Path("./outputs") / args.dataset_file / args.output_dir
+    run_log_name = output_dir / 'run_log.txt'
     if utils.is_main_process():
-        output_dir = os.path.join("./outputs", args.dataset_file, args.output_dir)
         os.makedirs(output_dir, exist_ok=True)
-        output_dir = Path(output_dir)
-        run_log_name = os.path.join(output_dir, 'run_log.txt')
+        print(f'outputs will be saved to: {output_dir.resolve()}')
         with open(run_log_name, "a", encoding="utf-8") as log_file:
             log_file.write('Run Log %s\n' % time.strftime("%c"))
             log_file.write("{}\n".format(args))
@@ -529,16 +529,32 @@ def main(args):
             print("\nepoch:", epoch, "mae:", mae, "mse:", mse, "\n\nbest mae:", best_mae, "best epoch:", best_epoch)
             print("==========================\n")
             if utils.is_main_process():
+                eval_record = {
+                    'epoch': epoch,
+                    'test_mae': float(mae),
+                    'test_mse': float(mse),
+                    'best_epoch': int(best_epoch),
+                    'best_test_mae': float(best_mae),
+                    'best_test_mse': float(best_mse),
+                    'improved': bool(improved),
+                    'eval_time': float(t2 - t1),
+                }
                 with open(run_log_name, "a", encoding="utf-8") as log_file:
                     log_file.write("epoch:{}, mae:{}, mse:{}, time{}, \n\nbest mae:{}, best epoch: {}\n".format(
                                                 epoch, mae, mse, t2 - t1, best_mae, best_epoch))
-                    log_file.write(json.dumps({
-                        'epoch': epoch,
-                        'test_mae': float(mae),
-                        'test_mse': float(mse),
-                    }) + "\n")
+                    log_file.write(json.dumps(eval_record) + "\n")
+                with open(output_dir / 'eval_history.jsonl', "a", encoding="utf-8") as eval_file:
+                    eval_file.write(json.dumps(eval_record) + "\n")
+                (output_dir / 'latest_eval_results.json').write_text(
+                    json.dumps(eval_record, indent=2) + "\n",
+                    encoding="utf-8",
+                )
 
             if improved and utils.is_main_process():
+                (output_dir / 'best_eval_results.json').write_text(
+                    json.dumps(eval_record, indent=2) + "\n",
+                    encoding="utf-8",
+                )
                 utils.save_on_master({
                     'model': model_without_ddp.state_dict(),
                     'optimizer': optimizer.state_dict(),
@@ -554,16 +570,21 @@ def main(args):
                 shutil.copyfile(src_path, dst_path)
 
     if utils.is_main_process():
+        final_record = {
+            'epoch': best_epoch,
+            'test_mae': float(best_mae),
+            'test_mse': float(best_mse),
+            'best_epoch': best_epoch,
+            'best_test_mae': float(best_mae),
+            'best_test_mse': float(best_mse),
+            'final': True,
+        }
         with open(run_log_name, "a", encoding="utf-8") as log_file:
-            log_file.write(json.dumps({
-                'epoch': best_epoch,
-                'test_mae': float(best_mae),
-                'test_mse': float(best_mse),
-                'best_epoch': best_epoch,
-                'best_test_mae': float(best_mae),
-                'best_test_mse': float(best_mse),
-                'final': True,
-            }) + "\n")
+            log_file.write(json.dumps(final_record) + "\n")
+        (output_dir / 'final_results.json').write_text(
+            json.dumps(final_record, indent=2) + "\n",
+            encoding="utf-8",
+        )
 
     total_time = time.time() - start_time
     total_time_str = str(datetime.timedelta(seconds=int(total_time)))
