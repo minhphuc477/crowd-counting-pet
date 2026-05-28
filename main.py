@@ -631,7 +631,15 @@ def main(args):
                 best_mae = mae
                 best_mse = mse
             print("\n==========================")
-            print("\nepoch:", epoch, "mae:", mae, "mse:", mse, "\n\nbest mae:", best_mae, "best epoch:", best_epoch)
+            print(
+                "\nepoch:", epoch,
+                "mae:", mae,
+                "mse:", mse,
+                "pred_cnt:", test_stats.get('pred_cnt', 0.0),
+                "gt_cnt:", test_stats.get('gt_cnt', 0.0),
+                "\n\nbest mae:", best_mae,
+                "best epoch:", best_epoch,
+            )
             print("==========================\n")
             if utils.is_main_process():
                 eval_record = {
