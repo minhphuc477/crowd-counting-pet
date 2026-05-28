@@ -43,6 +43,10 @@ Official PET reproduction remains:
 --splitter_head pool --count_loss_coef 0.0 --transformer_activation relu --transformer_norm_style post
 ```
 
+For VGG paper-style runs, leave `--vgg_fpn_main_lr` off. That keeps the
+original PET optimizer grouping where every VGG backbone/FPN parameter uses
+`--lr_backbone`. Use `--vgg_fpn_main_lr` only as an ablation.
+
 ## Recommended VGG Improvement Run
 
 For best MAE, keep the VGG backbone and paper loss, then add EMA:

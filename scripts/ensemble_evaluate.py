@@ -142,6 +142,9 @@ def merge_checkpoint_args(args, checkpoint):
         checkpoint_args = argparse.Namespace(**checkpoint_args)
 
     merged = argparse.Namespace(**vars(checkpoint_args))
+    for key, value in vars(args).items():
+        if not hasattr(merged, key):
+            setattr(merged, key, value)
     runtime_keys = {
         'device', 'checkpoint_dir', 'seeds', 'batch_size', 'num_workers', 'data_path', 'dataset_file',
         'ensemble_method', 'override_score_threshold', 'override_split_threshold',

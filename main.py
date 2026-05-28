@@ -122,6 +122,8 @@ def get_args_parser():
     parser.add_argument('--lr_backbone', default=1e-5, type=float)
     parser.add_argument('--lr_backbone_adapter', default=-1.0, type=float,
                         help='learning rate for randomly initialized backbone adapters/FPN; negative uses --lr')
+    parser.add_argument('--vgg_fpn_main_lr', action='store_true',
+                        help='train the VGG FPN fusion block at --lr; disabled keeps original PET optimizer grouping')
     parser.add_argument('--freeze_backbone_epochs', default=0, type=int,
                         help='freeze pretrained backbone feature extractor for this many initial epochs')
     parser.add_argument('--batch_size', default=8, type=int)
@@ -312,12 +314,13 @@ def build_optimizer_param_groups(model_without_ddp, args):
     """Keep pretrained backbone weights on low LR while training new adapters at main LR."""
     use_timm = is_timm_backbone(getattr(args, 'backbone', ''))
     timm_feature_prefix = 'backbone.backbone.backbone.'
-    adapter_prefixes = (
+    adapter_prefixes = [
         'backbone.backbone.fpn.',  # timm Joiner -> TimmBackbone -> BackboneFPN
         'backbone.backbone.lite_fpn.',  # timm Joiner -> TimmBackbone -> LiteFPNAdapter
         'backbone.backbone.direct_adapter.',  # timm Joiner -> TimmBackbone -> DirectFeatureAdapter
-        'backbone.0.fpn.',         # VGG Joiner -> Backbone_VGG -> FeatsFusion
-    )
+    ]
+    if getattr(args, 'vgg_fpn_main_lr', False):
+        adapter_prefixes.append('backbone.0.fpn.')  # VGG Joiner -> Backbone_VGG -> FeatsFusion
     adapter_lr = float(getattr(args, 'lr_backbone_adapter', -1.0))
 
     main_params, adapter_params, backbone_params = [], [], []
