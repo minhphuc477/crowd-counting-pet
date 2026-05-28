@@ -163,15 +163,53 @@ def find_ground_truth_dir(split_dir):
     return os.path.join(split_dir, GT_DIR_NAMES[0])
 
 
+def _normalize_points_array(value):
+    points = np.asarray(value)
+    if points.size == 0:
+        return np.empty((0, 2), dtype=np.float32)
+    candidates = (points, np.squeeze(points))
+    for candidate in candidates:
+        if candidate.ndim != 2:
+            continue
+        if candidate.shape[1] == 2:
+            return candidate
+        if candidate.shape[0] == 2:
+            return candidate.T
+    return None
+
+
+def _original_shanghai_points(image_info):
+    try:
+        return _normalize_points_array(image_info[0][0][0][0][0])
+    except (IndexError, TypeError, ValueError):
+        return None
+
+
 def _find_points_array(value):
     if isinstance(value, np.ndarray):
-        if value.ndim == 2 and value.shape[1] == 2 and np.issubdtype(value.dtype, np.number):
-            return value
+        points = _normalize_points_array(value)
+        if points is not None and np.issubdtype(points.dtype, np.number):
+            return points
+        if value.dtype.names is not None:
+            for field_name in value.dtype.names:
+                found = _find_points_array(value[field_name])
+                if found is not None:
+                    return found
         if value.dtype == object or value.dtype.names is not None:
             for item in value.flat:
                 found = _find_points_array(item)
                 if found is not None:
                     return found
+    elif isinstance(value, np.void):
+        for field_name in value.dtype.names or ():
+            found = _find_points_array(value[field_name])
+            if found is not None:
+                return found
+    elif hasattr(value, '_fieldnames'):
+        for field_name in value._fieldnames:
+            found = _find_points_array(getattr(value, field_name))
+            if found is not None:
+                return found
     elif isinstance(value, (list, tuple)):
         for item in value:
             found = _find_points_array(item)
@@ -192,7 +230,9 @@ def load_points(gt_path):
     if 'image_info' not in mat:
         raise ValueError(f'Annotation file {gt_path} does not contain image_info')
 
-    points = _find_points_array(mat['image_info'])
+    points = _original_shanghai_points(mat['image_info'])
+    if points is None:
+        points = _find_points_array(mat['image_info'])
     if points is None:
         raise ValueError(f'Could not find Nx2 point array in annotation file {gt_path}')
 
