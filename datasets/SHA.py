@@ -12,6 +12,7 @@ import warnings
 warnings.filterwarnings('ignore')
 
 IMAGE_EXTENSIONS = ('.jpg', '.jpeg', '.png', '.bmp')
+GT_DIR_NAMES = ('ground-truth', 'ground_truth', 'groundtruth')
 
 
 class SHA(Dataset):
@@ -29,8 +30,9 @@ class SHA(Dataset):
         
         prefix = "train_data" if train else "test_data"
         self.prefix = prefix
-        img_dir = os.path.join(data_root, prefix, "images")
-        gt_dir = os.path.join(data_root, prefix, "ground-truth")
+        split_dir = os.path.join(data_root, prefix)
+        img_dir = os.path.join(split_dir, "images")
+        gt_dir = find_ground_truth_dir(split_dir)
         img_names = [
             img_name for img_name in os.listdir(img_dir)
             if img_name.lower().endswith(IMAGE_EXTENSIONS)
@@ -38,13 +40,21 @@ class SHA(Dataset):
 
         # get image and ground-truth list
         self.gt_list = {}
+        missing_gt = []
         for img_name in img_names:
             img_path = os.path.join(img_dir, img_name)
             stem = os.path.splitext(img_name)[0]
             gt_path = os.path.join(gt_dir, f"GT_{stem}.mat")
+            if not os.path.exists(gt_path):
+                missing_gt.append(gt_path)
             self.gt_list[img_path] = gt_path
         self.img_list = sorted(list(self.gt_list.keys()))
         self.nSamples = len(self.img_list)
+        if self.nSamples > 0 and len(missing_gt) == self.nSamples:
+            raise FileNotFoundError(
+                f'No matching ShanghaiTech .mat annotations found for {prefix}. '
+                f'Expected files like: {missing_gt[0]}'
+            )
 
         self.transform = transform
         self.train = train
@@ -145,14 +155,46 @@ def load_data(img_gt_path, train):
     return img, points
 
 
+def find_ground_truth_dir(split_dir):
+    for gt_name in GT_DIR_NAMES:
+        gt_dir = os.path.join(split_dir, gt_name)
+        if os.path.isdir(gt_dir):
+            return gt_dir
+    return os.path.join(split_dir, GT_DIR_NAMES[0])
+
+
+def _find_points_array(value):
+    if isinstance(value, np.ndarray):
+        if value.ndim == 2 and value.shape[1] == 2 and np.issubdtype(value.dtype, np.number):
+            return value
+        if value.dtype == object or value.dtype.names is not None:
+            for item in value.flat:
+                found = _find_points_array(item)
+                if found is not None:
+                    return found
+    elif isinstance(value, (list, tuple)):
+        for item in value:
+            found = _find_points_array(item)
+            if found is not None:
+                return found
+    return None
+
+
 def load_points(gt_path):
     if not os.path.exists(gt_path):
         return np.empty((0, 2), dtype=np.float32)
 
     try:
-        points = io.loadmat(gt_path)['image_info'][0][0][0][0][0]
-    except (KeyError, IndexError, TypeError, ValueError):
-        return np.empty((0, 2), dtype=np.float32)
+        mat = io.loadmat(gt_path)
+    except (OSError, ValueError) as exc:
+        raise ValueError(f'Could not read annotation file {gt_path}: {exc}') from exc
+
+    if 'image_info' not in mat:
+        raise ValueError(f'Annotation file {gt_path} does not contain image_info')
+
+    points = _find_points_array(mat['image_info'])
+    if points is None:
+        raise ValueError(f'Could not find Nx2 point array in annotation file {gt_path}')
 
     points = np.asarray(points, dtype=np.float32)
     if points.size == 0:
