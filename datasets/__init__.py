@@ -6,29 +6,66 @@ data_paths = {
     'SHB': ('./data/ShanghaiTech/part_B/', './data/ShanghaiTech/part_B_final/'),
 }
 
+dataset_dir_names = {
+    'SHA': ('part_A', 'part_A_final'),
+    'SHB': ('part_B', 'part_B_final'),
+}
+
 
 def _split_images_dir(data_root, image_set):
     split = 'train_data' if image_set == 'train' else 'test_data'
     return Path(data_root) / split / 'images'
 
 
+def _add_unique(candidates, seen, path):
+    key = str(path)
+    if key not in seen:
+        candidates.append(path)
+        seen.add(key)
+
+
+def _iter_named_descendants(root, names, max_depth=4):
+    if not root.is_dir():
+        return
+
+    stack = [(root, 0)]
+    while stack:
+        current, depth = stack.pop()
+        if current.name in names:
+            yield current
+        if depth >= max_depth:
+            continue
+        try:
+            children = list(current.iterdir())
+        except OSError:
+            continue
+        for child in reversed(children):
+            if child.is_dir():
+                stack.append((child, depth + 1))
+
+
 def _candidate_data_paths(dataset_file, requested_path):
     candidates = []
+    seen = set()
+    search_roots = []
+
     if requested_path:
         requested = Path(requested_path)
-        candidates.append(requested)
+        _add_unique(candidates, seen, requested)
         if not requested.name.endswith('_final'):
-            candidates.append(requested.with_name(f'{requested.name}_final'))
-    candidates.extend(Path(path) for path in data_paths[dataset_file])
+            _add_unique(candidates, seen, requested.with_name(f'{requested.name}_final'))
+        search_roots.extend([requested.parent, requested.parent.parent])
 
-    unique_candidates = []
-    seen = set()
-    for candidate in candidates:
-        key = str(candidate)
-        if key not in seen:
-            unique_candidates.append(candidate)
-            seen.add(key)
-    return unique_candidates
+    for path in data_paths[dataset_file]:
+        default_path = Path(path)
+        _add_unique(candidates, seen, default_path)
+        search_roots.extend([default_path.parent, default_path.parent.parent])
+
+    for root in search_roots:
+        for found in _iter_named_descendants(root, dataset_dir_names[dataset_file]):
+            _add_unique(candidates, seen, found)
+
+    return candidates
 
 
 def _resolve_data_path(dataset_file, requested_path, image_set):
