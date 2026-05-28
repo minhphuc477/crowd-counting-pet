@@ -229,7 +229,11 @@ class QuadtreeSplitter(nn.Module):
             )
         elif head == 'conv':
             mid_dim = max(1, int(mid_dim))
-            self.net = nn.Sequential(
+            self.pool_logits = nn.Sequential(
+                nn.AvgPool2d((context_h, context_w), stride=(context_h, context_w)),
+                nn.Conv2d(hidden_dim, 1, 1),
+            )
+            self.residual_logits = nn.Sequential(
                 nn.Conv2d(hidden_dim, mid_dim, 3, padding=1, bias=False),
                 _make_group_norm(mid_dim),
                 act1,
@@ -238,12 +242,15 @@ class QuadtreeSplitter(nn.Module):
                 act2,
                 nn.AvgPool2d((context_h, context_w), stride=(context_h, context_w)),
                 nn.Conv2d(mid_dim, 1, 1),
-                nn.Sigmoid(),
             )
+            nn.init.zeros_(self.residual_logits[-1].weight)
+            nn.init.zeros_(self.residual_logits[-1].bias)
         else:
             raise ValueError(f'Unsupported splitter head: {head}. Use "pool" or "conv".')
 
     def forward(self, x):
+        if hasattr(self, 'pool_logits'):
+            return torch.sigmoid(self.pool_logits(x) + self.residual_logits(x))
         return self.net(x)
 
 

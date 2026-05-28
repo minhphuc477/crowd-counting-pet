@@ -28,8 +28,9 @@ The branch adds:
     splitter. This is the recommended first run.
   - `soft`: lets count loss update both classifier scores and splitter.
   - `hard`: uses thresholded route masks.
-- `--splitter_head conv`: replaces the original `AvgPool2d -> Conv1x1` splitter
-  with a small local-context conv head before pooling.
+- `--splitter_head conv`: adds a small local-context conv residual to the
+  original `AvgPool2d -> Conv1x1` splitter. The residual is zero-initialized so
+  training starts from the paper splitter instead of a new random router.
 - `--ema_decay`: evaluates and saves an exponential moving average of model
   weights. This targets the common PET pattern where training loss continues to
   decrease after validation MAE has already peaked.
@@ -46,6 +47,24 @@ Official PET reproduction remains:
 For VGG paper-style runs, leave `--vgg_fpn_main_lr` off. That keeps the
 original PET optimizer grouping where every VGG backbone/FPN parameter uses
 `--lr_backbone`. Use `--vgg_fpn_main_lr` only as an ablation.
+
+For a finished checkpoint, run an inference-threshold sweep before reporting
+MAE. The default grid includes the paper threshold `0.5`, so the selected
+validation result is non-worse than the baseline on that same validation split:
+
+```bash
+python scripts/sweep_eval_thresholds.py \
+  --resume outputs/SHA/vgg16_bn_paper/best_checkpoint.pth \
+  --dataset_file SHA \
+  --data_path ./data/ShanghaiTech/part_A \
+  --device cuda \
+  --score_thresholds 0.35 0.4 0.45 0.48 0.5 0.52 0.55 0.6 0.65 \
+  --split_thresholds 0.5
+```
+
+The script writes `best_thresholds.json`, `sweep_results.json`, and
+`sweep_results.csv` under `<checkpoint_dir>/threshold_sweep` unless
+`--output_dir` is provided.
 
 ## Recommended VGG Improvement Run
 
