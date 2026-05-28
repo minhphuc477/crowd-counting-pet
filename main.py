@@ -246,6 +246,8 @@ def get_args_parser():
                         help='device to use for training / testing')
     parser.add_argument('--seed', default=42, type=int)
     parser.add_argument('--resume', default='', help='resume from checkpoint')
+    parser.add_argument('--resume_model_only', action='store_true',
+                        help='load only model weights from --resume and reset optimizer/scheduler/epoch counters')
     parser.add_argument('--start_epoch', default=0, type=int, metavar='N',
                         help='start epoch')
     parser.add_argument('--num_workers', default=2, type=int)
@@ -286,12 +288,21 @@ def merge_checkpoint_args(args, checkpoint):
         checkpoint_args = argparse.Namespace(**checkpoint_args)
 
     merged = argparse.Namespace(**vars(checkpoint_args))
+    for key, value in vars(args).items():
+        if not hasattr(merged, key):
+            setattr(merged, key, value)
     runtime_keys = {
         'resume', 'device', 'output_dir', 'seed', 'start_epoch',
-        'num_workers', 'world_size', 'dist_url', 'list_backbones', 'syn_bn', 'deterministic',
+        'resume_model_only', 'num_workers', 'world_size', 'dist_url', 'list_backbones', 'syn_bn', 'deterministic',
         # allow overriding schedule/eval settings at resume time
         'epochs', 'eval_freq', 'data_path',
     }
+    if getattr(args, 'resume_model_only', False):
+        runtime_keys.update({
+            'lr', 'lr_backbone', 'lr_backbone_adapter', 'weight_decay',
+            'lr_scheduler', 'lr_drop', 'lr_gamma', 'warmup_epochs', 'hold_epochs',
+            'min_lr', 'ema_decay',
+        })
     for key in runtime_keys:
         setattr(merged, key, getattr(args, key))
     return merged
@@ -515,16 +526,20 @@ def main(args):
 
     best_mae, best_mse, best_epoch = 1e8, 1e8, 0
     if checkpoint is not None:
-        model_key = 'model_raw' if model_ema is not None and 'model_raw' in checkpoint else 'model'
+        model_key = 'model'
+        if model_ema is not None and 'model_raw' in checkpoint and not args.resume_model_only:
+            model_key = 'model_raw'
         model_without_ddp.load_state_dict(checkpoint[model_key])
         if model_ema is not None:
-            if 'model_ema' in checkpoint:
+            if args.resume_model_only:
+                model_ema.set(model_without_ddp)
+            elif 'model_ema' in checkpoint:
                 model_ema.load_state_dict(checkpoint['model_ema'])
             elif model_key == 'model_raw' and 'model' in checkpoint:
                 model_ema.load_state_dict(checkpoint['model'])
             else:
                 model_ema.set(model_without_ddp)
-        if 'optimizer' in checkpoint and 'lr_scheduler' in checkpoint and 'epoch' in checkpoint:
+        if not args.resume_model_only and 'optimizer' in checkpoint and 'lr_scheduler' in checkpoint and 'epoch' in checkpoint:
             optimizer.load_state_dict(checkpoint['optimizer'])
             lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])
             args.start_epoch = checkpoint['epoch'] + 1

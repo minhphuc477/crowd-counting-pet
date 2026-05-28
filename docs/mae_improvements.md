@@ -89,6 +89,33 @@ CUDA_VISIBLE_DEVICES=0 python main.py \
   --seed 42
 ```
 
+If a run already found a strong best checkpoint but later epochs degraded, start
+a low-LR fine-tune from that best model without reusing the old optimizer and
+scheduler:
+
+```bash
+CUDA_VISIBLE_DEVICES=0 python main.py \
+  --dataset_file SHA \
+  --data_path ./data/ShanghaiTech/part_A \
+  --backbone vgg16_bn \
+  --resume outputs/SHA/vgg16_bn_step/best_checkpoint.pth \
+  --resume_model_only \
+  --output_dir outputs/SHA/vgg16_bn_best_ft_ema \
+  --epochs 500 \
+  --eval_freq 5 \
+  --batch_size 8 \
+  --lr 1e-5 \
+  --lr_backbone 1e-6 \
+  --lr_scheduler step \
+  --lr_drop 250 \
+  --lr_gamma 0.1 \
+  --ema_decay 0.999 \
+  --pet_loss_variant paper \
+  --score_threshold 0.5 \
+  --split_threshold 0.5 \
+  --seed 42
+```
+
 ## Recommended Timm Run
 
 The safest timm run is still the paper loss with FPN-style feature fusion:
