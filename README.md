@@ -130,6 +130,16 @@ python -m torch.distributed.run --nproc_per_node=1 --master_port=10001 main.py \
   --epochs 1500 \
   --eval_freq 5
 
+# train VGG16-BN on ShanghaiTech Part B
+python main.py \
+  --dataset_file SHB \
+  --data_path ./data/ShanghaiTech/part_B \
+  --backbone vgg16_bn \
+  --output_dir vgg16_bn_step_ema \
+  --epochs 1500 \
+  --eval_freq 5 \
+  --ema_decay 0.999
+
 # quick backbone list
 python main.py --list_backbones
 
