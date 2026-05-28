@@ -33,6 +33,9 @@ The branch adds:
 - `--ema_decay`: evaluates and saves an exponential moving average of model
   weights. This targets the common PET pattern where training loss continues to
   decrease after validation MAE has already peaked.
+- `--lr_drop` / `--lr_gamma`: optional real StepLR decay. The original PET
+  behavior is preserved by default because `--lr_drop` is negative, which drops
+  only after `--epochs`.
 
 Official PET reproduction remains:
 
@@ -57,6 +60,29 @@ CUDA_VISIBLE_DEVICES=0 python main.py \
   --lr_backbone 1e-5 \
   --lr_scheduler step \
   --ema_decay 0.999 \
+  --pet_loss_variant paper \
+  --score_threshold 0.5 \
+  --split_threshold 0.5 \
+  --seed 42
+```
+
+If MAE peaks early and then degrades while training loss keeps decreasing, test
+a real LR drop instead of running at `1e-4` for all 1500 epochs:
+
+```bash
+CUDA_VISIBLE_DEVICES=0 python main.py \
+  --dataset_file SHA \
+  --data_path ./data/ShanghaiTech/part_A \
+  --backbone vgg16_bn \
+  --output_dir vgg16_bn_step_drop700 \
+  --epochs 1500 \
+  --eval_freq 5 \
+  --batch_size 8 \
+  --lr 1e-4 \
+  --lr_backbone 1e-5 \
+  --lr_scheduler step \
+  --lr_drop 700 \
+  --lr_gamma 0.1 \
   --pet_loss_variant paper \
   --score_threshold 0.5 \
   --split_threshold 0.5 \

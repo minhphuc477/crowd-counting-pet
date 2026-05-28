@@ -130,6 +130,10 @@ def get_args_parser():
     parser.add_argument('--lr_scheduler', default='step', type=str,
                         choices=('step', 'warmup_hold_cosine'),
                         help='learning-rate schedule to use')
+    parser.add_argument('--lr_drop', default=-1, type=int,
+                        help='epoch interval for StepLR decay; negative keeps original PET behavior and drops after --epochs')
+    parser.add_argument('--lr_gamma', default=0.1, type=float,
+                        help='multiplicative LR decay factor for StepLR')
     parser.add_argument('--auto_backbone_recipe', action='store_true',
                         help='opt into backbone-specific lr/batch/warmup defaults')
     parser.add_argument('--warmup_epochs', default=5, type=int,
@@ -452,7 +456,8 @@ def main(args):
     optimizer = torch.optim.AdamW(param_dicts, lr=args.lr,
                                   weight_decay=args.weight_decay)
     if args.lr_scheduler == 'step':
-        lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, args.epochs)
+        lr_drop = args.epochs if args.lr_drop <= 0 else args.lr_drop
+        lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, lr_drop, gamma=args.lr_gamma)
     else:
         warmup_epochs = min(max(0, int(args.warmup_epochs)), max(args.epochs - 1, 0))
         hold_epochs = int(args.hold_epochs)
