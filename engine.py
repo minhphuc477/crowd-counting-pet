@@ -163,15 +163,15 @@ def evaluate(model, data_loader, device, epoch=0, vis_dir=None):
 
         # compute error
         mae = abs(predict_cnt - gt_cnt)
-        mse = (predict_cnt - gt_cnt) * (predict_cnt - gt_cnt)
+        mse_sq = (predict_cnt - gt_cnt) * (predict_cnt - gt_cnt)
 
         # record results
         results = {}
         toTensor = lambda x: torch.tensor(x).float().to(device)
-        results['mae'], results['mse'] = toTensor(mae), toTensor(mse)
+        results['mae'], results['mse_sq'] = toTensor(mae), toTensor(mse_sq)
         results['pred_cnt'], results['gt_cnt'] = toTensor(predict_cnt), toTensor(gt_cnt)
         results_reduced = utils.reduce_dict(results)
-        metric_logger.update(mae=results_reduced['mae'], mse=results_reduced['mse'])
+        metric_logger.update(mae=results_reduced['mae'], mse_sq=results_reduced['mse_sq'])
         metric_logger.update(pred_cnt=results_reduced['pred_cnt'], gt_cnt=results_reduced['gt_cnt'])
 
         # visualize predictions
@@ -186,5 +186,5 @@ def evaluate(model, data_loader, device, epoch=0, vis_dir=None):
     # gather the stats from all processes
     metric_logger.synchronize_between_processes()
     results = {k: meter.global_avg for k, meter in metric_logger.meters.items()}
-    results['mse'] = np.sqrt(results['mse'])
+    results['mse'] = np.sqrt(results.pop('mse_sq'))
     return results

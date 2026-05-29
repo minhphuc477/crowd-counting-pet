@@ -92,12 +92,12 @@ python scripts/check_qnrf_annotations.py --data_path ./data/UCF-QNRF_ECCV18
 
 ## Training
 
-- The default backbone is now `convnextv2_base` through a shared timm/FPN adapter in [models/backbones/backbone_timm.py](models/backbones/backbone_timm.py). Install `timm` from `requirements.txt`; pass `--no_pretrained_backbone` when running offline.
-- The original `vgg16_bn` path is still available. For that path, download ImageNet pretrained [vgg16_bn](https://download.pytorch.org/models/vgg16_bn-6c64b313.pth), and put it in ```pretrained``` folder. Or you can define your pre-trained model path in [models/backbones/vgg.py](models/backbones/vgg.py)
+- The default backbone remains the paper-compatible `vgg16_bn`. Download ImageNet pretrained [vgg16_bn](https://download.pytorch.org/models/vgg16_bn-6c64b313.pth), and put it in ```pretrained``` folder. Or you can define your pre-trained model path in [models/backbones/vgg.py](models/backbones/vgg.py)
+- timm backbones are available through a shared adapter in [models/backbones/backbone_timm.py](models/backbones/backbone_timm.py). Install `timm` from `requirements.txt`; pass `--no_pretrained_backbone` only when random initialization is intentional.
 
 ### Backbone choice for PET
 
-For PET, `convnextv2_base` is the safest default starting point. It is not the only strong option, but it is the best balance of accuracy, stability, and integration effort for this codebase.
+For PET ablations, keep `vgg16_bn` as the reproduction baseline. `convnextv2_base` is a useful timm starting point, but it is not the default.
 
 - ConvNeXt V2 is a pure CNN, so it fits PET's FPN-style feature flow cleanly.
 - It gives hierarchical features with strong semantic quality, which matters for quadtree splitting and point localization.

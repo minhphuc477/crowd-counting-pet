@@ -103,6 +103,8 @@ def get_args_parser():
                         help='training crop size for crop-based crowd datasets')
     parser.add_argument('--crop_attempts', default=1, type=int)
     parser.add_argument('--min_crop_points', default=0, type=int)
+    parser.add_argument('--eval_max_size', default=1536, type=int,
+                        help='QNRF/UCF validation long-side cap; non-positive disables resizing')
 
     # misc parameters
     parser.add_argument('--device', default='cuda',
@@ -118,6 +120,9 @@ def get_args_parser():
                         help='override the checkpoint split threshold at evaluation time')
     parser.add_argument('--override_split_threshold_quantile', default=None, type=float,
                         help='override the checkpoint split-threshold quantile at evaluation time')
+    parser.add_argument('--checkpoint_model_key', default='auto',
+                        choices=('auto', 'model', 'model_ema', 'model_raw'),
+                        help='checkpoint state to evaluate; auto prefers model_ema when present')
     parser.add_argument('--num_workers', default=2, type=int)
     parser.add_argument('--deterministic', dest='deterministic', action='store_true', default=True)
     parser.add_argument('--no_deterministic', dest='deterministic', action='store_false')
@@ -141,9 +146,10 @@ def merge_checkpoint_args(args, checkpoint):
         if not hasattr(merged, key):
             setattr(merged, key, value)
     runtime_keys = {
-        'resume', 'device', 'vis_dir', 'results_file', 'data_path', 'dataset_file', 'num_workers', 'seed',
+        'resume', 'device', 'vis_dir', 'results_file', 'data_path', 'dataset_file',
+        'eval_max_size', 'num_workers', 'seed',
         'override_score_threshold', 'override_split_threshold', 'override_split_threshold_quantile',
-        'deterministic',
+        'checkpoint_model_key', 'deterministic',
     }
     for key in runtime_keys:
         setattr(merged, key, getattr(args, key))
@@ -227,8 +233,14 @@ def main(args):
 
     # load pretrained model
     cur_epoch = 0
+    eval_model_key = 'model'
     if checkpoint is not None:
-        model_without_ddp.load_state_dict(checkpoint['model'])
+        model_state, eval_model_key = utils.get_checkpoint_model_state(
+            checkpoint,
+            getattr(args, 'checkpoint_model_key', 'auto'),
+        )
+        model_without_ddp.load_state_dict(model_state)
+        print(f'loaded checkpoint model state: {eval_model_key}')
         cur_epoch = checkpoint['epoch'] if 'epoch' in checkpoint else 0
     
     # evaluation
@@ -252,6 +264,7 @@ def main(args):
             'pred_cnt': float(test_stats.get('pred_cnt', 0.0)),
             'gt_cnt': float(test_stats.get('gt_cnt', 0.0)),
             'checkpoint': args.resume,
+            'eval_model': eval_model_key,
         }, indent=2) + "\n", encoding="utf-8")
         print(f'eval results saved to: {results_file}')
 

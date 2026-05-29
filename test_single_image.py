@@ -15,7 +15,7 @@ def get_args_parser():
 
     # model parameters
     # - backbone
-    parser.add_argument('--backbone', default='convnextv2_base', type=str,
+    parser.add_argument('--backbone', default='vgg16_bn', type=str,
                         help="Name of the convolutional backbone to use")
     parser.add_argument('--no_pretrained_backbone', action='store_true',
                         help='initialize the backbone randomly instead of loading timm/ImageNet weights')
@@ -23,6 +23,11 @@ def get_args_parser():
                         help='allow timm backbones to continue with random init if pretrained weights cannot load')
     parser.add_argument('--timm_adapter', default='lite_fpn', choices=('lite_fpn', 'direct', 'fpn'),
                         help='adapter used to map timm features into PET 4x/8x features')
+    parser.add_argument('--fusion_mhf_mode', default='none', choices=('none', 'cem', 'cem_msem', 'full'))
+    parser.add_argument('--fusion_mhf_heads', default=1, type=int)
+    parser.add_argument('--fusion_mhf_position', default='before', choices=('before', 'post'))
+    parser.add_argument('--fusion_mhf_strength', default=1.0, type=float)
+    parser.add_argument('--fusion_mhf_activation', default='gelu', choices=('relu', 'gelu'))
     parser.add_argument('--position_embedding', default='sine', type=str, choices=('sine', 'learned', 'fourier'),
                         help="Type of positional embedding to use on top of the image features")
     # - transformer
@@ -38,6 +43,8 @@ def get_args_parser():
                         help="Number of attention heads inside the transformer's attentions")
     parser.add_argument('--transformer_activation', default='relu', choices=('relu', 'gelu'))
     parser.add_argument('--transformer_norm_style', default='post', choices=('post', 'pre'))
+    parser.add_argument('--decoder_attention', default='softmax', choices=('softmax', 'linear'))
+    parser.add_argument('--decoder_memory_halo', default=0, type=int)
     parser.add_argument('--enc_win_sizes', default='', type=str,
                         help='encoder window sizes as "w,h;w,h;..."; empty keeps paper PET defaults')
     parser.add_argument('--sparse_dec_win_size', default='', type=str,
@@ -46,6 +53,11 @@ def get_args_parser():
                         help='dense decoder window size as "w,h"; empty keeps paper PET default')
     parser.add_argument('--context_patch_size', default='', type=str,
                         help='quadtree splitter context patch size as "w,h"; empty keeps paper PET default')
+    parser.add_argument('--quad_context_mixer', default='none', choices=('none', 'lite'))
+    parser.add_argument('--quad_context_levels', default=2, type=int)
+    parser.add_argument('--quad_context_shift', default=1, type=int)
+    parser.add_argument('--quad_context_mid_dim', default=128, type=int)
+    parser.add_argument('--quad_context_activation', default='gelu', choices=('relu', 'gelu'))
     parser.add_argument('--splitter_head', default='pool', choices=('pool', 'conv'))
     parser.add_argument('--splitter_hidden_dim', default=128, type=int)
     parser.add_argument('--splitter_activation', default='gelu', choices=('relu', 'gelu'))
@@ -65,6 +77,7 @@ def get_args_parser():
     parser.add_argument('--count_loss_start_epoch', default=-1, type=int)
     parser.add_argument('--eos_coef', default=0.5, type=float,
                         help="Relative classification weight of the no-object class")   # cross-entropy weights
+    parser.add_argument('--pet_loss_variant', default='paper', choices=('paper', 'balanced'))
     parser.add_argument('--negative_loss_coef', default=0.1, type=float)
     parser.add_argument('--non_div_loss_coef', default=0.25, type=float)
     parser.add_argument('--quadtree_loss_coef', default=0.1, type=float)
@@ -78,6 +91,7 @@ def get_args_parser():
     # dataset parameters
     parser.add_argument('--dataset_file', default="SHA")
     parser.add_argument('--data_path', default="./data/ShanghaiTech/PartA", type=str)
+    parser.add_argument('--eval_max_size', default=1536, type=int)
 
     # misc parameters
     parser.add_argument('--img_path', default='', help='image path to evaluate')
@@ -92,6 +106,9 @@ def get_args_parser():
                         help='override the checkpoint split threshold at evaluation time')
     parser.add_argument('--override_split_threshold_quantile', default=None, type=float,
                         help='override the checkpoint split-threshold quantile at evaluation time')
+    parser.add_argument('--checkpoint_model_key', default='auto',
+                        choices=('auto', 'model', 'model_ema', 'model_raw'),
+                        help='checkpoint state to evaluate; auto prefers model_ema when present')
     parser.add_argument('--num_workers', default=2, type=int)
 
     # distributed training parameters
@@ -110,8 +127,10 @@ def merge_checkpoint_args(args, checkpoint):
 
     merged = argparse.Namespace(**vars(checkpoint_args))
     runtime_keys = {
-        'resume', 'device', 'vis_dir', 'img_path', 'data_path', 'dataset_file', 'num_workers', 'seed',
+        'resume', 'device', 'vis_dir', 'img_path', 'data_path', 'dataset_file',
+        'eval_max_size', 'num_workers', 'seed',
         'override_score_threshold', 'override_split_threshold', 'override_split_threshold_quantile',
+        'checkpoint_model_key',
     }
     for key in runtime_keys:
         setattr(merged, key, getattr(args, key))
@@ -256,7 +275,12 @@ def main(args):
     model.to(device)
 
     # load pretrained model
-    model.load_state_dict(checkpoint['model'])
+    model_state, eval_model_key = utils.get_checkpoint_model_state(
+        checkpoint,
+        getattr(args, 'checkpoint_model_key', 'auto'),
+    )
+    model.load_state_dict(model_state)
+    print(f'loaded checkpoint model state: {eval_model_key}')
     
     # evaluation
     vis_dir = None if args.vis_dir == "" else args.vis_dir

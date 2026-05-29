@@ -4,6 +4,7 @@ import datetime
 import json
 import math
 import random
+import sys
 import time
 from pathlib import Path
 import os
@@ -101,6 +102,39 @@ BACKBONE_ABLATION_PRESETS = {
         'edgenext_tiny',
     ],
     'full': list(get_supported_timm_backbones()),
+}
+
+ARCHITECTURE_OVERRIDE_KEYS = {
+    'backbone',
+    'timm_adapter',
+    'position_embedding',
+    'dec_layers',
+    'dim_feedforward',
+    'hidden_dim',
+    'dropout',
+    'nheads',
+    'transformer_activation',
+    'transformer_norm_style',
+    'decoder_attention',
+    'decoder_memory_halo',
+    'enc_win_sizes',
+    'sparse_dec_win_size',
+    'dense_dec_win_size',
+    'context_patch_size',
+    'quad_context_mixer',
+    'quad_context_levels',
+    'quad_context_shift',
+    'quad_context_mid_dim',
+    'quad_context_activation',
+    'splitter_head',
+    'splitter_hidden_dim',
+    'splitter_activation',
+    'fusion_mhf_mode',
+    'fusion_mhf_heads',
+    'fusion_mhf_position',
+    'fusion_mhf_strength',
+    'fusion_mhf_activation',
+    'vgg_fpn_main_lr',
 }
 
 
@@ -264,6 +298,8 @@ def get_args_parser():
                         help='number of random crop candidates tried per positive training image')
     parser.add_argument('--min_crop_points', default=0, type=int,
                         help='minimum people desired in a positive training crop')
+    parser.add_argument('--eval_max_size', default=1536, type=int,
+                        help='QNRF/UCF validation long-side cap; non-positive disables resizing')
 
     # misc parameters
     parser.add_argument('--output_dir', default='',
@@ -274,6 +310,8 @@ def get_args_parser():
     parser.add_argument('--resume', default='', help='resume from checkpoint')
     parser.add_argument('--resume_model_only', action='store_true',
                         help='load only model weights from --resume and reset optimizer/scheduler/epoch counters')
+    parser.add_argument('--resume_allow_arch_change', action='store_true',
+                        help='with --resume_model_only, allow explicitly passed architecture flags to override checkpoint args')
     parser.add_argument('--start_epoch', default=0, type=int, metavar='N',
                         help='start epoch')
     parser.add_argument('--num_workers', default=2, type=int)
@@ -291,6 +329,19 @@ def get_args_parser():
                         help='number of distributed processes')
     parser.add_argument('--dist_url', default='env://', help='url used to set up distributed training')
     return parser
+
+
+def get_explicit_arg_names(argv):
+    names = set()
+    for token in argv:
+        if not token.startswith('--'):
+            continue
+        name = token[2:].split('=', 1)[0].replace('-', '_')
+        if name.startswith('no_') and name[3:] == 'deterministic':
+            names.add('deterministic')
+        else:
+            names.add(name)
+    return names
 
 
 def apply_backbone_recipe(args):
@@ -319,9 +370,10 @@ def merge_checkpoint_args(args, checkpoint):
             setattr(merged, key, value)
     runtime_keys = {
         'resume', 'device', 'output_dir', 'seed', 'start_epoch',
-        'resume_model_only', 'num_workers', 'world_size', 'dist_url', 'list_backbones', 'syn_bn', 'deterministic',
+        'resume_model_only', 'resume_allow_arch_change', 'num_workers', 'world_size', 'dist_url',
+        'list_backbones', 'syn_bn', 'deterministic',
         # allow overriding schedule/eval settings at resume time
-        'epochs', 'eval_freq', 'data_path',
+        'epochs', 'eval_freq', 'data_path', 'eval_max_size',
     }
     if getattr(args, 'resume_model_only', False):
         runtime_keys.update({
@@ -329,9 +381,31 @@ def merge_checkpoint_args(args, checkpoint):
             'lr_scheduler', 'lr_drop', 'lr_gamma', 'warmup_epochs', 'hold_epochs',
             'min_lr', 'ema_decay',
         })
+        if getattr(args, 'resume_allow_arch_change', False):
+            explicit_args = set(getattr(args, '_explicit_args', set()))
+            runtime_keys.update(key for key in ARCHITECTURE_OVERRIDE_KEYS if key in explicit_args)
     for key in runtime_keys:
         setattr(merged, key, getattr(args, key))
+    if hasattr(args, '_explicit_args'):
+        setattr(merged, '_explicit_args', getattr(args, '_explicit_args'))
     return merged
+
+
+def resolve_output_dir(args):
+    output_arg = Path(args.output_dir)
+    if output_arg.is_absolute():
+        return output_arg
+    parts = output_arg.parts
+    if parts and parts[0] == 'outputs':
+        return output_arg
+    return Path("./outputs") / args.dataset_file / output_arg
+
+
+def checkpoint_args_snapshot(args):
+    return argparse.Namespace(**{
+        key: value for key, value in vars(args).items()
+        if not key.startswith('_')
+    })
 
 
 def build_optimizer_param_groups(model_without_ddp, args):
@@ -543,7 +617,7 @@ def main(args):
                                 worker_init_fn=seed_worker, generator=data_loader_generator)
 
     # output directory and log
-    output_dir = Path("./outputs") / args.dataset_file / args.output_dir
+    output_dir = resolve_output_dir(args)
     run_log_name = output_dir / 'run_log.txt'
     if utils.is_main_process():
         os.makedirs(output_dir, exist_ok=True)
@@ -558,7 +632,19 @@ def main(args):
         model_key = 'model'
         if model_ema is not None and 'model_raw' in checkpoint and not args.resume_model_only:
             model_key = 'model_raw'
-        model_without_ddp.load_state_dict(checkpoint[model_key])
+        strict_load = not (
+            getattr(args, 'resume_model_only', False)
+            and getattr(args, 'resume_allow_arch_change', False)
+        )
+        incompatible = model_without_ddp.load_state_dict(checkpoint[model_key], strict=strict_load)
+        if not strict_load and utils.is_main_process():
+            missing = getattr(incompatible, 'missing_keys', [])
+            unexpected = getattr(incompatible, 'unexpected_keys', [])
+            print(
+                'non-strict model-only resume:',
+                f'missing_keys={len(missing)}',
+                f'unexpected_keys={len(unexpected)}',
+            )
         if model_ema is not None:
             if args.resume_model_only:
                 model_ema.set(model_without_ddp)
@@ -582,7 +668,7 @@ def main(args):
             'optimizer': optimizer.state_dict(),
             'lr_scheduler': lr_scheduler.state_dict(),
             'epoch': epoch,
-            'args': args,
+            'args': checkpoint_args_snapshot(args),
             'best_mae': best_mae,
             'best_mse': best_mse,
             'best_epoch': best_epoch,
@@ -734,4 +820,5 @@ def main(args):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser('PET training and evaluation script', parents=[get_args_parser()])
     args = parser.parse_args()
+    args._explicit_args = get_explicit_arg_names(sys.argv[1:])
     main(args)

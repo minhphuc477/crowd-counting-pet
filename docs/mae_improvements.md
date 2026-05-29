@@ -124,8 +124,8 @@ CUDA_VISIBLE_DEVICES=0 python main.py \
 ```
 
 For UCF-QNRF, use the larger official split through `--dataset_file QNRF`.
-Training still uses 256x256 crops, while validation keeps the original image
-resolution:
+Training still uses 256x256 crops, while validation downsizes the long image
+side to 1536 by default, matching the original PET preprocessing protocol:
 
 ```bash
 CUDA_VISIBLE_DEVICES=0 python main.py \
@@ -140,6 +140,7 @@ CUDA_VISIBLE_DEVICES=0 python main.py \
   --lr_backbone 1e-5 \
   --lr_scheduler step \
   --pet_loss_variant paper \
+  --eval_max_size 1536 \
   --score_threshold 0.5 \
   --split_threshold 0.5 \
   --seed 42
@@ -179,7 +180,7 @@ CUDA_VISIBLE_DEVICES=0 python main.py \
   --backbone vgg16_bn \
   --resume outputs/SHA/vgg16_bn_step/best_checkpoint.pth \
   --resume_model_only \
-  --output_dir outputs/SHA/vgg16_bn_best_ft_ema \
+  --output_dir vgg16_bn_best_ft_ema \
   --epochs 500 \
   --eval_freq 5 \
   --batch_size 8 \

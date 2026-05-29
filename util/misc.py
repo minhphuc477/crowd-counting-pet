@@ -391,6 +391,20 @@ def save_on_master(*args, **kwargs):
         torch.save(*args, **kwargs)
 
 
+def get_checkpoint_model_state(checkpoint, model_key='auto'):
+    """Select a model state from a PET checkpoint for inference/evaluation."""
+    if model_key == 'auto':
+        if 'model_ema' in checkpoint:
+            return checkpoint['model_ema'], 'model_ema'
+        if 'model' in checkpoint:
+            return checkpoint['model'], 'model'
+        raise KeyError('checkpoint does not contain a model state')
+    if model_key not in checkpoint:
+        available = ', '.join(sorted(k for k in checkpoint.keys() if k.startswith('model')))
+        raise KeyError(f'checkpoint does not contain {model_key!r}; available model keys: {available}')
+    return checkpoint[model_key], model_key
+
+
 def init_distributed_mode(args):
     if 'RANK' in os.environ and 'WORLD_SIZE' in os.environ:
         args.rank = int(os.environ["RANK"])

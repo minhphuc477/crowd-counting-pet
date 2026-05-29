@@ -102,6 +102,12 @@ def get_args():
         help="Patch size for inference",
     )
     parser.add_argument(
+        "--eval_max_size",
+        type=int,
+        default=1536,
+        help="QNRF/UCF validation long-side cap; non-positive disables resizing",
+    )
+    parser.add_argument(
         "--override_score_threshold",
         type=float,
         default=None,
@@ -119,6 +125,12 @@ def get_args():
         default=None,
         help="Override the checkpoint split-threshold quantile during evaluation",
     )
+    parser.add_argument(
+        "--checkpoint_model_key",
+        default="auto",
+        choices=("auto", "model", "model_ema", "model_raw"),
+        help="checkpoint state to evaluate; auto prefers model_ema when present",
+    )
     return parser.parse_args()
 
 
@@ -129,8 +141,9 @@ def load_checkpoint(model, checkpoint_path, device):
         return False
 
     checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
-    model.load_state_dict(checkpoint["model"])
-    print(f"Loaded checkpoint from {checkpoint_path}")
+    model_state, model_key = utils.get_checkpoint_model_state(checkpoint)
+    model.load_state_dict(model_state)
+    print(f"Loaded checkpoint from {checkpoint_path} ({model_key})")
     return checkpoint
 
 
@@ -148,7 +161,7 @@ def merge_checkpoint_args(args, checkpoint):
     runtime_keys = {
         'device', 'checkpoint_dir', 'seeds', 'batch_size', 'num_workers', 'data_path', 'dataset_file',
         'ensemble_method', 'override_score_threshold', 'override_split_threshold',
-        'override_split_threshold_quantile',
+        'override_split_threshold_quantile', 'checkpoint_model_key', 'eval_max_size',
     }
     for key in runtime_keys:
         setattr(merged, key, getattr(args, key))
@@ -211,6 +224,7 @@ def main():
             data_path=args.data_path,
             dataset_file=args.dataset_file,
             patch_size=args.patch_size,
+            eval_max_size=args.eval_max_size,
         ),
     )
     eval_batch_size = 1
@@ -240,7 +254,15 @@ def main():
         model_args = argparse.Namespace(
             backbone=args.backbone,
             no_pretrained_backbone=False,
+            allow_random_backbone_fallback=False,
+            timm_adapter='lite_fpn',
             device=str(device),  # Required by build_pet
+            vgg_fpn_main_lr=False,
+            fusion_mhf_mode='none',
+            fusion_mhf_heads=1,
+            fusion_mhf_position='before',
+            fusion_mhf_strength=1.0,
+            fusion_mhf_activation='gelu',
             position_embedding="sine",
             hidden_dim=256,
             nheads=8,
@@ -248,10 +270,17 @@ def main():
             dropout=0.0,
             transformer_activation='relu',
             transformer_norm_style='post',
+            decoder_attention='softmax',
+            decoder_memory_halo=0,
             enc_win_sizes='',
             sparse_dec_win_size='',
             dense_dec_win_size='',
             context_patch_size='',
+            quad_context_mixer='none',
+            quad_context_levels=2,
+            quad_context_shift=1,
+            quad_context_mid_dim=128,
+            quad_context_activation='gelu',
             splitter_head='pool',
             splitter_hidden_dim=128,
             splitter_activation='gelu',
@@ -263,6 +292,7 @@ def main():
             count_loss_type='log_l1',
             count_loss_start_epoch=-1,
             eos_coef=0.5,
+            pet_loss_variant='paper',
             negative_loss_coef=0.1,
             non_div_loss_coef=0.25,
             quadtree_loss_coef=0.1,
@@ -285,7 +315,11 @@ def main():
         
         model, _ = build_model(model_args)
         model = model.to(device)
-        model.load_state_dict(checkpoint["model"])
+        model_state, model_key = utils.get_checkpoint_model_state(
+            checkpoint,
+            getattr(model_args, 'checkpoint_model_key', 'auto'),
+        )
+        model.load_state_dict(model_state)
         
         # Evaluate
         mae = evaluate_single_seed(model, data_loader_val, device)
@@ -295,6 +329,7 @@ def main():
             print(f"  Seed {seed}: MAE = {mae:.2f}")
             print(
                 f"    checkpoint={checkpoint_path} "
+                f"model_key={model_key} "
                 f"score_threshold={model_args.score_threshold} "
                 f"split_threshold={model_args.split_threshold} "
                 f"split_q={model_args.split_threshold_quantile}"

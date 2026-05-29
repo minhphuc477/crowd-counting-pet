@@ -8,8 +8,6 @@ import cv2
 import scipy.io as io
 import torch.nn.functional as F
 import torchvision.transforms as standard_transforms
-import warnings
-warnings.filterwarnings('ignore')
 
 IMAGE_EXTENSIONS = ('.jpg', '.jpeg', '.png', '.bmp')
 GT_DIR_NAMES = ('ground-truth', 'ground_truth', 'groundtruth')
@@ -227,12 +225,20 @@ def load_points(gt_path):
     except (OSError, ValueError) as exc:
         raise ValueError(f'Could not read annotation file {gt_path}: {exc}') from exc
 
-    if 'image_info' not in mat:
-        raise ValueError(f'Annotation file {gt_path} does not contain image_info')
-
-    points = _original_shanghai_points(mat['image_info'])
+    points = None
+    if 'image_info' in mat:
+        points = _original_shanghai_points(mat['image_info'])
+        if points is None:
+            points = _find_points_array(mat['image_info'])
+    if points is None and 'annPoints' in mat:
+        points = _normalize_points_array(mat['annPoints'])
     if points is None:
-        points = _find_points_array(mat['image_info'])
+        for key, value in mat.items():
+            if key.startswith('__'):
+                continue
+            points = _find_points_array(value)
+            if points is not None:
+                break
     if points is None:
         raise ValueError(f'Could not find Nx2 point array in annotation file {gt_path}')
 

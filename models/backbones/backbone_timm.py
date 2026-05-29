@@ -318,7 +318,7 @@ def build_backbone_timm(args):
     name = getattr(args, 'backbone', 'convnextv2_base')
     if not is_timm_backbone(name):
         raise ValueError(f'Unsupported timm backbone: {name}')
-    adapter = getattr(args, 'timm_adapter', 'fpn')
+    adapter = getattr(args, 'timm_adapter', 'lite_fpn')
     position_embedding = build_position_encoding(args)
     backbone = TimmBackbone(
         model_name=name,

@@ -1,6 +1,5 @@
 import os
 import random
-import warnings
 
 import cv2
 import numpy as np
@@ -13,8 +12,6 @@ from torch.utils.data import Dataset
 
 from .SHA import IMAGE_EXTENSIONS, random_crop_with_retries
 
-warnings.filterwarnings('ignore')
-
 
 class QNRF(Dataset):
     def __init__(
@@ -26,6 +23,7 @@ class QNRF(Dataset):
         patch_size=256,
         crop_attempts=1,
         min_crop_points=0,
+        eval_max_size=1536,
     ):
         self.root_path = data_root
         self.split_name = 'Train' if train else 'Test'
@@ -67,6 +65,7 @@ class QNRF(Dataset):
         self.patch_size = patch_size
         self.crop_attempts = max(1, int(crop_attempts))
         self.min_crop_points = max(0, int(min_crop_points))
+        self.eval_max_size = int(eval_max_size) if eval_max_size is not None else 1536
 
     def compute_density(self, points):
         points_tensor = torch.from_numpy(points.copy())
@@ -87,6 +86,9 @@ class QNRF(Dataset):
         gt_path = self.gt_list[img_path]
         img, points = load_data((img_path, gt_path))
         points = points.astype(float)
+
+        if not self.train and self.eval_max_size > 0:
+            img, points = resize_long_side(img, points, self.eval_max_size)
 
         if self.transform is not None:
             img = self.transform(img)
@@ -168,6 +170,19 @@ def load_data(img_gt_path):
     height, width = img.shape[:2]
     img = Image.fromarray(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
     points = load_points(gt_path, image_size=(height, width))
+    return img, points
+
+
+def resize_long_side(img, points, max_size):
+    width, height = img.size
+    factor = max(width / float(max_size), height / float(max_size), 1.0)
+    if factor <= 1.0:
+        return img, points
+    new_width = max(1, int(width / factor))
+    new_height = max(1, int(height / factor))
+    img = img.resize((new_width, new_height), Image.BILINEAR)
+    if points.shape[0] > 0:
+        points = points / factor
     return img, points
 
 
@@ -282,5 +297,10 @@ def build(image_set, args):
             min_crop_points=getattr(args, 'min_crop_points', 0),
         )
     if image_set == 'val':
-        return QNRF(data_root, train=False, transform=transform)
+        return QNRF(
+            data_root,
+            train=False,
+            transform=transform,
+            eval_max_size=getattr(args, 'eval_max_size', 1536),
+        )
     raise ValueError(f'Unsupported image_set for QNRF: {image_set}')
