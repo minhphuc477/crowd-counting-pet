@@ -127,6 +127,15 @@ For UCF-QNRF, use the larger official split through `--dataset_file QNRF`.
 Training still uses 256x256 crops, while validation downsizes the long image
 side to 1536 by default, matching the original PET preprocessing protocol:
 
+Download and validate first:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y aria2 unzip
+bash scripts/download_ucf_qnrf.sh
+python scripts/check_qnrf_annotations.py --data_path ./data/UCF-QNRF_ECCV18
+```
+
 ```bash
 CUDA_VISIBLE_DEVICES=0 python main.py \
   --dataset_file QNRF \
