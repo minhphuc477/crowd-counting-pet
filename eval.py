@@ -44,6 +44,10 @@ def get_args_parser():
                         help="Number of attention heads inside the transformer's attentions")
     parser.add_argument('--transformer_activation', default='relu', choices=('relu', 'gelu'))
     parser.add_argument('--transformer_norm_style', default='post', choices=('post', 'pre'))
+    parser.add_argument('--decoder_attention', default='softmax', choices=('softmax', 'linear'),
+                        help='attention used inside decoder layers; softmax matches official PET')
+    parser.add_argument('--decoder_memory_halo', default=0, type=int,
+                        help='extra 8x encoder-feature tokens around each decoder cross-attention memory window')
     parser.add_argument('--enc_win_sizes', default='', type=str,
                         help='encoder window sizes as "w,h;w,h;..."; empty keeps paper PET defaults')
     parser.add_argument('--sparse_dec_win_size', default='', type=str,

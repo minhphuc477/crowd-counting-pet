@@ -23,7 +23,7 @@ from models.backbones import get_supported_timm_backbones
 from util.misc import nested_tensor_from_tensor_list
 
 
-def make_args(backbone, device, timm_adapter):
+def make_args(backbone, device, timm_adapter, decoder_attention, decoder_memory_halo):
     return SimpleNamespace(
         device=device,
         backbone=backbone,
@@ -37,6 +37,8 @@ def make_args(backbone, device, timm_adapter):
         nheads=8,
         transformer_activation='relu',
         transformer_norm_style='post',
+        decoder_attention=decoder_attention,
+        decoder_memory_halo=decoder_memory_halo,
         enc_win_sizes='',
         sparse_dec_win_size='',
         dense_dec_win_size='',
@@ -66,8 +68,8 @@ def make_args(backbone, device, timm_adapter):
     )
 
 
-def check_backbone(backbone, image_size, device, timm_adapter):
-    args = make_args(backbone, device, timm_adapter)
+def check_backbone(backbone, image_size, device, timm_adapter, decoder_attention, decoder_memory_halo):
+    args = make_args(backbone, device, timm_adapter, decoder_attention, decoder_memory_halo)
     model, _ = build_model(args)
     model.to(device).eval()
 
@@ -95,6 +97,8 @@ def parse_args():
     parser.add_argument('--height', type=int, default=256)
     parser.add_argument('--width', type=int, default=256)
     parser.add_argument('--device', default='cpu')
+    parser.add_argument('--decoder_attention', default='softmax', choices=('softmax', 'linear'))
+    parser.add_argument('--decoder_memory_halo', default=0, type=int)
     return parser.parse_args()
 
 
@@ -104,7 +108,14 @@ def main():
     failures = []
     for backbone in backbones:
         try:
-            check_backbone(backbone, (args.height, args.width), args.device, args.timm_adapter)
+            check_backbone(
+                backbone,
+                (args.height, args.width),
+                args.device,
+                args.timm_adapter,
+                args.decoder_attention,
+                args.decoder_memory_halo,
+            )
         except Exception as exc:
             failures.append((backbone, exc))
             print(f'{backbone}: FAIL - {exc}')

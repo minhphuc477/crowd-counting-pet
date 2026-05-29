@@ -64,12 +64,15 @@ class WinDecoderTransformer(nn.Module):
                  dim_feedforward=512, dropout=0.0,
                  activation="relu",
                  norm_style="post",
+                 decoder_attention="softmax",
+                 decoder_memory_halo=0,
                  return_intermediate_dec=False,
                  dec_win_w=16, dec_win_h=8,
                  ):
         super().__init__()
         decoder_layer = DecoderLayer(d_model, nhead, dim_feedforward,
-                                                dropout, activation, norm_style=norm_style)
+                                                dropout, activation, norm_style=norm_style,
+                                                attention_type=decoder_attention)
 
         decoder_norm = nn.LayerNorm(d_model)
         self.decoder = TransformerDecoder(decoder_layer, num_decoder_layers, decoder_norm,
@@ -80,6 +83,7 @@ class WinDecoderTransformer(nn.Module):
         self.d_model = d_model
         self.nhead = nhead
         self.num_layer = num_decoder_layers
+        self.memory_halo = max(0, int(decoder_memory_halo))
 
     def _reset_parameters(self):
         for p in self.parameters():
@@ -125,12 +129,14 @@ class WinDecoderTransformer(nn.Module):
         # Match the official PET decoder path: prune the encoder memory with the
         # same active-window index used for query generation.
         div_ratio = 1 if kwargs['pq_stride'] == 8 else 2
-        memory_win, pos_embed_win, mask_win = enc_win_partition(
+        memory_win, pos_embed_win, mask_win = enc_win_partition_with_halo(
             src,
             pos_embed,
             mask,
             int(self.dec_win_h / div_ratio),
             int(self.dec_win_w / div_ratio),
+            self.memory_halo,
+            self.memory_halo,
         )
         
         # dynamic decoder forward
@@ -298,10 +304,10 @@ class EncoderLayer(nn.Module):
 
 class DecoderLayer(nn.Module):
     def __init__(self, d_model, nhead, dim_feedforward=512, dropout=0.0,
-                 activation="relu", norm_style="post"):
+                 activation="relu", norm_style="post", attention_type="softmax"):
         super().__init__()
-        self.self_attn = nn.MultiheadAttention(d_model, nhead, dropout=dropout)
-        self.multihead_attn = nn.MultiheadAttention(d_model, nhead, dropout=dropout)
+        self.self_attn = build_attention(attention_type, d_model, nhead, dropout)
+        self.multihead_attn = build_attention(attention_type, d_model, nhead, dropout)
 
         # feedforward layer
         self.linear1 = nn.Linear(d_model, dim_feedforward)
@@ -412,8 +418,76 @@ def build_decoder(args, **kwargs):
         num_decoder_layers=args.dec_layers,
         activation=getattr(args, 'transformer_activation', 'relu'),
         norm_style=getattr(args, 'transformer_norm_style', 'post'),
+        decoder_attention=getattr(args, 'decoder_attention', 'softmax'),
+        decoder_memory_halo=getattr(args, 'decoder_memory_halo', 0),
         return_intermediate_dec=True,
     )
+
+
+class LinearAttention(nn.Module):
+    """Kernelized linear attention matching nn.MultiheadAttention's call shape."""
+
+    def __init__(self, embed_dim, num_heads, dropout=0.0, eps=1e-6):
+        super().__init__()
+        if embed_dim % num_heads != 0:
+            raise ValueError(f'embed_dim={embed_dim} must be divisible by num_heads={num_heads}')
+        self.embed_dim = embed_dim
+        self.num_heads = num_heads
+        self.head_dim = embed_dim // num_heads
+        self.eps = eps
+        self.q_proj = nn.Linear(embed_dim, embed_dim)
+        self.k_proj = nn.Linear(embed_dim, embed_dim)
+        self.v_proj = nn.Linear(embed_dim, embed_dim)
+        self.out_proj = nn.Linear(embed_dim, embed_dim)
+        self.dropout = nn.Dropout(dropout)
+
+    @staticmethod
+    def kernel(x):
+        return F.elu(x) + 1.0
+
+    def _project(self, proj, x):
+        seq_len, batch_size, _ = x.shape
+        x = proj(x)
+        x = x.view(seq_len, batch_size, self.num_heads, self.head_dim)
+        return x.permute(1, 2, 0, 3)
+
+    def forward(
+        self,
+        query,
+        key,
+        value,
+        attn_mask=None,
+        key_padding_mask=None,
+        need_weights=False,
+        **kwargs,
+    ):
+        if attn_mask is not None:
+            raise NotImplementedError('linear decoder attention does not support attn_mask')
+        q = self.kernel(self._project(self.q_proj, query))
+        k = self.kernel(self._project(self.k_proj, key))
+        v = self._project(self.v_proj, value)
+
+        if key_padding_mask is not None:
+            valid = (~key_padding_mask).to(dtype=k.dtype, device=k.device)
+            valid = valid[:, None, :, None]
+            k = k * valid
+            v = v * valid
+
+        kv = torch.einsum('bhsd,bhse->bhde', k, v)
+        k_sum = k.sum(dim=2)
+        denom = torch.einsum('bhld,bhd->bhl', q, k_sum).clamp_min(self.eps)
+        out = torch.einsum('bhld,bhde,bhl->bhle', q, kv, denom.reciprocal())
+        out = out.permute(2, 0, 1, 3).reshape(query.shape[0], query.shape[1], self.embed_dim)
+        out = self.out_proj(self.dropout(out))
+        return out, None
+
+
+def build_attention(attention_type, d_model, nhead, dropout):
+    if attention_type == 'softmax':
+        return nn.MultiheadAttention(d_model, nhead, dropout=dropout)
+    if attention_type == 'linear':
+        return LinearAttention(d_model, nhead, dropout=dropout)
+    raise ValueError(f'Unsupported decoder attention: {attention_type}. Use "softmax" or "linear".')
 
 
 def _get_activation_fn(activation):

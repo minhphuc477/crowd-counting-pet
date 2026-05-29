@@ -37,11 +37,16 @@ The branch adds:
 - `--lr_drop` / `--lr_gamma`: optional real StepLR decay. The original PET
   behavior is preserved by default because `--lr_drop` is negative, which drops
   only after `--epochs`.
+- `--decoder_attention linear`: experimental kernelized linear attention inside
+  decoder layers. `softmax` remains the default and matches official PET.
+- `--decoder_memory_halo`: experimental overlap for decoder cross-attention
+  memory windows. Query windows stay non-overlapped, so each point query remains
+  unique and predictions are not duplicated.
 
 Official PET reproduction remains:
 
 ```bash
---splitter_head pool --count_loss_coef 0.0 --transformer_activation relu --transformer_norm_style post
+--splitter_head pool --count_loss_coef 0.0 --transformer_activation relu --transformer_norm_style post --decoder_attention softmax --decoder_memory_halo 0
 ```
 
 For VGG paper-style runs, leave `--vgg_fpn_main_lr` off. That keeps the
@@ -192,6 +197,8 @@ If training is stable but undercounts or overcounts persist, sweep:
 
 ```text
 --transformer_activation gelu --transformer_norm_style pre --dim_feedforward 1024 --dec_layers 3
+--decoder_memory_halo 1
+--decoder_attention linear
 --count_loss_coef 0.005
 --count_loss_coef 0.02
 --count_loss_gate soft
