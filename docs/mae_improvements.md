@@ -115,6 +115,28 @@ CUDA_VISIBLE_DEVICES=0 python main.py \
   --seed 42
 ```
 
+For UCF-QNRF, use the larger official split through `--dataset_file QNRF`.
+Training still uses 256x256 crops, while validation keeps the original image
+resolution:
+
+```bash
+CUDA_VISIBLE_DEVICES=0 python main.py \
+  --dataset_file QNRF \
+  --data_path ./data/UCF-QNRF_ECCV18 \
+  --backbone vgg16_bn \
+  --output_dir vgg16_bn_paper \
+  --epochs 1500 \
+  --eval_freq 5 \
+  --batch_size 8 \
+  --lr 1e-4 \
+  --lr_backbone 1e-5 \
+  --lr_scheduler step \
+  --pet_loss_variant paper \
+  --score_threshold 0.5 \
+  --split_threshold 0.5 \
+  --seed 42
+```
+
 If MAE peaks early and then degrades while training loss keeps decreasing, test
 a real LR drop instead of running at `1e-4` for all 1500 epochs:
 

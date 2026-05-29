@@ -1,18 +1,26 @@
 from .SHA import build as build_sha
+from .QNRF import build as build_qnrf
 from pathlib import Path
 
 data_paths = {
     'SHA': ('./data/ShanghaiTech/part_A/', './data/ShanghaiTech/part_A_final/'),
     'SHB': ('./data/ShanghaiTech/part_B/', './data/ShanghaiTech/part_B_final/'),
+    'QNRF': ('./data/UCF-QNRF_ECCV18/', './data/UCF-QNRF/', './data/QNRF/'),
+    'UCF': ('./data/UCF-QNRF_ECCV18/', './data/UCF-QNRF/', './data/QNRF/'),
 }
 
 dataset_dir_names = {
     'SHA': ('part_A', 'part_A_final'),
     'SHB': ('part_B', 'part_B_final'),
+    'QNRF': ('UCF-QNRF_ECCV18', 'UCF-QNRF', 'QNRF'),
+    'UCF': ('UCF-QNRF_ECCV18', 'UCF-QNRF', 'QNRF'),
 }
 
 
-def _split_images_dir(data_root, image_set):
+def _split_images_dir(data_root, image_set, dataset_file):
+    if dataset_file in ('QNRF', 'UCF'):
+        split = 'Train' if image_set == 'train' else 'Test'
+        return Path(data_root) / split
     split = 'train_data' if image_set == 'train' else 'test_data'
     return Path(data_root) / split / 'images'
 
@@ -71,10 +79,13 @@ def _candidate_data_paths(dataset_file, requested_path):
 def _resolve_data_path(dataset_file, requested_path, image_set):
     candidates = _candidate_data_paths(dataset_file, requested_path)
     for candidate in candidates:
-        if _split_images_dir(candidate, image_set).is_dir():
+        if _split_images_dir(candidate, image_set, dataset_file).is_dir():
             return str(candidate)
 
-    tried = '\n'.join(f'  - {_split_images_dir(candidate, image_set)}' for candidate in candidates)
+    tried = '\n'.join(
+        f'  - {_split_images_dir(candidate, image_set, dataset_file)}'
+        for candidate in candidates
+    )
     raise FileNotFoundError(
         f'Could not find {dataset_file} {image_set} images directory. Tried:\n{tried}'
     )
@@ -84,4 +95,7 @@ def build_dataset(image_set, args):
     if args.dataset_file in ('SHA', 'SHB'):
         args.data_path = _resolve_data_path(args.dataset_file, getattr(args, 'data_path', None), image_set)
         return build_sha(image_set, args)
+    if args.dataset_file in ('QNRF', 'UCF'):
+        args.data_path = _resolve_data_path(args.dataset_file, getattr(args, 'data_path', None), image_set)
+        return build_qnrf(image_set, args)
     raise ValueError(f'dataset {args.dataset_file} not supported')

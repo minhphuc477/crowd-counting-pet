@@ -239,7 +239,7 @@ def get_args_parser():
     parser.add_argument('--dataset_file', default="SHA")
     parser.add_argument('--data_path', default="", type=str)
     parser.add_argument('--patch_size', default=256, type=int,
-                        help='training crop size for SHA')
+                        help='training crop size for crop-based crowd datasets')
     parser.add_argument('--crop_attempts', default=1, type=int,
                         help='number of random crop candidates tried per positive training image')
     parser.add_argument('--min_crop_points', default=0, type=int,
