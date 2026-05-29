@@ -23,7 +23,7 @@ from models.backbones import get_supported_timm_backbones
 from util.misc import nested_tensor_from_tensor_list
 
 
-def make_args(backbone, device, timm_adapter, decoder_attention, decoder_memory_halo):
+def make_args(backbone, device, timm_adapter, decoder_attention, decoder_memory_halo, quad_context_mixer):
     return SimpleNamespace(
         device=device,
         backbone=backbone,
@@ -43,6 +43,11 @@ def make_args(backbone, device, timm_adapter, decoder_attention, decoder_memory_
         sparse_dec_win_size='',
         dense_dec_win_size='',
         context_patch_size='',
+        quad_context_mixer=quad_context_mixer,
+        quad_context_levels=2,
+        quad_context_shift=1,
+        quad_context_mid_dim=128,
+        quad_context_activation='gelu',
         splitter_head='pool',
         splitter_hidden_dim=128,
         splitter_activation='gelu',
@@ -68,8 +73,8 @@ def make_args(backbone, device, timm_adapter, decoder_attention, decoder_memory_
     )
 
 
-def check_backbone(backbone, image_size, device, timm_adapter, decoder_attention, decoder_memory_halo):
-    args = make_args(backbone, device, timm_adapter, decoder_attention, decoder_memory_halo)
+def check_backbone(backbone, image_size, device, timm_adapter, decoder_attention, decoder_memory_halo, quad_context_mixer):
+    args = make_args(backbone, device, timm_adapter, decoder_attention, decoder_memory_halo, quad_context_mixer)
     model, _ = build_model(args)
     model.to(device).eval()
 
@@ -99,6 +104,7 @@ def parse_args():
     parser.add_argument('--device', default='cpu')
     parser.add_argument('--decoder_attention', default='softmax', choices=('softmax', 'linear'))
     parser.add_argument('--decoder_memory_halo', default=0, type=int)
+    parser.add_argument('--quad_context_mixer', default='none', choices=('none', 'lite'))
     return parser.parse_args()
 
 
@@ -115,6 +121,7 @@ def main():
                 args.timm_adapter,
                 args.decoder_attention,
                 args.decoder_memory_halo,
+                args.quad_context_mixer,
             )
         except Exception as exc:
             failures.append((backbone, exc))

@@ -188,6 +188,16 @@ def get_args_parser():
                         help='dense decoder window size as "w,h"; empty keeps paper PET default')
     parser.add_argument('--context_patch_size', default='', type=str,
                         help='quadtree splitter context patch size as "w,h"; empty keeps paper PET default')
+    parser.add_argument('--quad_context_mixer', default='none', choices=('none', 'lite'),
+                        help='optional quadtree-aware context mixer after the encoder; none matches paper PET')
+    parser.add_argument('--quad_context_levels', default=2, type=int,
+                        help='number of quadtree parent pooling levels used by --quad_context_mixer lite')
+    parser.add_argument('--quad_context_shift', default=1, type=int,
+                        help='feature-token shift used for shifted parent context in --quad_context_mixer lite')
+    parser.add_argument('--quad_context_mid_dim', default=128, type=int,
+                        help='hidden channels for the quad context mixer gate')
+    parser.add_argument('--quad_context_activation', default='gelu', choices=('relu', 'gelu'),
+                        help='activation used by --quad_context_mixer lite')
     parser.add_argument('--splitter_head', default='pool', choices=('pool', 'conv'),
                         help='quadtree splitter head; pool matches official PET, conv adds local context')
     parser.add_argument('--splitter_hidden_dim', default=128, type=int,

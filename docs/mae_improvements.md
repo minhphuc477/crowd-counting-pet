@@ -42,11 +42,16 @@ The branch adds:
 - `--decoder_memory_halo`: experimental overlap for decoder cross-attention
   memory windows. Query windows stay non-overlapped, so each point query remains
   unique and predictions are not duplicated.
+- `--quad_context_mixer lite`: an experimental PET-native context mixer inspired
+  by QuadMamba's learned coarse/fine quadtree locality idea. It does not use
+  Mamba or selective-scan kernels. It adds a zero-initialized residual after the
+  PET encoder, mixing local context with shifted quadtree parent context before
+  the splitter and decoder memory.
 
 Official PET reproduction remains:
 
 ```bash
---splitter_head pool --count_loss_coef 0.0 --transformer_activation relu --transformer_norm_style post --decoder_attention softmax --decoder_memory_halo 0
+--splitter_head pool --count_loss_coef 0.0 --transformer_activation relu --transformer_norm_style post --decoder_attention softmax --decoder_memory_halo 0 --quad_context_mixer none
 ```
 
 For VGG paper-style runs, leave `--vgg_fpn_main_lr` off. That keeps the
@@ -181,6 +186,35 @@ CUDA_VISIBLE_DEVICES=0 python main.py \
   --lr_drop 250 \
   --lr_gamma 0.1 \
   --ema_decay 0.999 \
+  --pet_loss_variant paper \
+  --score_threshold 0.5 \
+  --split_threshold 0.5 \
+  --seed 42
+```
+
+## Quad Context Ablation
+
+Use this when you want a PET-specific idea inspired by QuadMamba without
+copying its VMamba/selective-scan architecture. Keep the paper splitter and
+loss first, then only add the context mixer:
+
+```bash
+CUDA_VISIBLE_DEVICES=0 python main.py \
+  --dataset_file SHA \
+  --data_path ./data/ShanghaiTech/part_A \
+  --backbone vgg16_bn \
+  --output_dir vgg16_bn_quadctx_lite \
+  --epochs 1500 \
+  --eval_freq 5 \
+  --batch_size 8 \
+  --lr 1e-4 \
+  --lr_backbone 1e-5 \
+  --lr_scheduler step \
+  --quad_context_mixer lite \
+  --quad_context_levels 2 \
+  --quad_context_shift 1 \
+  --splitter_head pool \
+  --count_loss_coef 0.0 \
   --pet_loss_variant paper \
   --score_threshold 0.5 \
   --split_threshold 0.5 \

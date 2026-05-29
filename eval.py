@@ -56,6 +56,11 @@ def get_args_parser():
                         help='dense decoder window size as "w,h"; empty keeps paper PET default')
     parser.add_argument('--context_patch_size', default='', type=str,
                         help='quadtree splitter context patch size as "w,h"; empty keeps paper PET default')
+    parser.add_argument('--quad_context_mixer', default='none', choices=('none', 'lite'))
+    parser.add_argument('--quad_context_levels', default=2, type=int)
+    parser.add_argument('--quad_context_shift', default=1, type=int)
+    parser.add_argument('--quad_context_mid_dim', default=128, type=int)
+    parser.add_argument('--quad_context_activation', default='gelu', choices=('relu', 'gelu'))
     parser.add_argument('--splitter_head', default='pool', choices=('pool', 'conv'))
     parser.add_argument('--splitter_hidden_dim', default=128, type=int)
     parser.add_argument('--splitter_activation', default='gelu', choices=('relu', 'gelu'))

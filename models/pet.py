@@ -208,6 +208,86 @@ def _make_group_norm(num_channels):
     return nn.GroupNorm(groups, num_channels)
 
 
+class QuadContextMixer(nn.Module):
+    """Lightweight quadtree-aware residual context mixer for PET encoder features.
+
+    This is intentionally not a Mamba/selective-scan block. It borrows the
+    useful principle that each token should see both fine local context and
+    coarser quadtree parent context, while keeping PET's decoder unchanged.
+    """
+    def __init__(self, hidden_dim, mid_dim=128, levels=2, shift=1, activation='gelu'):
+        super().__init__()
+        self.levels = max(1, int(levels))
+        self.shift = max(0, int(shift))
+        mid_dim = max(1, int(mid_dim))
+
+        if activation == 'gelu':
+            act_gate = nn.GELU()
+            act_local = nn.GELU()
+        elif activation == 'relu':
+            act_gate = nn.ReLU(inplace=True)
+            act_local = nn.ReLU(inplace=True)
+        else:
+            raise ValueError(f'Unsupported quad context activation: {activation}. Use "gelu" or "relu".')
+
+        self.local_context = nn.Sequential(
+            nn.Conv2d(hidden_dim, hidden_dim, 3, padding=1, groups=hidden_dim, bias=False),
+            _make_group_norm(hidden_dim),
+            act_local,
+            nn.Conv2d(hidden_dim, hidden_dim, 1, bias=False),
+        )
+        self.coarse_context = nn.Conv2d(hidden_dim, hidden_dim, 1, bias=False)
+        self.gate = nn.Sequential(
+            nn.Conv2d(hidden_dim, mid_dim, 1, bias=False),
+            _make_group_norm(mid_dim),
+            act_gate,
+            nn.Conv2d(mid_dim, 1, 1),
+        )
+        self.out_proj = nn.Conv2d(hidden_dim, hidden_dim, 1)
+        nn.init.zeros_(self.out_proj.weight)
+        nn.init.zeros_(self.out_proj.bias)
+
+    def _pool_to_parent(self, x, pool_size):
+        h, w = x.shape[-2:]
+        kernel_h = min(int(pool_size), h)
+        kernel_w = min(int(pool_size), w)
+        pooled = F.avg_pool2d(
+            x,
+            kernel_size=(kernel_h, kernel_w),
+            stride=(kernel_h, kernel_w),
+            ceil_mode=True,
+            count_include_pad=False,
+        )
+        return F.interpolate(pooled, size=(h, w), mode='nearest')
+
+    def _quadtree_parent_context(self, x):
+        contexts = []
+        for level in range(self.levels):
+            contexts.append(self._pool_to_parent(x, 2 ** (level + 1)))
+        return torch.stack(contexts, dim=0).mean(dim=0)
+
+    def _shifted_parent_context(self, x):
+        base_context = self._quadtree_parent_context(x)
+        if self.shift <= 0:
+            return base_context
+
+        shift_h = min(self.shift, max(1, x.shape[-2] - 1))
+        shift_w = min(self.shift, max(1, x.shape[-1] - 1))
+        contexts = [base_context]
+        for shift in ((shift_h, shift_w), (shift_h, -shift_w), (-shift_h, shift_w), (-shift_h, -shift_w)):
+            shifted = torch.roll(x, shifts=shift, dims=(2, 3))
+            shifted_context = self._quadtree_parent_context(shifted)
+            contexts.append(torch.roll(shifted_context, shifts=(-shift[0], -shift[1]), dims=(2, 3)))
+        return torch.stack(contexts, dim=0).mean(dim=0)
+
+    def forward(self, x):
+        gate = torch.sigmoid(self.gate(x))
+        local_context = self.local_context(x)
+        parent_context = self.coarse_context(self._shifted_parent_context(x))
+        mixed_context = gate * local_context + (1.0 - gate) * parent_context
+        return x + self.out_proj(mixed_context)
+
+
 class QuadtreeSplitter(nn.Module):
     def __init__(self, hidden_dim, context_h, context_w, head='pool', mid_dim=128, activation='gelu'):
         super().__init__()
@@ -328,6 +408,19 @@ class PET(nn.Module):
             (8, 4),
             'dense_dec_win_size',
         )
+        quad_context = getattr(args, 'quad_context_mixer', 'none')
+        if quad_context == 'none':
+            self.quad_context_mixer = nn.Identity()
+        elif quad_context == 'lite':
+            self.quad_context_mixer = QuadContextMixer(
+                hidden_dim,
+                mid_dim=getattr(args, 'quad_context_mid_dim', 128),
+                levels=getattr(args, 'quad_context_levels', 2),
+                shift=getattr(args, 'quad_context_shift', 1),
+                activation=getattr(args, 'quad_context_activation', 'gelu'),
+            )
+        else:
+            raise ValueError(f'Unsupported quad_context_mixer: {quad_context}. Use "none" or "lite".')
 
     def compute_loss(self, outputs, criterion, targets, epoch, samples):
         """
@@ -536,6 +629,7 @@ class PET(nn.Module):
         src_pos_embed = pos[self.encode_feats]
         assert mask is not None
         encode_src = self.context_encoder(src, src_pos_embed, mask)
+        encode_src = self.quad_context_mixer(encode_src)
         context_info = (encode_src, src_pos_embed, mask)
         
         # apply quadtree splitter
