@@ -1,7 +1,6 @@
 import os
 import random
 
-import cv2
 import numpy as np
 import scipy.io as io
 import torch
@@ -10,6 +9,7 @@ import torchvision.transforms as standard_transforms
 from PIL import Image
 from torch.utils.data import Dataset
 
+from .image_io import load_rgb_image
 from .SHA import IMAGE_EXTENSIONS, random_crop_with_retries
 
 
@@ -164,11 +164,11 @@ def find_annotation_path(img_path):
 
 def load_data(img_gt_path):
     img_path, gt_path = img_gt_path
-    img = cv2.imread(img_path)
-    if img is None:
+    try:
+        img = load_rgb_image(img_path)
+    except OSError as exc:
         raise FileNotFoundError(f'Could not read image: {img_path}')
-    height, width = img.shape[:2]
-    img = Image.fromarray(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
+    width, height = img.size
     points = load_points(gt_path, image_size=(height, width))
     return img, points
 

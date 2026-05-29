@@ -3,11 +3,10 @@ import random
 import torch
 import numpy as np
 from torch.utils.data import Dataset
-from PIL import Image
-import cv2
 import scipy.io as io
 import torch.nn.functional as F
 import torchvision.transforms as standard_transforms
+from .image_io import load_rgb_image
 
 IMAGE_EXTENSIONS = ('.jpg', '.jpeg', '.png', '.bmp')
 GT_DIR_NAMES = ('ground-truth', 'ground_truth', 'groundtruth')
@@ -145,10 +144,10 @@ class SHA(Dataset):
 
 def load_data(img_gt_path, train):
     img_path, gt_path = img_gt_path
-    img = cv2.imread(img_path)
-    if img is None:
-        raise FileNotFoundError(f'Could not read image: {img_path}')
-    img = Image.fromarray(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
+    try:
+        img = load_rgb_image(img_path)
+    except OSError as exc:
+        raise FileNotFoundError(f'Could not read image: {img_path}') from exc
     points = load_points(gt_path)
     return img, points
 
