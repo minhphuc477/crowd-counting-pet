@@ -42,16 +42,19 @@ The branch adds:
 - `--decoder_memory_halo`: experimental overlap for decoder cross-attention
   memory windows. Query windows stay non-overlapped, so each point query remains
   unique and predictions are not duplicated.
-- `--quad_context_mixer lite`: an experimental PET-native context mixer inspired
-  by QuadMamba's learned coarse/fine quadtree locality idea. It does not use
-  Mamba or selective-scan kernels. It adds a zero-initialized residual after the
-  PET encoder, mixing local context with shifted quadtree parent context before
-  the splitter and decoder memory.
+- `--fusion_mhf_mode`: VGG FPN feature-fusion ablations inspired by VMambaCC's
+  MHF/HS2FPN study. `cem` adds high-level channel guidance, `cem_msem` adds
+  grouped spatial guidance, and `full` adds a second high-level channel filter.
+  All gates are residual and zero-initialized so the model starts from the
+  original FPN behavior instead of immediately suppressing features.
+- `--quad_context_mixer lite`: retained only as a failed experimental switch.
+  On SHA it severely undercounted, and a threshold sweep still stayed around
+  MAE 333. Do not use it for the main experiment path.
 
 Official PET reproduction remains:
 
 ```bash
---splitter_head pool --count_loss_coef 0.0 --transformer_activation relu --transformer_norm_style post --decoder_attention softmax --decoder_memory_halo 0 --quad_context_mixer none
+--splitter_head pool --count_loss_coef 0.0 --transformer_activation relu --transformer_norm_style post --decoder_attention softmax --decoder_memory_halo 0 --fusion_mhf_mode none --quad_context_mixer none
 ```
 
 For VGG paper-style runs, leave `--vgg_fpn_main_lr` off. That keeps the
@@ -192,27 +195,34 @@ CUDA_VISIBLE_DEVICES=0 python main.py \
   --seed 42
 ```
 
-## Quad Context Ablation
+## VMambaCC-Inspired FPN Ablations
 
-Use this when you want a PET-specific idea inspired by QuadMamba without
-copying its VMamba/selective-scan architecture. Keep the paper splitter and
-loss first, then only add the context mixer:
+VMambaCC reports that feature fusion matters more than simply replacing the
+backbone. Its ablation shows that CEM alone is harmful, CEM+MSEM with one head
+helps, four heads can hurt without HCEM, and the full CEM+MSEM+HCEM block works
+best in their architecture. In PET, test these one at a time and keep the paper
+splitter/loss unchanged.
+
+Run short triage first. Stop a variant if best SHA MAE is still above 100 after
+250-300 epochs or if `pred_cnt / gt_cnt` is below 0.5.
+
+Baseline:
 
 ```bash
 CUDA_VISIBLE_DEVICES=0 python main.py \
   --dataset_file SHA \
   --data_path ./data/ShanghaiTech/part_A \
   --backbone vgg16_bn \
-  --output_dir vgg16_bn_quadctx_lite \
-  --epochs 1500 \
+  --output_dir vgg16_bn_mhf_00_baseline \
+  --epochs 500 \
   --eval_freq 5 \
   --batch_size 8 \
   --lr 1e-4 \
   --lr_backbone 1e-5 \
   --lr_scheduler step \
-  --quad_context_mixer lite \
-  --quad_context_levels 2 \
-  --quad_context_shift 1 \
+  --lr_drop 350 \
+  --lr_gamma 0.1 \
+  --fusion_mhf_mode none \
   --splitter_head pool \
   --count_loss_coef 0.0 \
   --pet_loss_variant paper \
@@ -220,6 +230,123 @@ CUDA_VISIBLE_DEVICES=0 python main.py \
   --split_threshold 0.5 \
   --seed 42
 ```
+
+CEM only:
+
+```bash
+CUDA_VISIBLE_DEVICES=0 python main.py \
+  --dataset_file SHA \
+  --data_path ./data/ShanghaiTech/part_A \
+  --backbone vgg16_bn \
+  --output_dir vgg16_bn_mhf_01_cem \
+  --epochs 500 \
+  --eval_freq 5 \
+  --batch_size 8 \
+  --lr 1e-4 \
+  --lr_backbone 1e-5 \
+  --lr_scheduler step \
+  --lr_drop 350 \
+  --lr_gamma 0.1 \
+  --fusion_mhf_mode cem \
+  --fusion_mhf_heads 1 \
+  --fusion_mhf_position before \
+  --splitter_head pool \
+  --count_loss_coef 0.0 \
+  --pet_loss_variant paper \
+  --score_threshold 0.5 \
+  --split_threshold 0.5 \
+  --seed 42
+```
+
+CEM + MSEM, one spatial head:
+
+```bash
+CUDA_VISIBLE_DEVICES=0 python main.py \
+  --dataset_file SHA \
+  --data_path ./data/ShanghaiTech/part_A \
+  --backbone vgg16_bn \
+  --output_dir vgg16_bn_mhf_02_cem_msem_h1 \
+  --epochs 500 \
+  --eval_freq 5 \
+  --batch_size 8 \
+  --lr 1e-4 \
+  --lr_backbone 1e-5 \
+  --lr_scheduler step \
+  --lr_drop 350 \
+  --lr_gamma 0.1 \
+  --fusion_mhf_mode cem_msem \
+  --fusion_mhf_heads 1 \
+  --fusion_mhf_position before \
+  --splitter_head pool \
+  --count_loss_coef 0.0 \
+  --pet_loss_variant paper \
+  --score_threshold 0.5 \
+  --split_threshold 0.5 \
+  --seed 42
+```
+
+CEM + MSEM, four spatial heads:
+
+```bash
+CUDA_VISIBLE_DEVICES=0 python main.py \
+  --dataset_file SHA \
+  --data_path ./data/ShanghaiTech/part_A \
+  --backbone vgg16_bn \
+  --output_dir vgg16_bn_mhf_03_cem_msem_h4 \
+  --epochs 500 \
+  --eval_freq 5 \
+  --batch_size 8 \
+  --lr 1e-4 \
+  --lr_backbone 1e-5 \
+  --lr_scheduler step \
+  --lr_drop 350 \
+  --lr_gamma 0.1 \
+  --fusion_mhf_mode cem_msem \
+  --fusion_mhf_heads 4 \
+  --fusion_mhf_position before \
+  --splitter_head pool \
+  --count_loss_coef 0.0 \
+  --pet_loss_variant paper \
+  --score_threshold 0.5 \
+  --split_threshold 0.5 \
+  --seed 42
+```
+
+Full CEM + MSEM + HCEM:
+
+```bash
+CUDA_VISIBLE_DEVICES=0 python main.py \
+  --dataset_file SHA \
+  --data_path ./data/ShanghaiTech/part_A \
+  --backbone vgg16_bn \
+  --output_dir vgg16_bn_mhf_04_full_h4 \
+  --epochs 500 \
+  --eval_freq 5 \
+  --batch_size 8 \
+  --lr 1e-4 \
+  --lr_backbone 1e-5 \
+  --lr_scheduler step \
+  --lr_drop 350 \
+  --lr_gamma 0.1 \
+  --fusion_mhf_mode full \
+  --fusion_mhf_heads 4 \
+  --fusion_mhf_position before \
+  --splitter_head pool \
+  --count_loss_coef 0.0 \
+  --pet_loss_variant paper \
+  --score_threshold 0.5 \
+  --split_threshold 0.5 \
+  --seed 42
+```
+
+## Failed Quad Context Ablation
+
+The QuadMamba-inspired `--quad_context_mixer lite` run should be considered a
+negative result for this PET codebase. On SHA, the best checkpoint stayed around
+MAE 333 and a score-threshold sweep from 0.05 to 0.5 did not recover it. This
+means the failure was not simple threshold calibration. Keep
+`--quad_context_mixer none` unless deliberately reproducing that negative
+ablation.
 
 ## Recommended Timm Run
 

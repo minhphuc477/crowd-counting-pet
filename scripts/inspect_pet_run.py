@@ -1,0 +1,124 @@
+#!/usr/bin/env python3
+import argparse
+import json
+from pathlib import Path
+
+import torch
+
+
+KEY_ARGS = (
+    'dataset_file',
+    'data_path',
+    'backbone',
+    'no_pretrained_backbone',
+    'resume',
+    'resume_model_only',
+    'lr',
+    'lr_backbone',
+    'lr_backbone_adapter',
+    'lr_scheduler',
+    'lr_drop',
+    'batch_size',
+    'fusion_mhf_mode',
+    'fusion_mhf_heads',
+    'fusion_mhf_position',
+    'fusion_mhf_strength',
+    'score_threshold',
+    'split_threshold',
+    'splitter_head',
+    'count_loss_coef',
+    'pet_loss_variant',
+    'dec_layers',
+    'decoder_attention',
+    'decoder_memory_halo',
+    'quad_context_mixer',
+    'quad_context_levels',
+    'quad_context_shift',
+    'seed',
+)
+
+
+def get_arg(args, key, default=None):
+    if args is None:
+        return default
+    if isinstance(args, dict):
+        return args.get(key, default)
+    return getattr(args, key, default)
+
+
+def resolve_checkpoint(path):
+    path = Path(path)
+    if path.is_dir():
+        for name in ('best_checkpoint.pth', 'checkpoint.pth'):
+            candidate = path / name
+            if candidate.exists():
+                return candidate
+        raise FileNotFoundError(f'No best_checkpoint.pth or checkpoint.pth found in {path}')
+    return path
+
+
+def load_json(path):
+    if not path.exists():
+        return None
+    try:
+        return json.loads(path.read_text(encoding='utf-8'))
+    except json.JSONDecodeError:
+        return None
+
+
+def print_eval_record(label, record):
+    if not record:
+        return
+    pred = record.get('pred_cnt')
+    gt = record.get('gt_cnt')
+    ratio = None
+    if pred is not None and gt:
+        ratio = float(pred) / max(float(gt), 1e-12)
+    parts = [
+        f"epoch={record.get('epoch')}",
+        f"mae={record.get('test_mae')}",
+        f"mse={record.get('test_mse')}",
+        f"pred_cnt={pred}",
+        f"gt_cnt={gt}",
+    ]
+    if ratio is not None:
+        parts.append(f"pred/gt={ratio:.3f}")
+    print(f'{label}: ' + ', '.join(parts))
+
+
+def main():
+    parser = argparse.ArgumentParser(description='Inspect PET checkpoint args and count-calibration symptoms.')
+    parser.add_argument('path', help='run directory or checkpoint path')
+    args = parser.parse_args()
+
+    checkpoint_path = resolve_checkpoint(args.path)
+    checkpoint = torch.load(checkpoint_path, map_location='cpu', weights_only=False)
+    ckpt_args = checkpoint.get('args')
+
+    print(f'checkpoint: {checkpoint_path}')
+    print(f"checkpoint_epoch: {checkpoint.get('epoch')}")
+    print(f"checkpoint_best_mae: {checkpoint.get('best_mae')}")
+    print(f"checkpoint_best_epoch: {checkpoint.get('best_epoch')}")
+    print('args:')
+    for key in KEY_ARGS:
+        print(f'  {key}: {get_arg(ckpt_args, key)}')
+
+    run_dir = checkpoint_path.parent
+    print_eval_record('best_eval_results', load_json(run_dir / 'best_eval_results.json'))
+    print_eval_record('latest_eval_results', load_json(run_dir / 'latest_eval_results.json'))
+
+    backbone = get_arg(ckpt_args, 'backbone', '')
+    if str(backbone).startswith('vgg') and get_arg(ckpt_args, 'no_pretrained_backbone', False):
+        print('warning: this checkpoint was trained with --no_pretrained_backbone; VGG random init usually fails badly.')
+
+    latest = load_json(run_dir / 'latest_eval_results.json')
+    if latest and latest.get('pred_cnt') is not None and latest.get('gt_cnt'):
+        pred_ratio = float(latest['pred_cnt']) / max(float(latest['gt_cnt']), 1e-12)
+        if pred_ratio < 0.5:
+            print('warning: latest eval is severe undercounting; try lower score-threshold sweep, but stop this run if best MAE is still >100 on SHA.')
+        elif pred_ratio > 1.5:
+            print('warning: latest eval is severe overcounting; try higher score-threshold sweep.')
+
+
+if __name__ == '__main__':
+    main()

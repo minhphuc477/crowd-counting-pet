@@ -29,6 +29,11 @@ def get_args_parser():
                         help='allow timm backbones to continue with random init if pretrained weights cannot load')
     parser.add_argument('--timm_adapter', default='lite_fpn', choices=('lite_fpn', 'direct', 'fpn'),
                         help='adapter used to map timm features into PET 4x/8x features')
+    parser.add_argument('--fusion_mhf_mode', default='none', choices=('none', 'cem', 'cem_msem', 'full'))
+    parser.add_argument('--fusion_mhf_heads', default=1, type=int)
+    parser.add_argument('--fusion_mhf_position', default='before', choices=('before', 'post'))
+    parser.add_argument('--fusion_mhf_strength', default=1.0, type=float)
+    parser.add_argument('--fusion_mhf_activation', default='gelu', choices=('relu', 'gelu'))
     parser.add_argument('--position_embedding', default='sine', type=str, choices=('sine', 'learned', 'fourier'),
                         help="Type of positional embedding to use on top of the image features")
     # - transformer

@@ -159,6 +159,16 @@ def get_args_parser():
                         help='allow timm backbones to continue with random init if pretrained weights cannot load')
     parser.add_argument('--timm_adapter', default='lite_fpn', choices=('lite_fpn', 'direct', 'fpn'),
                         help='adapter used to map timm features into PET 4x/8x features')
+    parser.add_argument('--fusion_mhf_mode', default='none', choices=('none', 'cem', 'cem_msem', 'full'),
+                        help='VGG FPN high-level feature attention ablation inspired by VMambaCC MHF')
+    parser.add_argument('--fusion_mhf_heads', default=1, type=int,
+                        help='number of spatial heads for --fusion_mhf_mode cem_msem/full')
+    parser.add_argument('--fusion_mhf_position', default='before', choices=('before', 'post'),
+                        help='apply high-level feature multiplication before or after FPN fusion')
+    parser.add_argument('--fusion_mhf_strength', default=1.0, type=float,
+                        help='residual gate strength for VGG MHF-style feature fusion')
+    parser.add_argument('--fusion_mhf_activation', default='gelu', choices=('relu', 'gelu'),
+                        help='activation used by VGG MHF-style feature fusion')
     parser.add_argument('--position_embedding', default='sine', type=str, choices=('sine', 'learned', 'fourier'),
                         help="Type of positional embedding to use on top of the image features")
     # - transformer
@@ -332,6 +342,8 @@ def build_optimizer_param_groups(model_without_ddp, args):
         'backbone.backbone.fpn.',  # timm Joiner -> TimmBackbone -> BackboneFPN
         'backbone.backbone.lite_fpn.',  # timm Joiner -> TimmBackbone -> LiteFPNAdapter
         'backbone.backbone.direct_adapter.',  # timm Joiner -> TimmBackbone -> DirectFeatureAdapter
+        'backbone.0.fpn.mhf_c4.',
+        'backbone.0.fpn.mhf_c3.',
     ]
     if getattr(args, 'vgg_fpn_main_lr', False):
         adapter_prefixes.append('backbone.0.fpn.')  # VGG Joiner -> Backbone_VGG -> FeatsFusion

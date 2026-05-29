@@ -23,11 +23,26 @@ from models.backbones import get_supported_timm_backbones
 from util.misc import nested_tensor_from_tensor_list
 
 
-def make_args(backbone, device, timm_adapter, decoder_attention, decoder_memory_halo, quad_context_mixer):
+def make_args(
+    backbone,
+    device,
+    timm_adapter,
+    decoder_attention,
+    decoder_memory_halo,
+    quad_context_mixer,
+    fusion_mhf_mode,
+    fusion_mhf_heads,
+    fusion_mhf_position,
+):
     return SimpleNamespace(
         device=device,
         backbone=backbone,
         timm_adapter=timm_adapter,
+        fusion_mhf_mode=fusion_mhf_mode,
+        fusion_mhf_heads=fusion_mhf_heads,
+        fusion_mhf_position=fusion_mhf_position,
+        fusion_mhf_strength=1.0,
+        fusion_mhf_activation='gelu',
         no_pretrained_backbone=True,
         position_embedding='sine',
         dec_layers=2,
@@ -73,8 +88,29 @@ def make_args(backbone, device, timm_adapter, decoder_attention, decoder_memory_
     )
 
 
-def check_backbone(backbone, image_size, device, timm_adapter, decoder_attention, decoder_memory_halo, quad_context_mixer):
-    args = make_args(backbone, device, timm_adapter, decoder_attention, decoder_memory_halo, quad_context_mixer)
+def check_backbone(
+    backbone,
+    image_size,
+    device,
+    timm_adapter,
+    decoder_attention,
+    decoder_memory_halo,
+    quad_context_mixer,
+    fusion_mhf_mode,
+    fusion_mhf_heads,
+    fusion_mhf_position,
+):
+    args = make_args(
+        backbone,
+        device,
+        timm_adapter,
+        decoder_attention,
+        decoder_memory_halo,
+        quad_context_mixer,
+        fusion_mhf_mode,
+        fusion_mhf_heads,
+        fusion_mhf_position,
+    )
     model, _ = build_model(args)
     model.to(device).eval()
 
@@ -105,6 +141,9 @@ def parse_args():
     parser.add_argument('--decoder_attention', default='softmax', choices=('softmax', 'linear'))
     parser.add_argument('--decoder_memory_halo', default=0, type=int)
     parser.add_argument('--quad_context_mixer', default='none', choices=('none', 'lite'))
+    parser.add_argument('--fusion_mhf_mode', default='none', choices=('none', 'cem', 'cem_msem', 'full'))
+    parser.add_argument('--fusion_mhf_heads', default=1, type=int)
+    parser.add_argument('--fusion_mhf_position', default='before', choices=('before', 'post'))
     return parser.parse_args()
 
 
@@ -122,6 +161,9 @@ def main():
                 args.decoder_attention,
                 args.decoder_memory_halo,
                 args.quad_context_mixer,
+                args.fusion_mhf_mode,
+                args.fusion_mhf_heads,
+                args.fusion_mhf_position,
             )
         except Exception as exc:
             failures.append((backbone, exc))
