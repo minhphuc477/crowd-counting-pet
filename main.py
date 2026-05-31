@@ -134,6 +134,12 @@ ARCHITECTURE_OVERRIDE_KEYS = {
     'fusion_mhf_position',
     'fusion_mhf_strength',
     'fusion_mhf_activation',
+    'fusion_mhf_impl',
+    'fusion_fpn_type',
+    'fusion_mhf_reduction',
+    'fusion_mhf_norm',
+    'fusion_mhf_spatial_kernel',
+    'fusion_mhf_output_activation',
     'vgg_fpn_main_lr',
 }
 
@@ -203,6 +209,18 @@ def get_args_parser():
                         help='residual gate strength for VGG MHF-style feature fusion')
     parser.add_argument('--fusion_mhf_activation', default='gelu', choices=('relu', 'gelu'),
                         help='activation used by VGG MHF-style feature fusion')
+    parser.add_argument('--fusion_mhf_impl', default='residual', choices=('residual', 'vmambacc'),
+                        help='residual keeps PET-safe zero-init gates; vmambacc follows the VMambaCC MHF equations')
+    parser.add_argument('--fusion_fpn_type', default='fpn', choices=('fpn', 'hs2fpn'),
+                        help='fpn preserves original PET fusion; hs2fpn labels VMambaCC-style high-level guided fusion')
+    parser.add_argument('--fusion_mhf_reduction', default=4, type=int,
+                        help='channel bottleneck reduction for --fusion_mhf_impl vmambacc')
+    parser.add_argument('--fusion_mhf_norm', default='none', choices=('none', 'bn', 'gn'),
+                        help='optional norm inside VMambaCC-style CEM/HCEM conv stacks')
+    parser.add_argument('--fusion_mhf_spatial_kernel', default=7, type=int,
+                        help='spatial kernel size for VMambaCC-style MSEM')
+    parser.add_argument('--fusion_mhf_output_activation', default='none', choices=('none', 'sigmoid'),
+                        help='none follows the VMambaCC paper equation; sigmoid is a bounded ablation')
     parser.add_argument('--position_embedding', default='sine', type=str, choices=('sine', 'learned', 'fourier'),
                         help="Type of positional embedding to use on top of the image features")
     # - transformer

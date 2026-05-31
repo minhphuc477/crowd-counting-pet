@@ -29,11 +29,17 @@ class SHA(Dataset):
         self.prefix = prefix
         split_dir = os.path.join(data_root, prefix)
         img_dir = os.path.join(split_dir, "images")
+        if not os.path.isdir(img_dir):
+            raise FileNotFoundError(f'Could not find ShanghaiTech image directory: {img_dir}')
         gt_dir = find_ground_truth_dir(split_dir)
+        if not os.path.isdir(gt_dir):
+            raise FileNotFoundError(f'Could not find ShanghaiTech annotation directory: {gt_dir}')
         img_names = [
             img_name for img_name in os.listdir(img_dir)
             if img_name.lower().endswith(IMAGE_EXTENSIONS)
         ]
+        if not img_names:
+            raise FileNotFoundError(f'No image files found in {img_dir}')
 
         # get image and ground-truth list
         self.gt_list = {}
@@ -47,10 +53,10 @@ class SHA(Dataset):
             self.gt_list[img_path] = gt_path
         self.img_list = sorted(list(self.gt_list.keys()))
         self.nSamples = len(self.img_list)
-        if self.nSamples > 0 and len(missing_gt) == self.nSamples:
+        if missing_gt:
             raise FileNotFoundError(
-                f'No matching ShanghaiTech .mat annotations found for {prefix}. '
-                f'Expected files like: {missing_gt[0]}'
+                f'Missing {len(missing_gt)} ShanghaiTech annotation file(s) for {prefix}. '
+                f'First missing file: {missing_gt[0]}'
             )
 
         self.transform = transform
@@ -148,7 +154,10 @@ def load_data(img_gt_path, train):
         img = load_rgb_image(img_path)
     except OSError as exc:
         raise FileNotFoundError(f'Could not read image: {img_path}') from exc
-    points = load_points(gt_path)
+    width, height = img.size
+    points = load_points(gt_path, image_size=(height, width))
+    if points.shape[0] == 0:
+        raise ValueError(f'Annotation file has zero valid points: {gt_path}')
     return img, points
 
 
@@ -215,7 +224,7 @@ def _find_points_array(value):
     return None
 
 
-def load_points(gt_path):
+def load_points(gt_path, image_size=None):
     if not os.path.exists(gt_path):
         return np.empty((0, 2), dtype=np.float32)
 
@@ -245,7 +254,19 @@ def load_points(gt_path):
     if points.size == 0:
         return np.empty((0, 2), dtype=np.float32)
     points = points.reshape(-1, 2)
-    return points[:, ::-1].copy()
+    points = points[:, ::-1].copy()
+
+    if image_size is not None and points.shape[0] > 0:
+        height, width = image_size
+        keep = (
+            (points[:, 0] >= 0)
+            & (points[:, 0] < height)
+            & (points[:, 1] >= 0)
+            & (points[:, 1] < width)
+        )
+        points = points[keep]
+
+    return points.astype(np.float32, copy=False)
 
 
 def random_crop(img, points, patch_size=256):

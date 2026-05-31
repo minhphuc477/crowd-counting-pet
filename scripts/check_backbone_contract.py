@@ -33,6 +33,12 @@ def make_args(
     fusion_mhf_mode,
     fusion_mhf_heads,
     fusion_mhf_position,
+    fusion_mhf_impl,
+    fusion_fpn_type,
+    fusion_mhf_reduction,
+    fusion_mhf_norm,
+    fusion_mhf_spatial_kernel,
+    fusion_mhf_output_activation,
 ):
     return SimpleNamespace(
         device=device,
@@ -43,6 +49,12 @@ def make_args(
         fusion_mhf_position=fusion_mhf_position,
         fusion_mhf_strength=1.0,
         fusion_mhf_activation='gelu',
+        fusion_mhf_impl=fusion_mhf_impl,
+        fusion_fpn_type=fusion_fpn_type,
+        fusion_mhf_reduction=fusion_mhf_reduction,
+        fusion_mhf_norm=fusion_mhf_norm,
+        fusion_mhf_spatial_kernel=fusion_mhf_spatial_kernel,
+        fusion_mhf_output_activation=fusion_mhf_output_activation,
         no_pretrained_backbone=True,
         position_embedding='sine',
         dec_layers=2,
@@ -99,6 +111,12 @@ def check_backbone(
     fusion_mhf_mode,
     fusion_mhf_heads,
     fusion_mhf_position,
+    fusion_mhf_impl,
+    fusion_fpn_type,
+    fusion_mhf_reduction,
+    fusion_mhf_norm,
+    fusion_mhf_spatial_kernel,
+    fusion_mhf_output_activation,
 ):
     args = make_args(
         backbone,
@@ -110,6 +128,12 @@ def check_backbone(
         fusion_mhf_mode,
         fusion_mhf_heads,
         fusion_mhf_position,
+        fusion_mhf_impl,
+        fusion_fpn_type,
+        fusion_mhf_reduction,
+        fusion_mhf_norm,
+        fusion_mhf_spatial_kernel,
+        fusion_mhf_output_activation,
     )
     model, _ = build_model(args)
     model.to(device).eval()
@@ -144,6 +168,12 @@ def parse_args():
     parser.add_argument('--fusion_mhf_mode', default='none', choices=('none', 'cem', 'cem_msem', 'full'))
     parser.add_argument('--fusion_mhf_heads', default=1, type=int)
     parser.add_argument('--fusion_mhf_position', default='before', choices=('before', 'post'))
+    parser.add_argument('--fusion_mhf_impl', default='residual', choices=('residual', 'vmambacc'))
+    parser.add_argument('--fusion_fpn_type', default='fpn', choices=('fpn', 'hs2fpn'))
+    parser.add_argument('--fusion_mhf_reduction', default=4, type=int)
+    parser.add_argument('--fusion_mhf_norm', default='none', choices=('none', 'bn', 'gn'))
+    parser.add_argument('--fusion_mhf_spatial_kernel', default=7, type=int)
+    parser.add_argument('--fusion_mhf_output_activation', default='none', choices=('none', 'sigmoid'))
     return parser.parse_args()
 
 
@@ -164,6 +194,12 @@ def main():
                 args.fusion_mhf_mode,
                 args.fusion_mhf_heads,
                 args.fusion_mhf_position,
+                args.fusion_mhf_impl,
+                args.fusion_fpn_type,
+                args.fusion_mhf_reduction,
+                args.fusion_mhf_norm,
+                args.fusion_mhf_spatial_kernel,
+                args.fusion_mhf_output_activation,
             )
         except Exception as exc:
             failures.append((backbone, exc))

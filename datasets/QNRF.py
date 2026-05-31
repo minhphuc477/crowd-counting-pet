@@ -53,10 +53,10 @@ class QNRF(Dataset):
                 f'No QNRF images found in {self.split_dir}. '
                 f'Expected .jpg/.jpeg/.png/.bmp files.'
             )
-        if len(missing_gt) == self.nSamples:
+        if missing_gt:
             raise FileNotFoundError(
-                f'No matching QNRF .mat annotations found for {self.split_name}. '
-                f'Expected files like: {missing_gt[0]}'
+                f'Missing {len(missing_gt)} QNRF annotation file(s) for {self.split_name}. '
+                f'First missing file: {missing_gt[0]}'
             )
 
         self.transform = transform
@@ -170,6 +170,8 @@ def load_data(img_gt_path):
         raise FileNotFoundError(f'Could not read image: {img_path}')
     width, height = img.size
     points = load_points(gt_path, image_size=(height, width))
+    if points.shape[0] == 0:
+        raise ValueError(f'Annotation file has zero valid points: {gt_path}')
     return img, points
 
 

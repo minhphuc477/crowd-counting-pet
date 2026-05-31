@@ -34,6 +34,12 @@ def get_args_parser():
     parser.add_argument('--fusion_mhf_position', default='before', choices=('before', 'post'))
     parser.add_argument('--fusion_mhf_strength', default=1.0, type=float)
     parser.add_argument('--fusion_mhf_activation', default='gelu', choices=('relu', 'gelu'))
+    parser.add_argument('--fusion_mhf_impl', default='residual', choices=('residual', 'vmambacc'))
+    parser.add_argument('--fusion_fpn_type', default='fpn', choices=('fpn', 'hs2fpn'))
+    parser.add_argument('--fusion_mhf_reduction', default=4, type=int)
+    parser.add_argument('--fusion_mhf_norm', default='none', choices=('none', 'bn', 'gn'))
+    parser.add_argument('--fusion_mhf_spatial_kernel', default=7, type=int)
+    parser.add_argument('--fusion_mhf_output_activation', default='none', choices=('none', 'sigmoid'))
     parser.add_argument('--position_embedding', default='sine', type=str, choices=('sine', 'learned', 'fourier'),
                         help="Type of positional embedding to use on top of the image features")
     # - transformer

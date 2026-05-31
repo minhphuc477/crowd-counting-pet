@@ -58,7 +58,7 @@ def inspect_split(dataset, image_set, max_examples):
         for gt_path in missing[:max_examples]:
             print(f'    {gt_path}')
 
-    return total_points, len(missing)
+    return total_points, len(missing), zero_point_files
 
 
 def main():
@@ -74,13 +74,15 @@ def main():
     train = build_dataset('train', args)
     val = build_dataset('val', args)
 
-    train_points, train_missing = inspect_split(train, 'train', args.max_examples)
-    val_points, val_missing = inspect_split(val, 'val', args.max_examples)
+    train_points, train_missing, train_zero = inspect_split(train, 'train', args.max_examples)
+    val_points, val_missing, val_zero = inspect_split(val, 'val', args.max_examples)
 
-    if train_missing == len(train.img_list) or val_missing == len(val.img_list):
-        raise SystemExit('Invalid dataset: a whole split is missing matching annotation files.')
+    if train_missing or val_missing:
+        raise SystemExit('Invalid dataset: at least one annotation file is missing.')
     if train_points == 0 or val_points == 0:
         raise SystemExit('Invalid dataset: total GT points is zero for train or val.')
+    if train_zero or val_zero:
+        raise SystemExit('Invalid dataset: at least one annotation file has zero points.')
 
     print('Annotation check passed.')
 

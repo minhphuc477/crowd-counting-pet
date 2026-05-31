@@ -147,6 +147,8 @@ def evaluate(model, data_loader, device, epoch=0, vis_dir=None):
     print_freq = 10
     for samples, targets in metric_logger.log_every(data_loader, print_freq, header):
         samples = samples.to(device)
+        if len(targets) != 1 or samples.tensors.shape[0] != 1:
+            raise ValueError('PET evaluation expects batch_size=1; counting metrics are image-level.')
         img_h, img_w = samples.tensors.shape[-2:]
 
         # inference
