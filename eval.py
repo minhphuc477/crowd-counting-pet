@@ -89,6 +89,10 @@ def get_args_parser():
     parser.add_argument('--count_loss_gate', default='detach', choices=('detach', 'soft', 'hard'))
     parser.add_argument('--count_loss_type', default='log_l1', choices=('log_l1', 'l1', 'smooth_l1'))
     parser.add_argument('--count_loss_start_epoch', default=-1, type=int)
+    parser.add_argument('--apg_loss_coef', default=0.0, type=float)
+    parser.add_argument('--apg_pos_k', default=1, type=int)
+    parser.add_argument('--apg_point_coef', default=5.0, type=float)
+    parser.add_argument('--apg_start_epoch', default=0, type=int)
     parser.add_argument('--eos_coef', default=0.5, type=float,
                         help="Relative classification weight of the no-object class")   # cross-entropy weights
     parser.add_argument('--pet_loss_variant', default='paper', choices=('paper', 'balanced'))

@@ -284,6 +284,14 @@ def get_args_parser():
                         help='count-loss scale; log_l1 is safer early in training')
     parser.add_argument('--count_loss_start_epoch', default=-1, type=int,
                         help='epoch to enable count loss; negative uses warmup_epochs')
+    parser.add_argument('--apg_loss_coef', default=0.0, type=float,
+                        help='Auxiliary Point Guidance loss weight; 0 disables it')
+    parser.add_argument('--apg_pos_k', default=1, type=int,
+                        help='nearest point queries per GT point supervised by APG')
+    parser.add_argument('--apg_point_coef', default=5.0, type=float,
+                        help='point-regression coefficient inside APG loss')
+    parser.add_argument('--apg_start_epoch', default=0, type=int,
+                        help='epoch when APG auxiliary supervision starts')
     parser.add_argument('--eos_coef', default=0.5, type=float,
                         help="Relative classification weight of the no-object class")
     parser.add_argument('--pet_loss_variant', default='paper', choices=('paper', 'balanced'),

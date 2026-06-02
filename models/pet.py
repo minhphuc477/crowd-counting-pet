@@ -398,6 +398,10 @@ class PET(nn.Module):
         if self.count_loss_type not in ('log_l1', 'l1', 'smooth_l1'):
             raise ValueError('count_loss_type must be one of "log_l1", "l1", or "smooth_l1"')
         self.count_loss_start_epoch = int(getattr(args, 'count_loss_start_epoch', -1))
+        self.apg_loss_coef = float(getattr(args, 'apg_loss_coef', 0.0))
+        self.apg_pos_k = max(1, int(getattr(args, 'apg_pos_k', 1)))
+        self.apg_point_coef = float(getattr(args, 'apg_point_coef', 5.0))
+        self.apg_start_epoch = int(getattr(args, 'apg_start_epoch', 0))
         self.sparse_dec_win_size = _parse_size_pair(
             getattr(args, 'sparse_dec_win_size', ''),
             (16, 8),
@@ -487,6 +491,15 @@ class PET(nn.Module):
             loss_dict['loss_count'] = loss_count
             weight_dict['loss_count'] = weight_count
             losses += loss_count * weight_count
+        if self.apg_loss_coef > 0:
+            weight_apg = self.apg_loss_coef if epoch >= self.apg_start_epoch else 0.0
+            loss_apg_sparse = self.compute_apg_loss(output_sparse, targets)
+            loss_apg_dense = self.compute_apg_loss(output_dense, targets)
+            loss_dict['loss_apg_sp'] = loss_apg_sparse
+            loss_dict['loss_apg_ds'] = loss_apg_dense
+            weight_dict['loss_apg_sp'] = weight_apg
+            weight_dict['loss_apg_ds'] = weight_apg
+            losses += (loss_apg_sparse + loss_apg_dense) * weight_apg
 
         if self.pet_loss_variant == 'paper':
             weight_split = self.quadtree_loss_coef if epoch >= warmup_ep else 0.0
@@ -512,6 +525,53 @@ class PET(nn.Module):
         # final loss
         losses += loss_split_quality * weight_split_quality + loss_split_prior * weight_split_prior
         return {'loss_dict':loss_dict, 'weight_dict':weight_dict, 'losses':losses}
+
+    def compute_apg_loss(self, output, targets):
+        """Auxiliary Point Guidance for PET point queries.
+
+        APGCC's full method adds auxiliary proposal guidance to stabilize
+        point-based matching. PET already owns a fixed point-query grid, so the
+        compatible low-risk version is to directly supervise the nearest grid
+        query/queries for each GT point as positive proposals.
+        """
+        logits = output['pred_logits']
+        pred_points = output['pred_points']
+        point_queries = output.get('points_queries')
+        if point_queries is None:
+            return logits.sum() * 0.0
+
+        device = logits.device
+        img_h, img_w = output['img_shape']
+        query_abs = point_queries.to(device=device, dtype=pred_points.dtype).clone()
+        query_abs[:, 0] *= img_h
+        query_abs[:, 1] *= img_w
+
+        cls_losses = []
+        point_losses = []
+        for batch_idx, target in enumerate(targets):
+            gt_points = target['points'].to(device=device, dtype=pred_points.dtype)
+            if gt_points.numel() == 0:
+                continue
+            k = min(self.apg_pos_k, query_abs.shape[0])
+            nearest = torch.cdist(gt_points, query_abs, p=2).topk(k, largest=False).indices.reshape(-1)
+            nearest = torch.unique(nearest)
+
+            cls_target = torch.ones(nearest.shape[0], dtype=torch.long, device=device)
+            cls_losses.append(F.cross_entropy(logits[batch_idx, nearest], cls_target, reduction='mean'))
+
+            gt_for_queries = gt_points[torch.cdist(query_abs[nearest], gt_points, p=2).argmin(dim=1)]
+            gt_norm = gt_for_queries.clone()
+            gt_norm[:, 0] /= img_h
+            gt_norm[:, 1] /= img_w
+            point_losses.append(
+                F.smooth_l1_loss(pred_points[batch_idx, nearest], gt_norm, reduction='none').sum(dim=-1).mean()
+            )
+
+        if not cls_losses:
+            return logits.sum() * 0.0
+        loss_cls = torch.stack(cls_losses).mean()
+        loss_point = torch.stack(point_losses).mean()
+        return loss_cls + self.apg_point_coef * loss_point
 
     def compute_count_loss(self, outputs, targets):
         output_sparse, output_dense = outputs['sparse'], outputs['dense']
