@@ -211,8 +211,8 @@ def get_args_parser():
                         help='activation used by VGG MHF-style feature fusion')
     parser.add_argument('--fusion_mhf_impl', default='residual', choices=('residual', 'vmambacc'),
                         help='residual keeps PET-safe zero-init gates; vmambacc follows the VMambaCC MHF equations')
-    parser.add_argument('--fusion_fpn_type', default='fpn', choices=('fpn', 'hs2fpn'),
-                        help='fpn preserves original PET fusion; hs2fpn labels VMambaCC-style high-level guided fusion')
+    parser.add_argument('--fusion_fpn_type', default='fpn', choices=('fpn', 'hs2fpn', 'lite_fpn'),
+                        help='fpn preserves original PET fusion; lite_fpn skips VGG FPN 3x3 output convs; hs2fpn labels VMambaCC-style high-level guided fusion')
     parser.add_argument('--fusion_mhf_reduction', default=4, type=int,
                         help='channel bottleneck reduction for --fusion_mhf_impl vmambacc')
     parser.add_argument('--fusion_mhf_norm', default='none', choices=('none', 'bn', 'gn'),
