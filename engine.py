@@ -133,9 +133,15 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
     return {k: meter.global_avg for k, meter in metric_logger.meters.items()}
 
 
+def _predict_count(model, samples, targets):
+    outputs = model(samples, test=True, targets=targets)
+    outputs_scores = torch.nn.functional.softmax(outputs['pred_logits'], -1)[:, :, 1][0]
+    return outputs, float(len(outputs_scores))
+
+
 # evaluation
 @torch.no_grad()
-def evaluate(model, data_loader, device, epoch=0, vis_dir=None):
+def evaluate(model, data_loader, device, epoch=0, vis_dir=None, tta_flip=False):
     model.eval()
 
     metric_logger = utils.MetricLogger(delimiter="  ")
@@ -152,15 +158,19 @@ def evaluate(model, data_loader, device, epoch=0, vis_dir=None):
         img_h, img_w = samples.tensors.shape[-2:]
 
         # inference
-        outputs = model(samples, test=True, targets=targets)
+        outputs, predict_cnt = _predict_count(model, samples, targets)
         # outputs_scores: per-query person probability, shape [N_queries]
         # test_forward() already applies score thresholding and returns only
         # surviving (person) queries in pred_logits, so len(outputs_scores) is
         # the predicted count — matching the original PET evaluation protocol.
-        outputs_scores = torch.nn.functional.softmax(outputs['pred_logits'], -1)[:, :, 1][0]
         outputs_points = outputs['pred_points'][0]
-
-        predict_cnt = len(outputs_scores)
+        if tta_flip:
+            flipped_samples = NestedTensor(
+                torch.flip(samples.tensors, dims=[3]),
+                torch.flip(samples.mask, dims=[2]),
+            )
+            _, predict_cnt_flip = _predict_count(model, flipped_samples, targets)
+            predict_cnt = 0.5 * (predict_cnt + predict_cnt_flip)
         gt_cnt = targets[0]['points'].shape[0]
 
         # compute error

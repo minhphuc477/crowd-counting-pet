@@ -299,8 +299,8 @@ class FeatsFusion(nn.Module):
         self.fusion_type = fusion_type
         if mhf_position not in ('before', 'post'):
             raise ValueError(f'Unsupported fusion_mhf_position: {mhf_position}. Use "before" or "post".')
-        if fusion_type not in ('fpn', 'hs2fpn', 'lite_fpn'):
-            raise ValueError(f'Unsupported fusion_fpn_type: {fusion_type}. Use "fpn", "hs2fpn", or "lite_fpn".')
+        if fusion_type not in ('fpn', 'hs2fpn'):
+            raise ValueError(f'Unsupported fusion_fpn_type: {fusion_type}. Use "fpn" or "hs2fpn".')
         self.P5_1 = nn.Conv2d(C5_size, hidden_size, kernel_size=1, stride=1, padding=0)
         self.P5_2 = nn.Conv2d(hidden_size, out_size, kernel_size=out_kernel, stride=1, padding=out_kernel//2)
 
@@ -360,8 +360,7 @@ class FeatsFusion(nn.Module):
         if self.mhf_position == 'post':
             P4_x = self._apply_high_level_gate(P4_x, P5_upsampled_x, self.mhf_c4)
         P4_upsampled_x = F.interpolate(P4_x, C3_shape)
-        if self.fusion_type != 'lite_fpn':
-            P4_x = self.P4_2(P4_x)
+        P4_x = self.P4_2(P4_x)
 
         P3_x = self.P3_1(C3)
         if self.mhf_position == 'before':
@@ -369,8 +368,7 @@ class FeatsFusion(nn.Module):
         P3_x = self._fuse_low_high(P3_x, P4_upsampled_x, self.mhf_c3)
         if self.mhf_position == 'post':
             P3_x = self._apply_high_level_gate(P3_x, P4_upsampled_x, self.mhf_c3)
-        if self.fusion_type != 'lite_fpn':
-            P3_x = self.P3_2(P3_x)
+        P3_x = self.P3_2(P3_x)
 
         return [P3_x, P4_x, P5_x]
     

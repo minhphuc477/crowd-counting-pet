@@ -35,7 +35,7 @@ def get_args_parser():
     parser.add_argument('--fusion_mhf_strength', default=1.0, type=float)
     parser.add_argument('--fusion_mhf_activation', default='gelu', choices=('relu', 'gelu'))
     parser.add_argument('--fusion_mhf_impl', default='residual', choices=('residual', 'vmambacc'))
-    parser.add_argument('--fusion_fpn_type', default='fpn', choices=('fpn', 'hs2fpn', 'lite_fpn'))
+    parser.add_argument('--fusion_fpn_type', default='fpn', choices=('fpn', 'hs2fpn'))
     parser.add_argument('--fusion_mhf_reduction', default=4, type=int)
     parser.add_argument('--fusion_mhf_norm', default='none', choices=('none', 'bn', 'gn'))
     parser.add_argument('--fusion_mhf_spatial_kernel', default=7, type=int)
@@ -129,6 +129,8 @@ def get_args_parser():
     parser.add_argument('--checkpoint_model_key', default='auto',
                         choices=('auto', 'model', 'model_ema', 'model_raw'),
                         help='checkpoint state to evaluate; auto prefers model_ema when present')
+    parser.add_argument('--tta_flip', action='store_true',
+                        help='average original and horizontal-flip predicted counts at evaluation time')
     parser.add_argument('--num_workers', default=2, type=int)
     parser.add_argument('--deterministic', dest='deterministic', action='store_true', default=True)
     parser.add_argument('--no_deterministic', dest='deterministic', action='store_false')
@@ -155,7 +157,7 @@ def merge_checkpoint_args(args, checkpoint):
         'resume', 'device', 'vis_dir', 'results_file', 'data_path', 'dataset_file',
         'eval_max_size', 'num_workers', 'seed',
         'override_score_threshold', 'override_split_threshold', 'override_split_threshold_quantile',
-        'checkpoint_model_key', 'deterministic',
+        'checkpoint_model_key', 'deterministic', 'tta_flip',
     }
     for key in runtime_keys:
         setattr(merged, key, getattr(args, key))
@@ -251,7 +253,7 @@ def main(args):
     
     # evaluation
     vis_dir = None if args.vis_dir == "" else args.vis_dir
-    test_stats = evaluate(model, data_loader_val, device, vis_dir=vis_dir)
+    test_stats = evaluate(model, data_loader_val, device, vis_dir=vis_dir, tta_flip=args.tta_flip)
     mae, mse = test_stats['mae'], test_stats['mse']
     line = f'\nepoch: {cur_epoch}, mae: {mae}, mse: {mse}' 
     print(line)
@@ -271,6 +273,7 @@ def main(args):
             'gt_cnt': float(test_stats.get('gt_cnt', 0.0)),
             'checkpoint': args.resume,
             'eval_model': eval_model_key,
+            'tta_flip': bool(args.tta_flip),
         }, indent=2) + "\n", encoding="utf-8")
         print(f'eval results saved to: {results_file}')
 

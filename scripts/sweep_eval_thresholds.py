@@ -95,6 +95,8 @@ def run_eval(
     ]
     if args.data_path:
         cmd.extend(["--data_path", args.data_path])
+    if args.tta_flip:
+        cmd.append("--tta_flip")
 
     started = time.time()
     proc = subprocess.run(
@@ -115,6 +117,7 @@ def run_eval(
     record = {
         "score_threshold": float(score_threshold),
         "split_threshold": float(split_threshold),
+        "tta_flip": bool(args.tta_flip),
         "returncode": int(proc.returncode),
         "elapsed_sec": float(time.time() - started),
         "results_file": str(results_file),
@@ -141,6 +144,7 @@ def write_outputs(records: list[dict], output_dir: Path) -> None:
         "ok",
         "score_threshold",
         "split_threshold",
+        "tta_flip",
         "eval_mae",
         "eval_mse",
         "pred_cnt",
@@ -176,6 +180,7 @@ def get_args() -> argparse.Namespace:
     parser.add_argument("--num_workers", default=2, type=int)
     parser.add_argument("--timeout", default=1800, type=int, help="Per-eval timeout in seconds; 0 disables")
     parser.add_argument("--output_dir", default="", help="Where to save sweep logs/results")
+    parser.add_argument("--tta_flip", action="store_true", help="average original and horizontal-flip counts")
     parser.add_argument(
         "--score_thresholds",
         nargs="+",
