@@ -294,6 +294,12 @@ def get_args_parser():
                         help='epoch when APG auxiliary supervision starts')
     parser.add_argument('--apg_end_epoch', default=-1, type=int,
                         help='epoch after which APG auxiliary supervision turns off; negative keeps it on')
+    parser.add_argument('--apg_contrastive_coef', default=0.0, type=float,
+                        help='local APG contrastive margin loss weight inside APG; 0 disables it')
+    parser.add_argument('--apg_neg_k', default=4, type=int,
+                        help='nearby non-GT point queries per GT used as APG local negatives')
+    parser.add_argument('--apg_margin', default=1.0, type=float,
+                        help='person-logit margin between APG positive and local negative queries')
     parser.add_argument('--eos_coef', default=0.5, type=float,
                         help="Relative classification weight of the no-object class")
     parser.add_argument('--pet_loss_variant', default='paper', choices=('paper', 'balanced'),
@@ -410,6 +416,7 @@ def merge_checkpoint_args(args, checkpoint):
             'min_lr', 'ema_decay',
             'score_threshold', 'split_threshold', 'split_threshold_quantile',
             'apg_loss_coef', 'apg_pos_k', 'apg_point_coef', 'apg_start_epoch', 'apg_end_epoch',
+            'apg_contrastive_coef', 'apg_neg_k', 'apg_margin',
         })
         if getattr(args, 'resume_allow_arch_change', False):
             explicit_args = set(getattr(args, '_explicit_args', set()))

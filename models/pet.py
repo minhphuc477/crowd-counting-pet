@@ -403,6 +403,9 @@ class PET(nn.Module):
         self.apg_point_coef = float(getattr(args, 'apg_point_coef', 5.0))
         self.apg_start_epoch = int(getattr(args, 'apg_start_epoch', 0))
         self.apg_end_epoch = int(getattr(args, 'apg_end_epoch', -1))
+        self.apg_contrastive_coef = float(getattr(args, 'apg_contrastive_coef', 0.0))
+        self.apg_neg_k = max(0, int(getattr(args, 'apg_neg_k', 4)))
+        self.apg_margin = float(getattr(args, 'apg_margin', 1.0))
         self.sparse_dec_win_size = _parse_size_pair(
             getattr(args, 'sparse_dec_win_size', ''),
             (16, 8),
@@ -552,12 +555,14 @@ class PET(nn.Module):
 
         cls_losses = []
         point_losses = []
+        contrastive_losses = []
         for batch_idx, target in enumerate(targets):
             gt_points = target['points'].to(device=device, dtype=pred_points.dtype)
             if gt_points.numel() == 0:
                 continue
+            query_dist = torch.cdist(gt_points, query_abs, p=2)
             k = min(self.apg_pos_k, query_abs.shape[0])
-            nearest = torch.cdist(gt_points, query_abs, p=2).topk(k, largest=False).indices.reshape(-1)
+            nearest = query_dist.topk(k, largest=False).indices.reshape(-1)
             nearest = torch.unique(nearest)
 
             cls_target = torch.ones(nearest.shape[0], dtype=torch.long, device=device)
@@ -570,12 +575,26 @@ class PET(nn.Module):
             point_losses.append(
                 F.smooth_l1_loss(pred_points[batch_idx, nearest], gt_norm, reduction='none').sum(dim=-1).mean()
             )
+            if self.apg_contrastive_coef > 0 and self.apg_neg_k > 0:
+                candidate_k = min(k + self.apg_neg_k, query_abs.shape[0])
+                candidates = torch.unique(query_dist.topk(candidate_k, largest=False).indices.reshape(-1))
+                positive_mask = torch.zeros(query_abs.shape[0], dtype=torch.bool, device=device)
+                positive_mask[nearest] = True
+                negatives = candidates[~positive_mask[candidates]]
+                if negatives.numel() > 0:
+                    person_margin_logits = logits[batch_idx, :, 1] - logits[batch_idx, :, 0]
+                    pos_score = person_margin_logits[nearest].mean()
+                    neg_scores = person_margin_logits[negatives]
+                    contrastive_losses.append(F.relu(self.apg_margin - pos_score + neg_scores).mean())
 
         if not cls_losses:
             return logits.sum() * 0.0
         loss_cls = torch.stack(cls_losses).mean()
         loss_point = torch.stack(point_losses).mean()
-        return loss_cls + self.apg_point_coef * loss_point
+        loss = loss_cls + self.apg_point_coef * loss_point
+        if contrastive_losses:
+            loss = loss + self.apg_contrastive_coef * torch.stack(contrastive_losses).mean()
+        return loss
 
     def compute_count_loss(self, outputs, targets):
         output_sparse, output_dense = outputs['sparse'], outputs['dense']
