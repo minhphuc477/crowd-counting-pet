@@ -406,6 +406,11 @@ class PET(nn.Module):
         self.apg_contrastive_coef = float(getattr(args, 'apg_contrastive_coef', 0.0))
         self.apg_neg_k = max(0, int(getattr(args, 'apg_neg_k', 4)))
         self.apg_margin = float(getattr(args, 'apg_margin', 1.0))
+        self.qd_apg_loss_coef = float(getattr(args, 'qd_apg_loss_coef', 0.0))
+        self.qd_apg_point_coef = float(getattr(args, 'qd_apg_point_coef', 5.0))
+        self.qd_apg_suppress_coef = float(getattr(args, 'qd_apg_suppress_coef', 0.5))
+        self.qd_apg_start_epoch = int(getattr(args, 'qd_apg_start_epoch', 0))
+        self.qd_apg_end_epoch = int(getattr(args, 'qd_apg_end_epoch', -1))
         self.sparse_dec_win_size = _parse_size_pair(
             getattr(args, 'sparse_dec_win_size', ''),
             (16, 8),
@@ -499,14 +504,28 @@ class PET(nn.Module):
             apg_active = epoch >= self.apg_start_epoch and (
                 self.apg_end_epoch < 0 or epoch <= self.apg_end_epoch
             )
-            weight_apg = self.apg_loss_coef if apg_active else 0.0
-            loss_apg_sparse = self.compute_apg_loss(output_sparse, targets)
-            loss_apg_dense = self.compute_apg_loss(output_dense, targets)
+            if apg_active:
+                loss_apg_sparse = self.compute_apg_loss(output_sparse, targets)
+                loss_apg_dense = self.compute_apg_loss(output_dense, targets)
+            else:
+                loss_apg_sparse = output_sparse['pred_logits'].sum() * 0.0
+                loss_apg_dense = output_dense['pred_logits'].sum() * 0.0
             loss_dict['loss_apg_sp'] = loss_apg_sparse
             loss_dict['loss_apg_ds'] = loss_apg_dense
-            weight_dict['loss_apg_sp'] = weight_apg
-            weight_dict['loss_apg_ds'] = weight_apg
-            losses += (loss_apg_sparse + loss_apg_dense) * weight_apg
+            weight_dict['loss_apg_sp'] = self.apg_loss_coef
+            weight_dict['loss_apg_ds'] = self.apg_loss_coef
+            losses += (loss_apg_sparse + loss_apg_dense) * self.apg_loss_coef
+        if self.qd_apg_loss_coef > 0:
+            qd_apg_active = epoch >= self.qd_apg_start_epoch and (
+                self.qd_apg_end_epoch < 0 or epoch <= self.qd_apg_end_epoch
+            )
+            if qd_apg_active:
+                loss_qd_apg = self.compute_qd_apg_loss(outputs, targets)
+            else:
+                loss_qd_apg = output_sparse['pred_logits'].sum() * 0.0
+            loss_dict['loss_qd_apg'] = loss_qd_apg
+            weight_dict['loss_qd_apg'] = self.qd_apg_loss_coef
+            losses += loss_qd_apg * self.qd_apg_loss_coef
 
         if self.pet_loss_variant == 'paper':
             weight_split = self.quadtree_loss_coef if epoch >= warmup_ep else 0.0
@@ -594,6 +613,87 @@ class PET(nn.Module):
         loss = loss_cls + self.apg_point_coef * loss_point
         if contrastive_losses:
             loss = loss + self.apg_contrastive_coef * torch.stack(contrastive_losses).mean()
+        return loss
+
+    def _nearest_query_index(self, output, gt_point, device, dtype):
+        img_h, img_w = output['img_shape']
+        point_queries = output.get('points_queries')
+        if point_queries is None or point_queries.numel() == 0:
+            return None
+        query_abs = point_queries.to(device=device, dtype=dtype).clone()
+        query_abs[:, 0] *= img_h
+        query_abs[:, 1] *= img_w
+        return torch.cdist(gt_point.reshape(1, 2), query_abs, p=2).argmin(dim=1)[0]
+
+    def _qd_positive_loss(self, output, batch_idx, query_idx, gt_point):
+        logits = output['pred_logits']
+        pred_points = output['pred_points']
+        device = logits.device
+        img_h, img_w = output['img_shape']
+        cls_target = torch.ones(1, dtype=torch.long, device=device)
+        loss_cls = F.cross_entropy(logits[batch_idx, query_idx].unsqueeze(0), cls_target, reduction='mean')
+
+        gt_norm = gt_point.to(device=device, dtype=pred_points.dtype).clone()
+        gt_norm[0] /= img_h
+        gt_norm[1] /= img_w
+        loss_point = F.smooth_l1_loss(
+            pred_points[batch_idx, query_idx].reshape(1, 2),
+            gt_norm.reshape(1, 2),
+            reduction='none',
+        ).sum(dim=-1).mean()
+        return loss_cls + self.qd_apg_point_coef * loss_point
+
+    def _qd_suppress_loss(self, output, batch_idx, query_idx):
+        logits = output['pred_logits']
+        device = logits.device
+        cls_target = torch.zeros(1, dtype=torch.long, device=device)
+        return F.cross_entropy(logits[batch_idx, query_idx].unsqueeze(0), cls_target, reduction='mean')
+
+    def compute_qd_apg_loss(self, outputs, targets):
+        """Quadtree-Dual APG.
+
+        PET has two routed proposal sets: sparse 8x and dense 4x queries. Plain
+        APG can accidentally encourage both branches around the same GT point.
+        QD-APG uses the current quadtree split map to choose exactly one branch
+        as the auxiliary positive branch and locally suppresses the other.
+        """
+        output_sparse = outputs['sparse']
+        output_dense = outputs['dense']
+        split_map = outputs['split_map_raw']
+        device = split_map.device
+        dtype = output_sparse['pred_points'].dtype
+        img_h, img_w = output_sparse['img_shape']
+        split_h, split_w = split_map.shape[-2:]
+        route_threshold = float(self.split_threshold) if self.split_threshold >= 0 else 0.5
+
+        positive_losses = []
+        suppress_losses = []
+        for batch_idx, target in enumerate(targets):
+            gt_points = target['points'].to(device=device, dtype=dtype)
+            if gt_points.numel() == 0:
+                continue
+            y = torch.clamp((gt_points[:, 0] / max(float(img_h), 1.0) * split_h).long(), 0, split_h - 1)
+            x = torch.clamp((gt_points[:, 1] / max(float(img_w), 1.0) * split_w).long(), 0, split_w - 1)
+            dense_routes = split_map[batch_idx, 0, y, x] > route_threshold
+            for point_idx, gt_point in enumerate(gt_points):
+                sparse_idx = self._nearest_query_index(output_sparse, gt_point, device, dtype)
+                dense_idx = self._nearest_query_index(output_dense, gt_point, device, dtype)
+                if sparse_idx is None or dense_idx is None:
+                    continue
+                if bool(dense_routes[point_idx].item()):
+                    positive_losses.append(self._qd_positive_loss(output_dense, batch_idx, dense_idx, gt_point))
+                    if self.qd_apg_suppress_coef > 0:
+                        suppress_losses.append(self._qd_suppress_loss(output_sparse, batch_idx, sparse_idx))
+                else:
+                    positive_losses.append(self._qd_positive_loss(output_sparse, batch_idx, sparse_idx, gt_point))
+                    if self.qd_apg_suppress_coef > 0:
+                        suppress_losses.append(self._qd_suppress_loss(output_dense, batch_idx, dense_idx))
+
+        if not positive_losses:
+            return output_sparse['pred_logits'].sum() * 0.0
+        loss = torch.stack(positive_losses).mean()
+        if suppress_losses:
+            loss = loss + self.qd_apg_suppress_coef * torch.stack(suppress_losses).mean()
         return loss
 
     def compute_count_loss(self, outputs, targets):
