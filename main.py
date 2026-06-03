@@ -310,6 +310,8 @@ def get_args_parser():
                         help='epoch when QD-APG auxiliary supervision starts')
     parser.add_argument('--qd_apg_end_epoch', default=-1, type=int,
                         help='epoch after which QD-APG turns off; negative keeps it on')
+    parser.add_argument('--qd_apg_route_source', default='gt_count', choices=('gt_count', 'split_map'),
+                        help='QD-APG branch teacher: GT local count target or live split map')
     parser.add_argument('--eos_coef', default=0.5, type=float,
                         help="Relative classification weight of the no-object class")
     parser.add_argument('--pet_loss_variant', default='paper', choices=('paper', 'balanced'),
@@ -428,7 +430,7 @@ def merge_checkpoint_args(args, checkpoint):
             'apg_loss_coef', 'apg_pos_k', 'apg_point_coef', 'apg_start_epoch', 'apg_end_epoch',
             'apg_contrastive_coef', 'apg_neg_k', 'apg_margin',
             'qd_apg_loss_coef', 'qd_apg_point_coef', 'qd_apg_suppress_coef',
-            'qd_apg_start_epoch', 'qd_apg_end_epoch',
+            'qd_apg_start_epoch', 'qd_apg_end_epoch', 'qd_apg_route_source',
         })
         if getattr(args, 'resume_allow_arch_change', False):
             explicit_args = set(getattr(args, '_explicit_args', set()))

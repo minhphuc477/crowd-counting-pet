@@ -411,6 +411,9 @@ class PET(nn.Module):
         self.qd_apg_suppress_coef = float(getattr(args, 'qd_apg_suppress_coef', 0.5))
         self.qd_apg_start_epoch = int(getattr(args, 'qd_apg_start_epoch', 0))
         self.qd_apg_end_epoch = int(getattr(args, 'qd_apg_end_epoch', -1))
+        self.qd_apg_route_source = getattr(args, 'qd_apg_route_source', 'gt_count')
+        if self.qd_apg_route_source not in ('gt_count', 'split_map'):
+            raise ValueError('qd_apg_route_source must be one of "gt_count" or "split_map"')
         self.sparse_dec_win_size = _parse_size_pair(
             getattr(args, 'sparse_dec_win_size', ''),
             (16, 8),
@@ -654,8 +657,10 @@ class PET(nn.Module):
 
         PET has two routed proposal sets: sparse 8x and dense 4x queries. Plain
         APG can accidentally encourage both branches around the same GT point.
-        QD-APG uses the current quadtree split map to choose exactly one branch
-        as the auxiliary positive branch and locally suppresses the other.
+        QD-APG chooses exactly one branch as the auxiliary positive branch and
+        locally suppresses the other. The default route comes from the GT local
+        count used by PET's splitter target; using the live split map as a
+        teacher is available for ablations but is unsafe early in training.
         """
         output_sparse = outputs['sparse']
         output_dense = outputs['dense']
@@ -674,7 +679,13 @@ class PET(nn.Module):
                 continue
             y = torch.clamp((gt_points[:, 0] / max(float(img_h), 1.0) * split_h).long(), 0, split_h - 1)
             x = torch.clamp((gt_points[:, 1] / max(float(img_w), 1.0) * split_w).long(), 0, split_w - 1)
-            dense_routes = split_map[batch_idx, 0, y, x] > route_threshold
+            if self.qd_apg_route_source == 'split_map':
+                dense_routes = split_map[batch_idx, 0, y, x] > route_threshold
+            else:
+                linear_idx = y * split_w + x
+                counts = torch.zeros(split_h * split_w, dtype=torch.long, device=device)
+                counts.scatter_add_(0, linear_idx, torch.ones_like(linear_idx, dtype=torch.long))
+                dense_routes = counts[linear_idx] >= self.split_count_threshold
             for point_idx, gt_point in enumerate(gt_points):
                 sparse_idx = self._nearest_query_index(output_sparse, gt_point, device, dtype)
                 dense_idx = self._nearest_query_index(output_dense, gt_point, device, dtype)

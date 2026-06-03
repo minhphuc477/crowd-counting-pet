@@ -46,6 +46,7 @@ KEY_ARGS = (
     'qd_apg_suppress_coef',
     'qd_apg_start_epoch',
     'qd_apg_end_epoch',
+    'qd_apg_route_source',
     'pet_loss_variant',
     'dec_layers',
     'decoder_attention',
