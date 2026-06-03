@@ -292,6 +292,8 @@ def get_args_parser():
                         help='point-regression coefficient inside APG loss')
     parser.add_argument('--apg_start_epoch', default=0, type=int,
                         help='epoch when APG auxiliary supervision starts')
+    parser.add_argument('--apg_end_epoch', default=-1, type=int,
+                        help='epoch after which APG auxiliary supervision turns off; negative keeps it on')
     parser.add_argument('--eos_coef', default=0.5, type=float,
                         help="Relative classification weight of the no-object class")
     parser.add_argument('--pet_loss_variant', default='paper', choices=('paper', 'balanced'),
@@ -406,6 +408,8 @@ def merge_checkpoint_args(args, checkpoint):
             'lr', 'lr_backbone', 'lr_backbone_adapter', 'weight_decay',
             'lr_scheduler', 'lr_drop', 'lr_gamma', 'warmup_epochs', 'hold_epochs',
             'min_lr', 'ema_decay',
+            'score_threshold', 'split_threshold', 'split_threshold_quantile',
+            'apg_loss_coef', 'apg_pos_k', 'apg_point_coef', 'apg_start_epoch', 'apg_end_epoch',
         })
         if getattr(args, 'resume_allow_arch_change', False):
             explicit_args = set(getattr(args, '_explicit_args', set()))

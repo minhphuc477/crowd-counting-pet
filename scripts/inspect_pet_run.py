@@ -37,6 +37,7 @@ KEY_ARGS = (
     'apg_pos_k',
     'apg_point_coef',
     'apg_start_epoch',
+    'apg_end_epoch',
     'pet_loss_variant',
     'dec_layers',
     'decoder_attention',

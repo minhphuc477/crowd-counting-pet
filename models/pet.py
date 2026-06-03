@@ -402,6 +402,7 @@ class PET(nn.Module):
         self.apg_pos_k = max(1, int(getattr(args, 'apg_pos_k', 1)))
         self.apg_point_coef = float(getattr(args, 'apg_point_coef', 5.0))
         self.apg_start_epoch = int(getattr(args, 'apg_start_epoch', 0))
+        self.apg_end_epoch = int(getattr(args, 'apg_end_epoch', -1))
         self.sparse_dec_win_size = _parse_size_pair(
             getattr(args, 'sparse_dec_win_size', ''),
             (16, 8),
@@ -492,7 +493,10 @@ class PET(nn.Module):
             weight_dict['loss_count'] = weight_count
             losses += loss_count * weight_count
         if self.apg_loss_coef > 0:
-            weight_apg = self.apg_loss_coef if epoch >= self.apg_start_epoch else 0.0
+            apg_active = epoch >= self.apg_start_epoch and (
+                self.apg_end_epoch < 0 or epoch <= self.apg_end_epoch
+            )
+            weight_apg = self.apg_loss_coef if apg_active else 0.0
             loss_apg_sparse = self.compute_apg_loss(output_sparse, targets)
             loss_apg_dense = self.compute_apg_loss(output_dense, targets)
             loss_dict['loss_apg_sp'] = loss_apg_sparse
