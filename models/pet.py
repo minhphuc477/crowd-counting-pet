@@ -394,6 +394,9 @@ class PET(nn.Module):
         self.split_threshold_quantile = float(getattr(args, 'split_threshold_quantile', 0.55))
         self.score_threshold = float(getattr(args, 'score_threshold', 0.5))
         self.eval_nms_radius = float(getattr(args, 'eval_nms_radius', 0.0))
+        self.eval_branch_gate = getattr(args, 'eval_branch_gate', 'none')
+        if self.eval_branch_gate not in ('none', 'query', 'pred'):
+            raise ValueError('eval_branch_gate must be one of "none", "query", or "pred"')
         self.pet_loss_variant = getattr(args, 'pet_loss_variant', 'paper')
         self.count_loss_coef = float(getattr(args, 'count_loss_coef', 0.0))
         self.count_loss_gate = getattr(args, 'count_loss_gate', 'detach')
@@ -938,6 +941,38 @@ class PET(nn.Module):
         keep_idx = torch.stack(keep)
         return pred_logits[keep_idx], pred_points[keep_idx], pred_offsets[keep_idx], points_queries[keep_idx]
 
+    def get_eval_branch_gate_mask(self, output, split_map, branch):
+        mode = self.eval_branch_gate
+        if mode == 'none':
+            return None
+        if output is None:
+            return None
+        if mode == 'query':
+            points = output['points_queries']
+        else:
+            points = output['pred_points']
+        if points.numel() == 0:
+            return torch.zeros(points.shape[0], dtype=torch.bool, device=split_map.device)
+
+        points = points.to(device=split_map.device, dtype=split_map.dtype).clamp(0.0, 1.0)
+        grid = torch.stack(
+            [points[:, 1] * 2.0 - 1.0, points[:, 0] * 2.0 - 1.0],
+            dim=-1,
+        ).view(1, -1, 1, 2)
+        split_values = F.grid_sample(
+            split_map[:1],
+            grid,
+            mode='bilinear',
+            padding_mode='border',
+            align_corners=False,
+        ).view(-1)
+        threshold = self.get_split_threshold(split_map).to(dtype=split_values.dtype, device=split_values.device)
+        if branch == 'sparse':
+            return split_values <= threshold
+        if branch == 'dense':
+            return split_values > threshold
+        raise ValueError(f'Unsupported branch: {branch}')
+
     def pet_forward(self, samples, features, pos, **kwargs):
         # context encoding
         src, mask = features[self.encode_feats].decompose()
@@ -1017,6 +1052,9 @@ class PET(nn.Module):
         if out_sparse is not None:
             out_sparse_scores = torch.nn.functional.softmax(out_sparse['pred_logits'], -1)[..., 1]
             index_sparse = self.get_score_mask(out_sparse_scores).to(out_sparse['pred_logits'].device)
+            sparse_gate = self.get_eval_branch_gate_mask(out_sparse, outputs['split_map_raw'], 'sparse')
+            if sparse_gate is not None:
+                index_sparse = index_sparse & sparse_gate.to(device=index_sparse.device)
             pred_logits_parts.append(out_sparse['pred_logits'][index_sparse])
             pred_points_parts.append(out_sparse['pred_points'][index_sparse])
             pred_offsets_parts.append(out_sparse['pred_offsets'][index_sparse])
@@ -1026,6 +1064,9 @@ class PET(nn.Module):
         if out_dense is not None:
             out_dense_scores = torch.nn.functional.softmax(out_dense['pred_logits'], -1)[..., 1]
             index_dense = self.get_score_mask(out_dense_scores).to(out_dense['pred_logits'].device)
+            dense_gate = self.get_eval_branch_gate_mask(out_dense, outputs['split_map_raw'], 'dense')
+            if dense_gate is not None:
+                index_dense = index_dense & dense_gate.to(device=index_dense.device)
             pred_logits_parts.append(out_dense['pred_logits'][index_dense])
             pred_points_parts.append(out_dense['pred_points'][index_dense])
             pred_offsets_parts.append(out_dense['pred_offsets'][index_dense])

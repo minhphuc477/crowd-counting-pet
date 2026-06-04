@@ -350,6 +350,8 @@ def get_args_parser():
                         help='point classification threshold; negative enables adaptive score thresholding')
     parser.add_argument('--eval_nms_radius', default=0.0, type=float,
                         help='optional eval-only point NMS radius in pixels; 0 disables duplicate suppression')
+    parser.add_argument('--eval_branch_gate', default='none', choices=('none', 'query', 'pred'),
+                        help='eval-only split-aware sparse/dense ownership gate; none keeps PET concatenation')
 
     # dataset parameters
     parser.add_argument('--dataset_file', default="SHA")
@@ -443,7 +445,7 @@ def merge_checkpoint_args(args, checkpoint):
             'lr_scheduler', 'lr_drop', 'lr_gamma', 'warmup_epochs', 'hold_epochs',
             'min_lr', 'ema_decay',
             'score_threshold', 'split_threshold', 'split_threshold_quantile',
-            'eval_nms_radius',
+            'eval_nms_radius', 'eval_branch_gate',
             'apg_loss_coef', 'apg_pos_k', 'apg_point_coef', 'apg_start_epoch', 'apg_end_epoch',
             'apg_contrastive_coef', 'apg_neg_k', 'apg_margin',
             'ifi_loss_coef', 'ifi_point_coef', 'ifi_neg_k', 'ifi_neg_radius',

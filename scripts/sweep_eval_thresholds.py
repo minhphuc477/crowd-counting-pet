@@ -68,11 +68,12 @@ def run_eval(
     score_threshold: float,
     split_threshold: float,
     eval_nms_radius: float,
+    eval_branch_gate: str,
     run_dir: Path,
 ) -> dict:
     tag = (
         f"score_{score_threshold:.6g}_split_{split_threshold:.6g}_"
-        f"nms_{eval_nms_radius:.6g}"
+        f"nms_{eval_nms_radius:.6g}_gate_{eval_branch_gate}"
     ).replace(".", "p")
     results_file = run_dir / f"{tag}.json"
     log_file = run_dir / f"{tag}.log"
@@ -98,6 +99,8 @@ def run_eval(
         str(split_threshold),
         "--eval_nms_radius",
         str(eval_nms_radius),
+        "--eval_branch_gate",
+        eval_branch_gate,
     ]
     if args.data_path:
         cmd.extend(["--data_path", args.data_path])
@@ -124,6 +127,7 @@ def run_eval(
         "score_threshold": float(score_threshold),
         "split_threshold": float(split_threshold),
         "eval_nms_radius": float(eval_nms_radius),
+        "eval_branch_gate": eval_branch_gate,
         "tta_flip": bool(args.tta_flip),
         "returncode": int(proc.returncode),
         "elapsed_sec": float(time.time() - started),
@@ -152,6 +156,7 @@ def write_outputs(records: list[dict], output_dir: Path) -> None:
         "score_threshold",
         "split_threshold",
         "eval_nms_radius",
+        "eval_branch_gate",
         "tta_flip",
         "eval_mae",
         "eval_mse",
@@ -197,6 +202,13 @@ def get_args() -> argparse.Namespace:
         help="eval-only point NMS radii in pixels; 0 disables",
     )
     parser.add_argument(
+        "--eval_branch_gates",
+        nargs="+",
+        choices=("none", "query", "pred"),
+        default=["none"],
+        help="eval-only sparse/dense split-ownership gates",
+    )
+    parser.add_argument(
         "--score_thresholds",
         nargs="+",
         type=float,
@@ -219,24 +231,34 @@ def main() -> int:
     scores = _unique_sorted(args.score_thresholds)
     splits = _unique_sorted(args.split_thresholds)
     radii = _unique_sorted(args.eval_nms_radii)
+    gates = list(dict.fromkeys(args.eval_branch_gates))
     records = []
-    total = len(scores) * len(splits) * len(radii)
+    total = len(scores) * len(splits) * len(radii) * len(gates)
     index = 0
     for split_threshold in splits:
-        for eval_nms_radius in radii:
-            for score_threshold in scores:
-                index += 1
-                print(
-                    f"[{index}/{total}] score_threshold={score_threshold} "
-                    f"split_threshold={split_threshold} eval_nms_radius={eval_nms_radius}"
-                )
-                record = run_eval(args, score_threshold, split_threshold, eval_nms_radius, output_dir)
-                records.append(record)
-                if record.get("ok"):
-                    print(f"  mae={record['eval_mae']:.4f} mse={record['eval_mse']:.4f}")
-                else:
-                    print(f"  failed; see {record['log_file']}")
-                write_outputs(records, output_dir)
+        for eval_branch_gate in gates:
+            for eval_nms_radius in radii:
+                for score_threshold in scores:
+                    index += 1
+                    print(
+                        f"[{index}/{total}] score_threshold={score_threshold} "
+                        f"split_threshold={split_threshold} eval_nms_radius={eval_nms_radius} "
+                        f"eval_branch_gate={eval_branch_gate}"
+                    )
+                    record = run_eval(
+                        args,
+                        score_threshold,
+                        split_threshold,
+                        eval_nms_radius,
+                        eval_branch_gate,
+                        output_dir,
+                    )
+                    records.append(record)
+                    if record.get("ok"):
+                        print(f"  mae={record['eval_mae']:.4f} mse={record['eval_mse']:.4f}")
+                    else:
+                        print(f"  failed; see {record['log_file']}")
+                    write_outputs(records, output_dir)
 
     ok_records = [record for record in records if record.get("ok") and "eval_mae" in record]
     if not ok_records:
@@ -249,7 +271,8 @@ def main() -> int:
         f"mae={best['eval_mae']:.4f} mse={best['eval_mse']:.4f} "
         f"score_threshold={best['score_threshold']} "
         f"split_threshold={best['split_threshold']} "
-        f"eval_nms_radius={best['eval_nms_radius']}"
+        f"eval_nms_radius={best['eval_nms_radius']} "
+        f"eval_branch_gate={best['eval_branch_gate']}"
     )
     print(f"Results saved to: {output_dir}")
     return 0

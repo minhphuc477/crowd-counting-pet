@@ -31,6 +31,7 @@ KEY_ARGS = (
     'fusion_mhf_output_activation',
     'score_threshold',
     'eval_nms_radius',
+    'eval_branch_gate',
     'split_threshold',
     'splitter_head',
     'count_loss_coef',
