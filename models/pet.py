@@ -389,6 +389,7 @@ class PET(nn.Module):
         self.split_threshold = float(getattr(args, 'split_threshold', -1.0))
         self.split_threshold_quantile = float(getattr(args, 'split_threshold_quantile', 0.55))
         self.score_threshold = float(getattr(args, 'score_threshold', 0.5))
+        self.eval_nms_radius = float(getattr(args, 'eval_nms_radius', 0.0))
         self.pet_loss_variant = getattr(args, 'pet_loss_variant', 'paper')
         self.count_loss_coef = float(getattr(args, 'count_loss_coef', 0.0))
         self.count_loss_gate = getattr(args, 'count_loss_gate', 'detach')
@@ -817,6 +818,32 @@ class PET(nn.Module):
                 threshold = threshold.clamp(0.05, 0.95)
         return scores >= threshold
 
+    def apply_eval_point_nms(self, pred_logits, pred_points, pred_offsets, points_queries, scores, img_shape):
+        radius = float(self.eval_nms_radius)
+        if radius <= 0 or pred_points.shape[0] <= 1:
+            return pred_logits, pred_points, pred_offsets, points_queries
+
+        # pred_points are normalized [y, x]; convert to pixels for a radius
+        # that is stable across ShanghaiTech image sizes.
+        img_h, img_w = img_shape
+        scale = pred_points.new_tensor([float(img_h), float(img_w)])
+        points_abs = pred_points * scale
+        order = torch.argsort(scores, descending=True)
+        suppressed = torch.zeros(pred_points.shape[0], dtype=torch.bool, device=pred_points.device)
+        keep = []
+        for idx in order:
+            if bool(suppressed[idx].item()):
+                continue
+            keep.append(idx)
+            dist = torch.linalg.vector_norm(points_abs - points_abs[idx], dim=1)
+            suppressed |= dist <= radius
+            suppressed[idx] = False
+        if not keep:
+            empty = torch.empty(0, dtype=torch.long, device=pred_points.device)
+            return pred_logits[empty], pred_points[empty], pred_offsets[empty], points_queries[empty]
+        keep_idx = torch.stack(keep)
+        return pred_logits[keep_idx], pred_points[keep_idx], pred_offsets[keep_idx], points_queries[keep_idx]
+
     def pet_forward(self, samples, features, pos, **kwargs):
         # context encoding
         src, mask = features[self.encode_feats].decompose()
@@ -884,46 +911,69 @@ class PET(nn.Module):
     def test_forward(self, samples, features, pos, **kwargs):
         outputs = self.pet_forward(samples, features, pos, **kwargs)
         out_dense, out_sparse = outputs['dense'], outputs['sparse']
-        points_queries_out = None
-        
-        # process sparse point queries
+        pred_logits_parts = []
+        pred_points_parts = []
+        pred_offsets_parts = []
+        points_queries_parts = []
+        score_parts = []
+        template_out = out_sparse if out_sparse is not None else out_dense
+
         if out_sparse is not None:
             out_sparse_scores = torch.nn.functional.softmax(out_sparse['pred_logits'], -1)[..., 1]
             index_sparse = self.get_score_mask(out_sparse_scores).to(out_sparse['pred_logits'].device)
-            points_queries_sparse = out_sparse['points_queries'][index_sparse].unsqueeze(0)
-            points_queries_out = points_queries_sparse
-        else:
-            index_sparse = None
+            pred_logits_parts.append(out_sparse['pred_logits'][index_sparse])
+            pred_points_parts.append(out_sparse['pred_points'][index_sparse])
+            pred_offsets_parts.append(out_sparse['pred_offsets'][index_sparse])
+            points_queries_parts.append(out_sparse['points_queries'][index_sparse])
+            score_parts.append(out_sparse_scores[index_sparse])
 
-        # process dense point queries
-        if outputs['dense'] is not None:
+        if out_dense is not None:
             out_dense_scores = torch.nn.functional.softmax(out_dense['pred_logits'], -1)[..., 1]
             index_dense = self.get_score_mask(out_dense_scores).to(out_dense['pred_logits'].device)
-            points_queries_dense = out_dense['points_queries'][index_dense].unsqueeze(0)
-            if points_queries_out is None:
-                points_queries_out = points_queries_dense
-            else:
-                points_queries_out = torch.cat([points_queries_out, points_queries_dense], dim=1)
-        else:
-            index_dense = None
+            pred_logits_parts.append(out_dense['pred_logits'][index_dense])
+            pred_points_parts.append(out_dense['pred_points'][index_dense])
+            pred_offsets_parts.append(out_dense['pred_offsets'][index_dense])
+            points_queries_parts.append(out_dense['points_queries'][index_dense])
+            score_parts.append(out_dense_scores[index_dense])
 
-        # format output
+        if pred_logits_parts:
+            pred_logits = torch.cat(pred_logits_parts, dim=0)
+            pred_points = torch.cat(pred_points_parts, dim=0)
+            pred_offsets = torch.cat(pred_offsets_parts, dim=0)
+            points_queries_out = torch.cat(points_queries_parts, dim=0)
+            scores = torch.cat(score_parts, dim=0)
+        else:
+            device = outputs['split_map_raw'].device
+            pred_logits = torch.empty((0, 2), dtype=template_out['pred_logits'].dtype, device=device)
+            pred_points = torch.empty((0, 2), dtype=template_out['pred_points'].dtype, device=device)
+            pred_offsets = torch.empty((0, 2), dtype=template_out['pred_offsets'].dtype, device=device)
+            points_queries_out = torch.empty((0, 2), dtype=template_out['points_queries'].dtype, device=device)
+            scores = torch.empty((0,), dtype=template_out['pred_logits'].dtype, device=device)
+
+        pred_logits, pred_points, pred_offsets, points_queries_out = self.apply_eval_point_nms(
+            pred_logits,
+            pred_points,
+            pred_offsets,
+            points_queries_out,
+            scores,
+            template_out['img_shape'],
+        )
+
         div_out = dict()
-        output_names = out_sparse.keys() if out_sparse is not None else out_dense.keys()
-        for name in list(output_names):
+        for name in list(template_out.keys()):
             if name == 'points_queries':
                 continue
-            if 'pred' in name:
-                if index_dense is None:
-                    div_out[name] = out_sparse[name][index_sparse].unsqueeze(0)
-                elif index_sparse is None:
-                    div_out[name] = out_dense[name][index_dense].unsqueeze(0)
-                else:
-                    div_out[name] = torch.cat([out_sparse[name][index_sparse].unsqueeze(0), out_dense[name][index_dense].unsqueeze(0)], dim=1)
+            if name == 'pred_logits':
+                div_out[name] = pred_logits.unsqueeze(0)
+            elif name == 'pred_points':
+                div_out[name] = pred_points.unsqueeze(0)
+            elif name == 'pred_offsets':
+                div_out[name] = pred_offsets.unsqueeze(0)
+            elif 'pred' in name:
+                div_out[name] = template_out[name]
             else:
-                div_out[name] = out_sparse[name] if out_sparse is not None else out_dense[name]
-        if points_queries_out is not None:
-            div_out['points_queries'] = points_queries_out
+                div_out[name] = template_out[name]
+        div_out['points_queries'] = points_queries_out.unsqueeze(0)
         div_out['split_map_raw'] = outputs['split_map_raw']
         div_out['split_threshold'] = outputs['split_threshold']
         return div_out

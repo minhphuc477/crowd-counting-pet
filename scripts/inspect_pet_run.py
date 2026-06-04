@@ -30,6 +30,7 @@ KEY_ARGS = (
     'fusion_mhf_spatial_kernel',
     'fusion_mhf_output_activation',
     'score_threshold',
+    'eval_nms_radius',
     'split_threshold',
     'splitter_head',
     'count_loss_coef',

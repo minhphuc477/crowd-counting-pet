@@ -334,6 +334,8 @@ def get_args_parser():
                         help='legacy adaptive split-map quantile (unused when split_threshold is set)')
     parser.add_argument('--score_threshold', default=0.5, type=float,
                         help='point classification threshold; negative enables adaptive score thresholding')
+    parser.add_argument('--eval_nms_radius', default=0.0, type=float,
+                        help='optional eval-only point NMS radius in pixels; 0 disables duplicate suppression')
 
     # dataset parameters
     parser.add_argument('--dataset_file', default="SHA")
@@ -427,6 +429,7 @@ def merge_checkpoint_args(args, checkpoint):
             'lr_scheduler', 'lr_drop', 'lr_gamma', 'warmup_epochs', 'hold_epochs',
             'min_lr', 'ema_decay',
             'score_threshold', 'split_threshold', 'split_threshold_quantile',
+            'eval_nms_radius',
             'apg_loss_coef', 'apg_pos_k', 'apg_point_coef', 'apg_start_epoch', 'apg_end_epoch',
             'apg_contrastive_coef', 'apg_neg_k', 'apg_margin',
             'qd_apg_loss_coef', 'qd_apg_point_coef', 'qd_apg_suppress_coef',

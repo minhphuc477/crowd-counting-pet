@@ -67,9 +67,13 @@ def run_eval(
     args: argparse.Namespace,
     score_threshold: float,
     split_threshold: float,
+    eval_nms_radius: float,
     run_dir: Path,
 ) -> dict:
-    tag = f"score_{score_threshold:.6g}_split_{split_threshold:.6g}".replace(".", "p")
+    tag = (
+        f"score_{score_threshold:.6g}_split_{split_threshold:.6g}_"
+        f"nms_{eval_nms_radius:.6g}"
+    ).replace(".", "p")
     results_file = run_dir / f"{tag}.json"
     log_file = run_dir / f"{tag}.log"
 
@@ -92,6 +96,8 @@ def run_eval(
         str(score_threshold),
         "--override_split_threshold",
         str(split_threshold),
+        "--eval_nms_radius",
+        str(eval_nms_radius),
     ]
     if args.data_path:
         cmd.extend(["--data_path", args.data_path])
@@ -117,6 +123,7 @@ def run_eval(
     record = {
         "score_threshold": float(score_threshold),
         "split_threshold": float(split_threshold),
+        "eval_nms_radius": float(eval_nms_radius),
         "tta_flip": bool(args.tta_flip),
         "returncode": int(proc.returncode),
         "elapsed_sec": float(time.time() - started),
@@ -144,6 +151,7 @@ def write_outputs(records: list[dict], output_dir: Path) -> None:
         "ok",
         "score_threshold",
         "split_threshold",
+        "eval_nms_radius",
         "tta_flip",
         "eval_mae",
         "eval_mse",
@@ -182,6 +190,13 @@ def get_args() -> argparse.Namespace:
     parser.add_argument("--output_dir", default="", help="Where to save sweep logs/results")
     parser.add_argument("--tta_flip", action="store_true", help="average original and horizontal-flip counts")
     parser.add_argument(
+        "--eval_nms_radii",
+        nargs="+",
+        type=float,
+        default=[0.0],
+        help="eval-only point NMS radii in pixels; 0 disables",
+    )
+    parser.add_argument(
         "--score_thresholds",
         nargs="+",
         type=float,
@@ -203,23 +218,25 @@ def main() -> int:
 
     scores = _unique_sorted(args.score_thresholds)
     splits = _unique_sorted(args.split_thresholds)
+    radii = _unique_sorted(args.eval_nms_radii)
     records = []
-    total = len(scores) * len(splits)
+    total = len(scores) * len(splits) * len(radii)
     index = 0
     for split_threshold in splits:
-        for score_threshold in scores:
-            index += 1
-            print(
-                f"[{index}/{total}] score_threshold={score_threshold} "
-                f"split_threshold={split_threshold}"
-            )
-            record = run_eval(args, score_threshold, split_threshold, output_dir)
-            records.append(record)
-            if record.get("ok"):
-                print(f"  mae={record['eval_mae']:.4f} mse={record['eval_mse']:.4f}")
-            else:
-                print(f"  failed; see {record['log_file']}")
-            write_outputs(records, output_dir)
+        for eval_nms_radius in radii:
+            for score_threshold in scores:
+                index += 1
+                print(
+                    f"[{index}/{total}] score_threshold={score_threshold} "
+                    f"split_threshold={split_threshold} eval_nms_radius={eval_nms_radius}"
+                )
+                record = run_eval(args, score_threshold, split_threshold, eval_nms_radius, output_dir)
+                records.append(record)
+                if record.get("ok"):
+                    print(f"  mae={record['eval_mae']:.4f} mse={record['eval_mse']:.4f}")
+                else:
+                    print(f"  failed; see {record['log_file']}")
+                write_outputs(records, output_dir)
 
     ok_records = [record for record in records if record.get("ok") and "eval_mae" in record]
     if not ok_records:
@@ -231,7 +248,8 @@ def main() -> int:
         "Best: "
         f"mae={best['eval_mae']:.4f} mse={best['eval_mse']:.4f} "
         f"score_threshold={best['score_threshold']} "
-        f"split_threshold={best['split_threshold']}"
+        f"split_threshold={best['split_threshold']} "
+        f"eval_nms_radius={best['eval_nms_radius']}"
     )
     print(f"Results saved to: {output_dir}")
     return 0

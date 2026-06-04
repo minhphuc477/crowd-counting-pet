@@ -115,6 +115,7 @@ def get_args_parser():
     parser.add_argument('--split_threshold', default=0.5, type=float)
     parser.add_argument('--split_threshold_quantile', default=0.55, type=float)
     parser.add_argument('--score_threshold', default=0.5, type=float)
+    parser.add_argument('--eval_nms_radius', default=0.0, type=float)
 
     # dataset parameters
     parser.add_argument('--dataset_file', default="SHA")
@@ -171,7 +172,7 @@ def merge_checkpoint_args(args, checkpoint):
         'resume', 'device', 'vis_dir', 'results_file', 'data_path', 'dataset_file',
         'eval_max_size', 'num_workers', 'seed',
         'override_score_threshold', 'override_split_threshold', 'override_split_threshold_quantile',
-        'checkpoint_model_key', 'deterministic', 'tta_flip',
+        'checkpoint_model_key', 'deterministic', 'tta_flip', 'eval_nms_radius',
     }
     for key in runtime_keys:
         setattr(merged, key, getattr(args, key))
@@ -288,6 +289,7 @@ def main(args):
             'checkpoint': args.resume,
             'eval_model': eval_model_key,
             'tta_flip': bool(args.tta_flip),
+            'eval_nms_radius': float(getattr(args, 'eval_nms_radius', 0.0)),
         }, indent=2) + "\n", encoding="utf-8")
         print(f'eval results saved to: {results_file}')
 
