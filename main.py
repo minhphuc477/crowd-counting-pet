@@ -300,6 +300,20 @@ def get_args_parser():
                         help='nearby non-GT point queries per GT used as APG local negatives')
     parser.add_argument('--apg_margin', default=1.0, type=float,
                         help='person-logit margin between APG positive and local negative queries')
+    parser.add_argument('--ifi_loss_coef', default=0.0, type=float,
+                        help='Interpolated Feature Guidance auxiliary loss weight; 0 disables it')
+    parser.add_argument('--ifi_point_coef', default=1.0, type=float,
+                        help='zero-offset coefficient inside IFI-lite APG loss')
+    parser.add_argument('--ifi_neg_k', default=4, type=int,
+                        help='local negative interpolated points per GT for IFI-lite')
+    parser.add_argument('--ifi_neg_radius', default=12.0, type=float,
+                        help='pixel radius for IFI-lite local negative ring')
+    parser.add_argument('--ifi_neg_min_dist', default=4.0, type=float,
+                        help='discard IFI-lite negatives closer than this many pixels to any GT')
+    parser.add_argument('--ifi_start_epoch', default=0, type=int,
+                        help='epoch when IFI-lite auxiliary supervision starts')
+    parser.add_argument('--ifi_end_epoch', default=-1, type=int,
+                        help='epoch after which IFI-lite turns off; negative keeps it on')
     parser.add_argument('--qd_apg_loss_coef', default=0.0, type=float,
                         help='Quadtree-Dual APG loss weight; 0 disables it')
     parser.add_argument('--qd_apg_point_coef', default=5.0, type=float,
@@ -432,6 +446,8 @@ def merge_checkpoint_args(args, checkpoint):
             'eval_nms_radius',
             'apg_loss_coef', 'apg_pos_k', 'apg_point_coef', 'apg_start_epoch', 'apg_end_epoch',
             'apg_contrastive_coef', 'apg_neg_k', 'apg_margin',
+            'ifi_loss_coef', 'ifi_point_coef', 'ifi_neg_k', 'ifi_neg_radius',
+            'ifi_neg_min_dist', 'ifi_start_epoch', 'ifi_end_epoch',
             'qd_apg_loss_coef', 'qd_apg_point_coef', 'qd_apg_suppress_coef',
             'qd_apg_start_epoch', 'qd_apg_end_epoch', 'qd_apg_route_source',
         })

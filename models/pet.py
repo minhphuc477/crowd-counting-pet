@@ -1,6 +1,8 @@
 """
 PET model and criterion classes
 """
+import math
+
 import torch
 import torch.nn.functional as F
 from torch import nn
@@ -380,6 +382,8 @@ class PET(nn.Module):
         transformer = build_decoder(args)
         self.quadtree_sparse = BasePETCount(backbone, num_classes, quadtree_layer='sparse', args=args, transformer=transformer)
         self.quadtree_dense = BasePETCount(backbone, num_classes, quadtree_layer='dense', args=args, transformer=transformer)
+        self.ifi_cls_embed = nn.Linear(hidden_dim, num_classes + 1)
+        self.ifi_coord_embed = MLP(hidden_dim, hidden_dim, 2, 3)
         self.warmup_epochs = int(getattr(args, 'warmup_epochs', 5))
         self.quadtree_loss_coef = float(getattr(args, 'quadtree_loss_coef', 0.1))
         self.quadtree_prior_coef = float(getattr(args, 'quadtree_prior_coef', 0.025))
@@ -407,6 +411,13 @@ class PET(nn.Module):
         self.apg_contrastive_coef = float(getattr(args, 'apg_contrastive_coef', 0.0))
         self.apg_neg_k = max(0, int(getattr(args, 'apg_neg_k', 4)))
         self.apg_margin = float(getattr(args, 'apg_margin', 1.0))
+        self.ifi_loss_coef = float(getattr(args, 'ifi_loss_coef', 0.0))
+        self.ifi_point_coef = float(getattr(args, 'ifi_point_coef', 1.0))
+        self.ifi_neg_k = max(0, int(getattr(args, 'ifi_neg_k', 4)))
+        self.ifi_neg_radius = float(getattr(args, 'ifi_neg_radius', 12.0))
+        self.ifi_neg_min_dist = float(getattr(args, 'ifi_neg_min_dist', 4.0))
+        self.ifi_start_epoch = int(getattr(args, 'ifi_start_epoch', 0))
+        self.ifi_end_epoch = int(getattr(args, 'ifi_end_epoch', -1))
         self.qd_apg_loss_coef = float(getattr(args, 'qd_apg_loss_coef', 0.0))
         self.qd_apg_point_coef = float(getattr(args, 'qd_apg_point_coef', 5.0))
         self.qd_apg_suppress_coef = float(getattr(args, 'qd_apg_suppress_coef', 0.5))
@@ -519,6 +530,17 @@ class PET(nn.Module):
             weight_dict['loss_apg_sp'] = self.apg_loss_coef
             weight_dict['loss_apg_ds'] = self.apg_loss_coef
             losses += (loss_apg_sparse + loss_apg_dense) * self.apg_loss_coef
+        if self.ifi_loss_coef > 0:
+            ifi_active = epoch >= self.ifi_start_epoch and (
+                self.ifi_end_epoch < 0 or epoch <= self.ifi_end_epoch
+            )
+            if ifi_active:
+                loss_ifi = self.compute_ifi_apg_loss(outputs, targets, samples)
+            else:
+                loss_ifi = outputs['split_map_raw'].sum() * 0.0
+            loss_dict['loss_ifi'] = loss_ifi
+            weight_dict['loss_ifi'] = self.ifi_loss_coef
+            losses += loss_ifi * self.ifi_loss_coef
         if self.qd_apg_loss_coef > 0:
             qd_apg_active = epoch >= self.qd_apg_start_epoch and (
                 self.qd_apg_end_epoch < 0 or epoch <= self.qd_apg_end_epoch
@@ -617,6 +639,78 @@ class PET(nn.Module):
         loss = loss_cls + self.apg_point_coef * loss_point
         if contrastive_losses:
             loss = loss + self.apg_contrastive_coef * torch.stack(contrastive_losses).mean()
+        return loss
+
+    def _sample_ifi_features(self, encode_src, batch_idx, points_abs, img_h, img_w):
+        if points_abs.numel() == 0:
+            return encode_src.new_zeros((0, encode_src.shape[1]))
+        grid = points_abs.to(device=encode_src.device, dtype=encode_src.dtype).clone()
+        grid_x = (grid[:, 1] + 0.5) / max(float(img_w), 1.0) * 2.0 - 1.0
+        grid_y = (grid[:, 0] + 0.5) / max(float(img_h), 1.0) * 2.0 - 1.0
+        sample_grid = torch.stack([grid_x, grid_y], dim=-1).view(1, -1, 1, 2)
+        feats = F.grid_sample(
+            encode_src[batch_idx:batch_idx + 1],
+            sample_grid,
+            mode='bilinear',
+            padding_mode='border',
+            align_corners=False,
+        )
+        return feats.squeeze(0).squeeze(-1).transpose(0, 1)
+
+    def _build_ifi_negatives(self, gt_points, img_h, img_w):
+        if self.ifi_neg_k <= 0 or gt_points.numel() == 0:
+            return gt_points.new_zeros((0, 2))
+        offsets = []
+        radius = max(float(self.ifi_neg_radius), 1.0)
+        for neg_idx in range(self.ifi_neg_k):
+            angle = 2.0 * math.pi * neg_idx / max(self.ifi_neg_k, 1)
+            offsets.append(gt_points.new_tensor([math.sin(angle) * radius, math.cos(angle) * radius]))
+        offset_tensor = torch.stack(offsets, dim=0)
+        neg_points = (gt_points[:, None, :] + offset_tensor[None, :, :]).reshape(-1, 2)
+        neg_points[:, 0].clamp_(0, max(float(img_h) - 1.0, 0.0))
+        neg_points[:, 1].clamp_(0, max(float(img_w) - 1.0, 0.0))
+        if gt_points.shape[0] > 0 and self.ifi_neg_min_dist > 0:
+            min_dist = torch.cdist(neg_points, gt_points, p=2).min(dim=1)[0]
+            neg_points = neg_points[min_dist >= self.ifi_neg_min_dist]
+        return neg_points
+
+    def compute_ifi_apg_loss(self, outputs, targets, samples):
+        """Interpolated Feature Guidance for APG.
+
+        APG-lite supervises nearest fixed grid queries. IFI-lite complements it
+        by sampling PET's encoded feature map at arbitrary GT and local-negative
+        positions, matching APGCC's core idea without changing PET inference.
+        """
+        encode_src = outputs.get('encode_src')
+        if encode_src is None:
+            return outputs['split_map_raw'].sum() * 0.0
+        img_h, img_w = samples.tensors.shape[-2:]
+        cls_losses = []
+        point_losses = []
+        for batch_idx, target in enumerate(targets):
+            gt_points = target['points'].to(device=encode_src.device, dtype=encode_src.dtype)
+            if gt_points.numel() == 0:
+                continue
+            pos_feats = self._sample_ifi_features(encode_src, batch_idx, gt_points, img_h, img_w)
+            pos_logits = self.ifi_cls_embed(pos_feats)
+            pos_target = torch.ones(pos_logits.shape[0], dtype=torch.long, device=encode_src.device)
+            cls_losses.append(F.cross_entropy(pos_logits, pos_target, reduction='mean'))
+
+            pos_offsets = (self.ifi_coord_embed(pos_feats).sigmoid() - 0.5) * 2.0
+            point_losses.append(F.smooth_l1_loss(pos_offsets, torch.zeros_like(pos_offsets), reduction='none').sum(dim=-1).mean())
+
+            neg_points = self._build_ifi_negatives(gt_points, img_h, img_w)
+            if neg_points.numel() > 0:
+                neg_feats = self._sample_ifi_features(encode_src, batch_idx, neg_points, img_h, img_w)
+                neg_logits = self.ifi_cls_embed(neg_feats)
+                neg_target = torch.zeros(neg_logits.shape[0], dtype=torch.long, device=encode_src.device)
+                cls_losses.append(F.cross_entropy(neg_logits, neg_target, reduction='mean'))
+
+        if not cls_losses:
+            return outputs['split_map_raw'].sum() * 0.0
+        loss = torch.stack(cls_losses).mean()
+        if point_losses:
+            loss = loss + self.ifi_point_coef * torch.stack(point_losses).mean()
         return loss
 
     def _nearest_query_index(self, output, gt_point, device, dtype):
@@ -898,6 +992,8 @@ class PET(nn.Module):
         outputs['split_mask_sparse'] = split_mask_sparse
         outputs['split_mask_dense'] = split_mask_dense
         outputs['split_threshold'] = split_threshold.detach()
+        if 'train' in kwargs:
+            outputs['encode_src'] = encode_src
         return outputs
     
     def train_forward(self, samples, features, pos, **kwargs):
