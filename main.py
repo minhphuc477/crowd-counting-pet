@@ -300,6 +300,12 @@ def get_args_parser():
                         help='nearby non-GT point queries per GT used as APG local negatives')
     parser.add_argument('--apg_margin', default=1.0, type=float,
                         help='person-logit margin between APG positive and local negative queries')
+    parser.add_argument('--apg_consistency_coef', default=0.0, type=float,
+                        help='neighboring APG proposal-point consistency weight; 0 disables it')
+    parser.add_argument('--apg_consistency_k', default=4, type=int,
+                        help='nearest queries per GT used by APG consistency')
+    parser.add_argument('--apg_consistency_sigma', default=8.0, type=float,
+                        help='pixel Gaussian sigma for APG consistency weights')
     parser.add_argument('--ifi_loss_coef', default=0.0, type=float,
                         help='Interpolated Feature Guidance auxiliary loss weight; 0 disables it')
     parser.add_argument('--ifi_point_coef', default=1.0, type=float,
@@ -448,6 +454,7 @@ def merge_checkpoint_args(args, checkpoint):
             'eval_nms_radius', 'eval_branch_gate',
             'apg_loss_coef', 'apg_pos_k', 'apg_point_coef', 'apg_start_epoch', 'apg_end_epoch',
             'apg_contrastive_coef', 'apg_neg_k', 'apg_margin',
+            'apg_consistency_coef', 'apg_consistency_k', 'apg_consistency_sigma',
             'ifi_loss_coef', 'ifi_point_coef', 'ifi_neg_k', 'ifi_neg_radius',
             'ifi_neg_min_dist', 'ifi_start_epoch', 'ifi_end_epoch',
             'qd_apg_loss_coef', 'qd_apg_point_coef', 'qd_apg_suppress_coef',

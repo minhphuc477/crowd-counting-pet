@@ -382,8 +382,13 @@ class PET(nn.Module):
         transformer = build_decoder(args)
         self.quadtree_sparse = BasePETCount(backbone, num_classes, quadtree_layer='sparse', args=args, transformer=transformer)
         self.quadtree_dense = BasePETCount(backbone, num_classes, quadtree_layer='dense', args=args, transformer=transformer)
-        self.ifi_cls_embed = nn.Linear(hidden_dim, num_classes + 1)
-        self.ifi_coord_embed = MLP(hidden_dim, hidden_dim, 2, 3)
+        self.ifi_loss_coef = float(getattr(args, 'ifi_loss_coef', 0.0))
+        if self.ifi_loss_coef > 0:
+            self.ifi_cls_embed = nn.Linear(hidden_dim, num_classes + 1)
+            self.ifi_coord_embed = MLP(hidden_dim, hidden_dim, 2, 3)
+        else:
+            self.ifi_cls_embed = None
+            self.ifi_coord_embed = None
         self.warmup_epochs = int(getattr(args, 'warmup_epochs', 5))
         self.quadtree_loss_coef = float(getattr(args, 'quadtree_loss_coef', 0.1))
         self.quadtree_prior_coef = float(getattr(args, 'quadtree_prior_coef', 0.025))
@@ -414,7 +419,9 @@ class PET(nn.Module):
         self.apg_contrastive_coef = float(getattr(args, 'apg_contrastive_coef', 0.0))
         self.apg_neg_k = max(0, int(getattr(args, 'apg_neg_k', 4)))
         self.apg_margin = float(getattr(args, 'apg_margin', 1.0))
-        self.ifi_loss_coef = float(getattr(args, 'ifi_loss_coef', 0.0))
+        self.apg_consistency_coef = float(getattr(args, 'apg_consistency_coef', 0.0))
+        self.apg_consistency_k = max(1, int(getattr(args, 'apg_consistency_k', 4)))
+        self.apg_consistency_sigma = float(getattr(args, 'apg_consistency_sigma', 8.0))
         self.ifi_point_coef = float(getattr(args, 'ifi_point_coef', 1.0))
         self.ifi_neg_k = max(0, int(getattr(args, 'ifi_neg_k', 4)))
         self.ifi_neg_radius = float(getattr(args, 'ifi_neg_radius', 12.0))
@@ -604,6 +611,7 @@ class PET(nn.Module):
         cls_losses = []
         point_losses = []
         contrastive_losses = []
+        consistency_losses = []
         for batch_idx, target in enumerate(targets):
             gt_points = target['points'].to(device=device, dtype=pred_points.dtype)
             if gt_points.numel() == 0:
@@ -634,6 +642,23 @@ class PET(nn.Module):
                     pos_score = person_margin_logits[nearest].mean()
                     neg_scores = person_margin_logits[negatives]
                     contrastive_losses.append(F.relu(self.apg_margin - pos_score + neg_scores).mean())
+            if self.apg_consistency_coef > 0:
+                local_k = min(self.apg_consistency_k, query_abs.shape[0])
+                local_dist, local_idx = query_dist.topk(local_k, largest=False)
+                sigma = max(float(self.apg_consistency_sigma), 1e-6)
+                local_weights = torch.exp(-0.5 * (local_dist / sigma) ** 2)
+                local_weights = local_weights / (local_weights.sum(dim=1, keepdim=True) + 1e-6)
+                for gt_idx in range(gt_points.shape[0]):
+                    idx_local = local_idx[gt_idx]
+                    pred_local = pred_points[batch_idx, idx_local]
+                    gt_norm = gt_points[gt_idx].clone()
+                    gt_norm[0] /= img_h
+                    gt_norm[1] /= img_w
+                    weights = local_weights[gt_idx].unsqueeze(-1)
+                    mean_pred = (pred_local * weights).sum(dim=0)
+                    mean_loss = F.smooth_l1_loss(mean_pred, gt_norm, reduction='sum')
+                    var_loss = ((pred_local - mean_pred).pow(2).sum(dim=-1) * local_weights[gt_idx]).sum()
+                    consistency_losses.append(mean_loss + var_loss)
 
         if not cls_losses:
             return logits.sum() * 0.0
@@ -642,6 +667,8 @@ class PET(nn.Module):
         loss = loss_cls + self.apg_point_coef * loss_point
         if contrastive_losses:
             loss = loss + self.apg_contrastive_coef * torch.stack(contrastive_losses).mean()
+        if consistency_losses:
+            loss = loss + self.apg_consistency_coef * torch.stack(consistency_losses).mean()
         return loss
 
     def _sample_ifi_features(self, encode_src, batch_idx, points_abs, img_h, img_w):
