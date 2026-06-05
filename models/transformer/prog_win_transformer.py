@@ -37,6 +37,21 @@ class WinEncoderTransformer(nn.Module):
         for p in self.parameters():
             if p.dim() > 1:
                 nn.init.xavier_uniform_(p)
+
+    def _build_shift_attn_mask(self, batch_size, height, width, win_h, win_w, shift_h, shift_w, device):
+        if shift_h <= 0 and shift_w <= 0:
+            return None
+        grid_h = height // win_h
+        grid_w = width // win_w
+        window_ids = torch.arange(grid_h * grid_w, device=device, dtype=torch.float32)
+        window_ids = window_ids.view(1, 1, grid_h, grid_w)
+        window_ids = window_ids.repeat_interleave(win_h, dim=2).repeat_interleave(win_w, dim=3)
+        window_ids = torch.roll(window_ids, shifts=(-shift_h, -shift_w), dims=(2, 3))
+        id_windows = window_partition(window_ids, window_size_h=win_h, window_size_w=win_w)
+        id_windows = id_windows.squeeze(-1).transpose(0, 1)
+        attn_mask = id_windows.unsqueeze(1) != id_windows.unsqueeze(2)
+        attn_mask = attn_mask.repeat(batch_size, 1, 1)
+        return attn_mask.repeat_interleave(self.nhead, dim=0)
     
     def forward(self, src, pos_embed, mask):
         bs, c, h, w = src.shape
@@ -56,10 +71,26 @@ class WinEncoderTransformer(nn.Module):
                 mask_in = torch.roll(mask, shifts=(-shift_h, -shift_w), dims=(1, 2))
             else:
                 memeory_in, pos_embed_in, mask_in = memeory, pos_embed, mask
-            memeory_win, pos_embed_win, mask_win  = enc_win_partition(memeory_in, pos_embed_in, mask_in, enc_win_h, enc_win_w)            
+            memeory_win, pos_embed_win, mask_win  = enc_win_partition(memeory_in, pos_embed_in, mask_in, enc_win_h, enc_win_w)
+            attn_mask = self._build_shift_attn_mask(
+                bs,
+                h,
+                w,
+                enc_win_h,
+                enc_win_w,
+                shift_h,
+                shift_w,
+                memeory.device,
+            )
 
             # encoder forward
-            output = self.encoder.single_forward(memeory_win, src_key_padding_mask=mask_win, pos=pos_embed_win, layer_idx=idx)
+            output = self.encoder.single_forward(
+                memeory_win,
+                mask=attn_mask,
+                src_key_padding_mask=mask_win,
+                pos=pos_embed_win,
+                layer_idx=idx,
+            )
 
             # reverse encoder window
             memeory = enc_win_partition_reverse(output, enc_win_h, enc_win_w, h, w)
