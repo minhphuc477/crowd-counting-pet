@@ -411,6 +411,16 @@ class PET(nn.Module):
         if self.count_loss_type not in ('log_l1', 'l1', 'smooth_l1'):
             raise ValueError('count_loss_type must be one of "log_l1", "l1", or "smooth_l1"')
         self.count_loss_start_epoch = int(getattr(args, 'count_loss_start_epoch', -1))
+        self.region_count_loss_coef = float(getattr(args, 'region_count_loss_coef', 0.0))
+        self.region_count_grid = max(1, int(getattr(args, 'region_count_grid', 4)))
+        self.region_count_gate = getattr(args, 'region_count_gate', 'detach')
+        if self.region_count_gate not in ('none', 'detach', 'soft', 'hard'):
+            raise ValueError('region_count_gate must be one of "none", "detach", "soft", or "hard"')
+        self.region_count_type = getattr(args, 'region_count_type', 'log_l1')
+        if self.region_count_type not in ('log_l1', 'l1', 'smooth_l1'):
+            raise ValueError('region_count_type must be one of "log_l1", "l1", or "smooth_l1"')
+        self.region_count_start_epoch = int(getattr(args, 'region_count_start_epoch', -1))
+        self.region_count_end_epoch = int(getattr(args, 'region_count_end_epoch', -1))
         self.apg_loss_coef = float(getattr(args, 'apg_loss_coef', 0.0))
         self.apg_pos_k = max(1, int(getattr(args, 'apg_pos_k', 1)))
         self.apg_point_coef = float(getattr(args, 'apg_point_coef', 5.0))
@@ -525,6 +535,18 @@ class PET(nn.Module):
             loss_dict['loss_count'] = loss_count
             weight_dict['loss_count'] = weight_count
             losses += loss_count * weight_count
+        if self.region_count_loss_coef > 0:
+            region_start_epoch = warmup_ep if self.region_count_start_epoch < 0 else self.region_count_start_epoch
+            region_active = epoch >= region_start_epoch and (
+                self.region_count_end_epoch < 0 or epoch <= self.region_count_end_epoch
+            )
+            if region_active:
+                loss_region_count = self.compute_region_count_loss(outputs, targets)
+            else:
+                loss_region_count = outputs['split_map_raw'].sum() * 0.0
+            loss_dict['loss_region_count'] = loss_region_count
+            weight_dict['loss_region_count'] = self.region_count_loss_coef
+            losses += loss_region_count * self.region_count_loss_coef
         if self.apg_loss_coef > 0:
             apg_active = epoch >= self.apg_start_epoch and (
                 self.apg_end_epoch < 0 or epoch <= self.apg_end_epoch
@@ -861,6 +883,62 @@ class PET(nn.Module):
         if self.count_loss_type == 'l1':
             return F.l1_loss(pred_counts, target_counts)
         if self.count_loss_type == 'smooth_l1':
+            return F.smooth_l1_loss(pred_counts, target_counts)
+        return F.l1_loss(torch.log1p(pred_counts), torch.log1p(target_counts))
+
+    def _region_count_gates(self, outputs, branch_name, scores):
+        if self.region_count_gate == 'none':
+            return torch.ones_like(scores)
+        if branch_name == 'sparse':
+            if self.region_count_gate == 'hard':
+                threshold = outputs['split_threshold'].to(device=scores.device, dtype=scores.dtype)
+                gates = ((1.0 - outputs['split_map_sparse'].to(device=scores.device, dtype=scores.dtype)) <= threshold).to(scores.dtype)
+            else:
+                gates = outputs['split_map_sparse'].to(device=scores.device, dtype=scores.dtype)
+        elif branch_name == 'dense':
+            if self.region_count_gate == 'hard':
+                threshold = outputs['split_threshold'].to(device=scores.device, dtype=scores.dtype)
+                gates = (outputs['split_map_dense'].to(device=scores.device, dtype=scores.dtype) > threshold).to(scores.dtype)
+            else:
+                gates = outputs['split_map_dense'].to(device=scores.device, dtype=scores.dtype)
+        else:
+            raise ValueError(f'Unsupported branch: {branch_name}')
+        if self.region_count_gate == 'detach':
+            gates = gates.detach()
+        return gates.reshape_as(scores).clamp(0, 1)
+
+    def compute_region_count_loss(self, outputs, targets):
+        """Local Point-to-Region count calibration on PET's real query logits."""
+        output_sparse, output_dense = outputs['sparse'], outputs['dense']
+        device = output_sparse['pred_logits'].device
+        dtype = output_sparse['pred_logits'].dtype
+        grid = self.region_count_grid
+        num_regions = grid * grid
+        target_counts = torch.zeros(len(targets), num_regions, dtype=dtype, device=device)
+        img_h, img_w = output_sparse['img_shape']
+        for batch_idx, target in enumerate(targets):
+            points = target['points'].to(device=device, dtype=dtype)
+            if points.numel() == 0:
+                continue
+            y = torch.clamp((points[:, 0] / max(float(img_h), 1.0) * grid).long(), 0, grid - 1)
+            x = torch.clamp((points[:, 1] / max(float(img_w), 1.0) * grid).long(), 0, grid - 1)
+            linear_idx = y * grid + x
+            target_counts[batch_idx].scatter_add_(0, linear_idx, torch.ones_like(linear_idx, dtype=dtype))
+
+        pred_counts = torch.zeros_like(target_counts)
+        for branch_name, output in (('sparse', output_sparse), ('dense', output_dense)):
+            scores = F.softmax(output['pred_logits'], -1)[..., 1]
+            gates = self._region_count_gates(outputs, branch_name, scores)
+            query_points = output['points_queries'].to(device=device, dtype=dtype).clamp(0, 1)
+            y = torch.clamp((query_points[:, 0] * grid).long(), 0, grid - 1)
+            x = torch.clamp((query_points[:, 1] * grid).long(), 0, grid - 1)
+            linear_idx = y * grid + x
+            for batch_idx in range(scores.shape[0]):
+                pred_counts[batch_idx].scatter_add_(0, linear_idx, scores[batch_idx] * gates[batch_idx])
+
+        if self.region_count_type == 'l1':
+            return F.l1_loss(pred_counts, target_counts)
+        if self.region_count_type == 'smooth_l1':
             return F.smooth_l1_loss(pred_counts, target_counts)
         return F.l1_loss(torch.log1p(pred_counts), torch.log1p(target_counts))
 

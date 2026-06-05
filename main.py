@@ -284,6 +284,18 @@ def get_args_parser():
                         help='count-loss scale; log_l1 is safer early in training')
     parser.add_argument('--count_loss_start_epoch', default=-1, type=int,
                         help='epoch to enable count loss; negative uses warmup_epochs')
+    parser.add_argument('--region_count_loss_coef', default=0.0, type=float,
+                        help='local region count calibration loss weight; 0 disables it')
+    parser.add_argument('--region_count_grid', default=4, type=int,
+                        help='number of y/x bins for local region count calibration')
+    parser.add_argument('--region_count_gate', default='detach', choices=('none', 'detach', 'soft', 'hard'),
+                        help='quadtree gate used by local region count calibration')
+    parser.add_argument('--region_count_type', default='log_l1', choices=('log_l1', 'l1', 'smooth_l1'),
+                        help='scale for local region count calibration')
+    parser.add_argument('--region_count_start_epoch', default=-1, type=int,
+                        help='epoch to enable local region count; negative uses warmup_epochs')
+    parser.add_argument('--region_count_end_epoch', default=-1, type=int,
+                        help='epoch after which local region count turns off; negative keeps it on')
     parser.add_argument('--apg_loss_coef', default=0.0, type=float,
                         help='Auxiliary Point Guidance loss weight; 0 disables it')
     parser.add_argument('--apg_pos_k', default=1, type=int,
@@ -452,6 +464,8 @@ def merge_checkpoint_args(args, checkpoint):
             'min_lr', 'ema_decay',
             'score_threshold', 'split_threshold', 'split_threshold_quantile',
             'eval_nms_radius', 'eval_branch_gate',
+            'region_count_loss_coef', 'region_count_grid', 'region_count_gate',
+            'region_count_type', 'region_count_start_epoch', 'region_count_end_epoch',
             'apg_loss_coef', 'apg_pos_k', 'apg_point_coef', 'apg_start_epoch', 'apg_end_epoch',
             'apg_contrastive_coef', 'apg_neg_k', 'apg_margin',
             'apg_consistency_coef', 'apg_consistency_k', 'apg_consistency_sigma',
