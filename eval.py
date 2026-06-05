@@ -12,7 +12,7 @@ from torch.utils.data import DataLoader, DistributedSampler
 import datasets
 from datasets import build_dataset
 import util.misc as utils
-from engine import evaluate
+from engine import evaluate, evaluate_crowd_no_overlap
 from models import build_model
 
 
@@ -163,6 +163,8 @@ def get_args_parser():
                         help='checkpoint state to evaluate; auto prefers model_ema when present')
     parser.add_argument('--tta_flip', action='store_true',
                         help='average original and horizontal-flip predicted counts at evaluation time')
+    parser.add_argument('--eval_protocol', default='pet', choices=('pet', 'crowd_no_overlap'),
+                        help='pet uses the current metric dict; crowd_no_overlap uses P2PNet/APGCC-style MAE/RMSE')
     parser.add_argument('--num_workers', default=2, type=int)
     parser.add_argument('--deterministic', dest='deterministic', action='store_true', default=True)
     parser.add_argument('--no_deterministic', dest='deterministic', action='store_false')
@@ -190,6 +192,7 @@ def merge_checkpoint_args(args, checkpoint):
         'eval_max_size', 'num_workers', 'seed',
         'override_score_threshold', 'override_split_threshold', 'override_split_threshold_quantile',
         'checkpoint_model_key', 'deterministic', 'tta_flip', 'eval_nms_radius', 'eval_branch_gate',
+        'eval_protocol',
     }
     for key in runtime_keys:
         setattr(merged, key, getattr(args, key))
@@ -285,8 +288,12 @@ def main(args):
     
     # evaluation
     vis_dir = None if args.vis_dir == "" else args.vis_dir
-    test_stats = evaluate(model, data_loader_val, device, vis_dir=vis_dir, tta_flip=args.tta_flip)
-    mae, mse = test_stats['mae'], test_stats['mse']
+    if args.eval_protocol == 'crowd_no_overlap':
+        mae, mse = evaluate_crowd_no_overlap(model, data_loader_val, device, vis_dir=vis_dir)
+        test_stats = {'mae': mae, 'mse': mse, 'pred_cnt': 0.0, 'gt_cnt': 0.0}
+    else:
+        test_stats = evaluate(model, data_loader_val, device, vis_dir=vis_dir, tta_flip=args.tta_flip)
+        mae, mse = test_stats['mae'], test_stats['mse']
     line = f'\nepoch: {cur_epoch}, mae: {mae}, mse: {mse}' 
     print(line)
     if utils.is_main_process():
@@ -305,6 +312,7 @@ def main(args):
             'gt_cnt': float(test_stats.get('gt_cnt', 0.0)),
             'checkpoint': args.resume,
             'eval_model': eval_model_key,
+            'eval_protocol': args.eval_protocol,
             'tta_flip': bool(args.tta_flip),
             'eval_nms_radius': float(getattr(args, 'eval_nms_radius', 0.0)),
             'eval_branch_gate': getattr(args, 'eval_branch_gate', 'none'),

@@ -101,6 +101,8 @@ def run_eval(
         str(eval_nms_radius),
         "--eval_branch_gate",
         eval_branch_gate,
+        "--eval_protocol",
+        args.eval_protocol,
     ]
     if args.data_path:
         cmd.extend(["--data_path", args.data_path])
@@ -128,6 +130,7 @@ def run_eval(
         "split_threshold": float(split_threshold),
         "eval_nms_radius": float(eval_nms_radius),
         "eval_branch_gate": eval_branch_gate,
+        "eval_protocol": args.eval_protocol,
         "tta_flip": bool(args.tta_flip),
         "returncode": int(proc.returncode),
         "elapsed_sec": float(time.time() - started),
@@ -157,6 +160,7 @@ def write_outputs(records: list[dict], output_dir: Path) -> None:
         "split_threshold",
         "eval_nms_radius",
         "eval_branch_gate",
+        "eval_protocol",
         "tta_flip",
         "eval_mae",
         "eval_mse",
@@ -207,6 +211,12 @@ def get_args() -> argparse.Namespace:
         choices=("none", "query", "pred"),
         default=["none"],
         help="eval-only sparse/dense split-ownership gates",
+    )
+    parser.add_argument(
+        "--eval_protocol",
+        default="pet",
+        choices=("pet", "crowd_no_overlap"),
+        help="evaluation protocol passed to eval.py",
     )
     parser.add_argument(
         "--score_thresholds",

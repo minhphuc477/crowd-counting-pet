@@ -139,6 +139,18 @@ def _predict_count(model, samples, targets):
     return outputs, float(len(outputs_scores))
 
 
+@torch.no_grad()
+def evaluate_crowd_no_overlap(model, data_loader, device, vis_dir=None):
+    """P2PNet/APGCC-style full-image crowd evaluation without crop overlap.
+
+    The APGCC issue #7 refers to P2PNet's evaluator. PET already evaluates full
+    validation images, so this wrapper preserves that protocol while accepting
+    PET targets (`points`) and its thresholded `test_forward()` output.
+    """
+    stats = evaluate(model, data_loader, device, vis_dir=vis_dir, tta_flip=False)
+    return stats['mae'], stats['mse']
+
+
 # evaluation
 @torch.no_grad()
 def evaluate(model, data_loader, device, epoch=0, vis_dir=None, tta_flip=False):
