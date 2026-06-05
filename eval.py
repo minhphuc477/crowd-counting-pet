@@ -60,6 +60,7 @@ def get_args_parser():
     parser.add_argument('--decoder_memory_halo', default=0, type=int,
                         help='extra 8x encoder-feature tokens around each decoder cross-attention memory window')
     parser.add_argument('--decoder_global_context', action='store_true')
+    parser.add_argument('--decoder_global_context_mode', default='residual', choices=('residual', 'token'))
     parser.add_argument('--enc_win_sizes', default='', type=str,
                         help='encoder window sizes as "w,h;w,h;..."; empty keeps paper PET defaults')
     parser.add_argument('--enc_shift_mode', default='none', choices=('none', 'swin'))

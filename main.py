@@ -118,6 +118,7 @@ ARCHITECTURE_OVERRIDE_KEYS = {
     'decoder_attention',
     'decoder_memory_halo',
     'decoder_global_context',
+    'decoder_global_context_mode',
     'enc_win_sizes',
     'enc_shift_mode',
     'sparse_dec_win_size',
@@ -245,7 +246,9 @@ def get_args_parser():
     parser.add_argument('--decoder_memory_halo', default=0, type=int,
                         help='extra 8x encoder-feature tokens around each decoder cross-attention memory window')
     parser.add_argument('--decoder_global_context', action='store_true',
-                        help='append one valid global pooled encoder token to every decoder memory window')
+                        help='enable image-level global context in decoder memory windows')
+    parser.add_argument('--decoder_global_context_mode', default='residual', choices=('residual', 'token'),
+                        help='residual is identity-initialized and safer; token appends a competing cross-attention token')
     parser.add_argument('--enc_win_sizes', default='', type=str,
                         help='encoder window sizes as "w,h;w,h;..."; empty keeps paper PET defaults')
     parser.add_argument('--enc_shift_mode', default='none', choices=('none', 'swin'),
@@ -463,7 +466,7 @@ def merge_checkpoint_args(args, checkpoint):
         'resume_model_only', 'resume_allow_arch_change', 'num_workers', 'world_size', 'dist_url',
         'list_backbones', 'syn_bn', 'deterministic',
         # allow overriding schedule/eval settings at resume time
-        'epochs', 'eval_freq', 'data_path', 'eval_max_size',
+        'epochs', 'eval_freq', 'eval_protocol', 'data_path', 'eval_max_size',
     }
     if getattr(args, 'resume_model_only', False):
         runtime_keys.update({

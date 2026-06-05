@@ -30,6 +30,7 @@ def make_args(
     decoder_attention,
     decoder_memory_halo,
     decoder_global_context,
+    decoder_global_context_mode,
     quad_context_mixer,
     fusion_mhf_mode,
     fusion_mhf_heads,
@@ -68,6 +69,7 @@ def make_args(
         decoder_attention=decoder_attention,
         decoder_memory_halo=decoder_memory_halo,
         decoder_global_context=decoder_global_context,
+        decoder_global_context_mode=decoder_global_context_mode,
         enc_win_sizes='',
         enc_shift_mode='none',
         sparse_dec_win_size='',
@@ -111,6 +113,7 @@ def check_backbone(
     decoder_attention,
     decoder_memory_halo,
     decoder_global_context,
+    decoder_global_context_mode,
     quad_context_mixer,
     fusion_mhf_mode,
     fusion_mhf_heads,
@@ -129,6 +132,7 @@ def check_backbone(
         decoder_attention,
         decoder_memory_halo,
         decoder_global_context,
+        decoder_global_context_mode,
         quad_context_mixer,
         fusion_mhf_mode,
         fusion_mhf_heads,
@@ -170,6 +174,7 @@ def parse_args():
     parser.add_argument('--decoder_attention', default='softmax', choices=('softmax', 'linear'))
     parser.add_argument('--decoder_memory_halo', default=0, type=int)
     parser.add_argument('--decoder_global_context', action='store_true')
+    parser.add_argument('--decoder_global_context_mode', default='residual', choices=('residual', 'token'))
     parser.add_argument('--quad_context_mixer', default='none', choices=('none', 'lite'))
     parser.add_argument('--fusion_mhf_mode', default='none', choices=('none', 'cem', 'cem_msem', 'full'))
     parser.add_argument('--fusion_mhf_heads', default=1, type=int)
@@ -197,6 +202,7 @@ def main():
                 args.decoder_attention,
                 args.decoder_memory_halo,
                 args.decoder_global_context,
+                args.decoder_global_context_mode,
                 args.quad_context_mixer,
                 args.fusion_mhf_mode,
                 args.fusion_mhf_heads,

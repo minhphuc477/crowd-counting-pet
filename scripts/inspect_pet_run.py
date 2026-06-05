@@ -71,6 +71,7 @@ KEY_ARGS = (
     'decoder_attention',
     'decoder_memory_halo',
     'decoder_global_context',
+    'decoder_global_context_mode',
     'quad_context_mixer',
     'quad_context_levels',
     'quad_context_shift',

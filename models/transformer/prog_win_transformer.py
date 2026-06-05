@@ -113,10 +113,16 @@ class WinDecoderTransformer(nn.Module):
                  decoder_attention="softmax",
                  decoder_memory_halo=0,
                  decoder_global_context=False,
+                 decoder_global_context_mode="residual",
                  return_intermediate_dec=False,
                  dec_win_w=16, dec_win_h=8,
                  ):
         super().__init__()
+        if not decoder_global_context:
+            decoder_global_context_mode = "none"
+        if decoder_global_context_mode not in ("none", "residual", "token"):
+            raise ValueError('decoder_global_context_mode must be one of "none", "residual", or "token"')
+
         decoder_layer = DecoderLayer(d_model, nhead, dim_feedforward,
                                                 dropout, activation, norm_style=norm_style,
                                                 attention_type=decoder_attention)
@@ -124,6 +130,19 @@ class WinDecoderTransformer(nn.Module):
         decoder_norm = nn.LayerNorm(d_model)
         self.decoder = TransformerDecoder(decoder_layer, num_decoder_layers, decoder_norm,
                                             return_intermediate=return_intermediate_dec)
+        self.global_context_mode = decoder_global_context_mode
+        if self.global_context_mode == "residual":
+            self.global_context_norm = nn.LayerNorm(d_model)
+            self.global_context_proj = nn.Sequential(
+                nn.Linear(d_model, d_model),
+                nn.GELU(),
+                nn.Linear(d_model, d_model),
+            )
+            self.global_context_scale = nn.Parameter(torch.zeros(1))
+        else:
+            self.global_context_norm = None
+            self.global_context_proj = None
+            self.register_parameter("global_context_scale", None)
         self._reset_parameters()
 
         self.dec_win_w, self.dec_win_h = dec_win_w, dec_win_h
@@ -131,7 +150,6 @@ class WinDecoderTransformer(nn.Module):
         self.nhead = nhead
         self.num_layer = num_decoder_layers
         self.memory_halo = max(0, int(decoder_memory_halo))
-        self.global_context = bool(decoder_global_context)
 
     def _reset_parameters(self):
         for p in self.parameters():
@@ -169,15 +187,30 @@ class WinDecoderTransformer(nn.Module):
         hs = hs_win.reshape(num_layer, num_elm * num_win, dim)
         return hs
 
-    def append_global_context(self, src, pos_embed, mask, memory_win, pos_embed_win, mask_win):
-        if not self.global_context:
-            return memory_win, pos_embed_win, mask_win
-
-        bs, c, h, w = src.shape
-        windows_per_batch = memory_win.shape[1] // bs
+    def global_context_vector(self, src, mask):
         valid = (~mask).to(dtype=src.dtype).unsqueeze(1)
         denom = valid.sum(dim=(2, 3), keepdim=False).clamp_min(1.0)
-        global_src = (src * valid).sum(dim=(2, 3)) / denom
+        return (src * valid).sum(dim=(2, 3)) / denom
+
+    def apply_global_context(self, src, pos_embed, mask, memory_win, pos_embed_win, mask_win):
+        if self.global_context_mode == "none":
+            return memory_win, pos_embed_win, mask_win
+
+        bs = src.shape[0]
+        windows_per_batch = memory_win.shape[1] // bs
+        global_src = self.global_context_vector(src, mask)
+
+        if self.global_context_mode == "residual":
+            # Identity-initialized GCNet-style context. This preserves PET's
+            # local cross-attention normalization while letting training learn a
+            # small image-level bias for every local decoder memory window.
+            context = self.global_context_proj(self.global_context_norm(global_src))
+            context = context * self.global_context_scale
+            context = context.repeat_interleave(windows_per_batch, dim=0).unsqueeze(0)
+            return memory_win + context, pos_embed_win, mask_win
+
+        valid = (~mask).to(dtype=pos_embed.dtype).unsqueeze(1)
+        denom = valid.sum(dim=(2, 3), keepdim=False).clamp_min(1.0)
         global_pos = (pos_embed * valid).sum(dim=(2, 3)) / denom
         global_src = global_src.repeat_interleave(windows_per_batch, dim=0).unsqueeze(0)
         global_pos = global_pos.repeat_interleave(windows_per_batch, dim=0).unsqueeze(0)
@@ -204,7 +237,7 @@ class WinDecoderTransformer(nn.Module):
             self.memory_halo,
             self.memory_halo,
         )
-        memory_win, pos_embed_win, mask_win = self.append_global_context(
+        memory_win, pos_embed_win, mask_win = self.apply_global_context(
             src,
             pos_embed,
             mask,
@@ -496,6 +529,7 @@ def build_decoder(args, **kwargs):
         decoder_attention=getattr(args, 'decoder_attention', 'softmax'),
         decoder_memory_halo=getattr(args, 'decoder_memory_halo', 0),
         decoder_global_context=getattr(args, 'decoder_global_context', False),
+        decoder_global_context_mode=getattr(args, 'decoder_global_context_mode', 'residual'),
         return_intermediate_dec=True,
     )
 
