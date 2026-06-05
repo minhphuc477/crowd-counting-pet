@@ -70,6 +70,7 @@ KEY_ARGS = (
     'enc_shift_mode',
     'decoder_attention',
     'decoder_memory_halo',
+    'decoder_global_context',
     'quad_context_mixer',
     'quad_context_levels',
     'quad_context_shift',

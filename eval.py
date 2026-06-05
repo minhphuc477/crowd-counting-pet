@@ -59,6 +59,7 @@ def get_args_parser():
                         help='attention used inside decoder layers; softmax matches official PET')
     parser.add_argument('--decoder_memory_halo', default=0, type=int,
                         help='extra 8x encoder-feature tokens around each decoder cross-attention memory window')
+    parser.add_argument('--decoder_global_context', action='store_true')
     parser.add_argument('--enc_win_sizes', default='', type=str,
                         help='encoder window sizes as "w,h;w,h;..."; empty keeps paper PET defaults')
     parser.add_argument('--enc_shift_mode', default='none', choices=('none', 'swin'))
@@ -290,8 +291,8 @@ def main(args):
     # evaluation
     vis_dir = None if args.vis_dir == "" else args.vis_dir
     if args.eval_protocol == 'crowd_no_overlap':
-        mae, mse = evaluate_crowd_no_overlap(model, data_loader_val, device, vis_dir=vis_dir)
-        test_stats = {'mae': mae, 'mse': mse, 'pred_cnt': 0.0, 'gt_cnt': 0.0}
+        test_stats = evaluate_crowd_no_overlap(model, data_loader_val, device, vis_dir=vis_dir)
+        mae, mse = test_stats['mae'], test_stats['mse']
     else:
         test_stats = evaluate(model, data_loader_val, device, vis_dir=vis_dir, tta_flip=args.tta_flip)
         mae, mse = test_stats['mae'], test_stats['mse']

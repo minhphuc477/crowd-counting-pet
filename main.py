@@ -15,7 +15,7 @@ from torch.utils.data import DataLoader, DistributedSampler
 
 import util.misc as utils
 from datasets import build_dataset
-from engine import evaluate, train_one_epoch
+from engine import evaluate, evaluate_crowd_no_overlap, train_one_epoch
 from models import build_model
 from models.backbones import get_supported_timm_backbones, is_timm_backbone
 
@@ -117,6 +117,7 @@ ARCHITECTURE_OVERRIDE_KEYS = {
     'transformer_norm_style',
     'decoder_attention',
     'decoder_memory_halo',
+    'decoder_global_context',
     'enc_win_sizes',
     'enc_shift_mode',
     'sparse_dec_win_size',
@@ -243,6 +244,8 @@ def get_args_parser():
                         help='attention used inside decoder layers; softmax matches official PET')
     parser.add_argument('--decoder_memory_halo', default=0, type=int,
                         help='extra 8x encoder-feature tokens around each decoder cross-attention memory window')
+    parser.add_argument('--decoder_global_context', action='store_true',
+                        help='append one valid global pooled encoder token to every decoder memory window')
     parser.add_argument('--enc_win_sizes', default='', type=str,
                         help='encoder window sizes as "w,h;w,h;..."; empty keeps paper PET defaults')
     parser.add_argument('--enc_shift_mode', default='none', choices=('none', 'swin'),
@@ -373,6 +376,8 @@ def get_args_parser():
                         help='optional eval-only point NMS radius in pixels; 0 disables duplicate suppression')
     parser.add_argument('--eval_branch_gate', default='none', choices=('none', 'query', 'pred'),
                         help='eval-only split-aware sparse/dense ownership gate; none keeps PET concatenation')
+    parser.add_argument('--eval_protocol', default='pet', choices=('pet', 'crowd_no_overlap'),
+                        help='validation protocol used during training')
 
     # dataset parameters
     parser.add_argument('--dataset_file', default="SHA")
@@ -828,7 +833,10 @@ def main(args):
             t1 = time.time()
             eval_model = model_ema.module if model_ema is not None else model
             eval_model_name = 'ema' if model_ema is not None else 'raw'
-            test_stats = evaluate(eval_model, data_loader_val, device, epoch, None)
+            if args.eval_protocol == 'crowd_no_overlap':
+                test_stats = evaluate_crowd_no_overlap(eval_model, data_loader_val, device, vis_dir=None)
+            else:
+                test_stats = evaluate(eval_model, data_loader_val, device, epoch, None)
             t2 = time.time()
 
             # output results

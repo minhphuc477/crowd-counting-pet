@@ -147,8 +147,7 @@ def evaluate_crowd_no_overlap(model, data_loader, device, vis_dir=None):
     validation images, so this wrapper preserves that protocol while accepting
     PET targets (`points`) and its thresholded `test_forward()` output.
     """
-    stats = evaluate(model, data_loader, device, vis_dir=vis_dir, tta_flip=False)
-    return stats['mae'], stats['mse']
+    return evaluate(model, data_loader, device, vis_dir=vis_dir, tta_flip=False)
 
 
 # evaluation

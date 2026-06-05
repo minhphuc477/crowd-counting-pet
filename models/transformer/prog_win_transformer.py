@@ -112,6 +112,7 @@ class WinDecoderTransformer(nn.Module):
                  norm_style="post",
                  decoder_attention="softmax",
                  decoder_memory_halo=0,
+                 decoder_global_context=False,
                  return_intermediate_dec=False,
                  dec_win_w=16, dec_win_h=8,
                  ):
@@ -130,6 +131,7 @@ class WinDecoderTransformer(nn.Module):
         self.nhead = nhead
         self.num_layer = num_decoder_layers
         self.memory_halo = max(0, int(decoder_memory_halo))
+        self.global_context = bool(decoder_global_context)
 
     def _reset_parameters(self):
         for p in self.parameters():
@@ -166,6 +168,24 @@ class WinDecoderTransformer(nn.Module):
         num_layer, num_elm, num_win, dim = hs_win.shape
         hs = hs_win.reshape(num_layer, num_elm * num_win, dim)
         return hs
+
+    def append_global_context(self, src, pos_embed, mask, memory_win, pos_embed_win, mask_win):
+        if not self.global_context:
+            return memory_win, pos_embed_win, mask_win
+
+        bs, c, h, w = src.shape
+        windows_per_batch = memory_win.shape[1] // bs
+        valid = (~mask).to(dtype=src.dtype).unsqueeze(1)
+        denom = valid.sum(dim=(2, 3), keepdim=False).clamp_min(1.0)
+        global_src = (src * valid).sum(dim=(2, 3)) / denom
+        global_pos = (pos_embed * valid).sum(dim=(2, 3)) / denom
+        global_src = global_src.repeat_interleave(windows_per_batch, dim=0).unsqueeze(0)
+        global_pos = global_pos.repeat_interleave(windows_per_batch, dim=0).unsqueeze(0)
+        global_mask = torch.zeros(mask_win.shape[0], 1, dtype=torch.bool, device=mask_win.device)
+        memory_win = torch.cat([memory_win, global_src], dim=0)
+        pos_embed_win = torch.cat([pos_embed_win, global_pos], dim=0)
+        mask_win = torch.cat([mask_win, global_mask], dim=1)
+        return memory_win, pos_embed_win, mask_win
     
     def forward(self, src, pos_embed, mask, pqs, **kwargs):
         bs, c, h, w = src.shape
@@ -183,6 +203,14 @@ class WinDecoderTransformer(nn.Module):
             int(self.dec_win_w / div_ratio),
             self.memory_halo,
             self.memory_halo,
+        )
+        memory_win, pos_embed_win, mask_win = self.append_global_context(
+            src,
+            pos_embed,
+            mask,
+            memory_win,
+            pos_embed_win,
+            mask_win,
         )
         
         # dynamic decoder forward
@@ -467,6 +495,7 @@ def build_decoder(args, **kwargs):
         norm_style=getattr(args, 'transformer_norm_style', 'post'),
         decoder_attention=getattr(args, 'decoder_attention', 'softmax'),
         decoder_memory_halo=getattr(args, 'decoder_memory_halo', 0),
+        decoder_global_context=getattr(args, 'decoder_global_context', False),
         return_intermediate_dec=True,
     )
 
