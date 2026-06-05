@@ -475,6 +475,9 @@ def merge_checkpoint_args(args, checkpoint):
             'min_lr', 'ema_decay',
             'score_threshold', 'split_threshold', 'split_threshold_quantile',
             'eval_nms_radius', 'eval_branch_gate',
+        })
+        explicit_args = set(getattr(args, '_explicit_args', set()))
+        aux_resume_keys = {
             'region_count_loss_coef', 'region_count_grid', 'region_count_gate',
             'region_count_type', 'region_count_start_epoch', 'region_count_end_epoch',
             'apg_loss_coef', 'apg_pos_k', 'apg_point_coef', 'apg_start_epoch', 'apg_end_epoch',
@@ -484,9 +487,9 @@ def merge_checkpoint_args(args, checkpoint):
             'ifi_neg_min_dist', 'ifi_start_epoch', 'ifi_end_epoch',
             'qd_apg_loss_coef', 'qd_apg_point_coef', 'qd_apg_suppress_coef',
             'qd_apg_start_epoch', 'qd_apg_end_epoch', 'qd_apg_route_source',
-        })
+        }
+        runtime_keys.update(key for key in aux_resume_keys if key in explicit_args)
         if getattr(args, 'resume_allow_arch_change', False):
-            explicit_args = set(getattr(args, '_explicit_args', set()))
             runtime_keys.update(key for key in ARCHITECTURE_OVERRIDE_KEYS if key in explicit_args)
     for key in runtime_keys:
         setattr(merged, key, getattr(args, key))
