@@ -152,6 +152,8 @@ def get_args_parser():
                         help='device to use for training / testing')
     parser.add_argument('--seed', default=42, type=int)
     parser.add_argument('--resume', default='', help='resume from checkpoint')
+    parser.add_argument('--resume_allow_arch_change', action='store_true',
+                        help='allow explicitly requested architecture changes and load checkpoint non-strictly')
     parser.add_argument('--vis_dir', default="")
     parser.add_argument('--results_file', default='',
                         help='where to save eval metrics; empty writes eval_results.json next to checkpoint')
@@ -195,8 +197,13 @@ def merge_checkpoint_args(args, checkpoint):
         'eval_max_size', 'num_workers', 'seed',
         'override_score_threshold', 'override_split_threshold', 'override_split_threshold_quantile',
         'checkpoint_model_key', 'deterministic', 'tta_flip', 'eval_nms_radius', 'eval_branch_gate',
-        'eval_protocol',
+        'eval_protocol', 'resume_allow_arch_change',
     }
+    if getattr(args, 'resume_allow_arch_change', False):
+        runtime_keys.update({
+            'decoder_global_context',
+            'decoder_global_context_mode',
+        })
     for key in runtime_keys:
         setattr(merged, key, getattr(args, key))
     return merged
@@ -285,7 +292,16 @@ def main(args):
             checkpoint,
             getattr(args, 'checkpoint_model_key', 'auto'),
         )
-        model_without_ddp.load_state_dict(model_state)
+        strict_load = not getattr(args, 'resume_allow_arch_change', False)
+        incompatible = model_without_ddp.load_state_dict(model_state, strict=strict_load)
+        if not strict_load and utils.is_main_process():
+            missing = getattr(incompatible, 'missing_keys', [])
+            unexpected = getattr(incompatible, 'unexpected_keys', [])
+            print(
+                'non-strict eval load:',
+                f'missing_keys={len(missing)}',
+                f'unexpected_keys={len(unexpected)}',
+            )
         print(f'loaded checkpoint model state: {eval_model_key}')
         cur_epoch = checkpoint['epoch'] if 'epoch' in checkpoint else 0
     
