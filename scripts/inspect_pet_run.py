@@ -67,6 +67,7 @@ KEY_ARGS = (
     'qd_apg_route_source',
     'pet_loss_variant',
     'dec_layers',
+    'enc_shift_mode',
     'decoder_attention',
     'decoder_memory_halo',
     'quad_context_mixer',

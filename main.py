@@ -118,6 +118,7 @@ ARCHITECTURE_OVERRIDE_KEYS = {
     'decoder_attention',
     'decoder_memory_halo',
     'enc_win_sizes',
+    'enc_shift_mode',
     'sparse_dec_win_size',
     'dense_dec_win_size',
     'context_patch_size',
@@ -244,6 +245,8 @@ def get_args_parser():
                         help='extra 8x encoder-feature tokens around each decoder cross-attention memory window')
     parser.add_argument('--enc_win_sizes', default='', type=str,
                         help='encoder window sizes as "w,h;w,h;..."; empty keeps paper PET defaults')
+    parser.add_argument('--enc_shift_mode', default='none', choices=('none', 'swin'),
+                        help='encoder window partition shift; swin alternates half-window shifted encoder layers')
     parser.add_argument('--sparse_dec_win_size', default='', type=str,
                         help='sparse decoder window size as "w,h"; empty keeps paper PET default')
     parser.add_argument('--dense_dec_win_size', default='', type=str,

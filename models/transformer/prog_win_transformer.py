@@ -28,6 +28,9 @@ class WinEncoderTransformer(nn.Module):
         self.nhead = nhead
 
         self.enc_win_list = kwargs['enc_win_list']
+        self.enc_shift_mode = kwargs.get('enc_shift_mode', 'none')
+        if self.enc_shift_mode not in ('none', 'swin'):
+            raise ValueError('enc_shift_mode must be one of "none" or "swin"')
         self.return_intermediate = kwargs['return_intermediate'] if 'return_intermediate' in kwargs else False           
 
     def _reset_parameters(self):
@@ -43,13 +46,25 @@ class WinEncoderTransformer(nn.Module):
         for idx, enc_win_size in enumerate(self.enc_win_list):
             # encoder window partition
             enc_win_w, enc_win_h = enc_win_size
-            memeory_win, pos_embed_win, mask_win  = enc_win_partition(memeory, pos_embed, mask, enc_win_h, enc_win_w)            
+            shift_h, shift_w = 0, 0
+            if self.enc_shift_mode == 'swin' and idx % 2 == 1:
+                shift_h = enc_win_h // 2
+                shift_w = enc_win_w // 2
+            if shift_h > 0 or shift_w > 0:
+                memeory_in = torch.roll(memeory, shifts=(-shift_h, -shift_w), dims=(2, 3))
+                pos_embed_in = torch.roll(pos_embed, shifts=(-shift_h, -shift_w), dims=(2, 3))
+                mask_in = torch.roll(mask, shifts=(-shift_h, -shift_w), dims=(1, 2))
+            else:
+                memeory_in, pos_embed_in, mask_in = memeory, pos_embed, mask
+            memeory_win, pos_embed_win, mask_win  = enc_win_partition(memeory_in, pos_embed_in, mask_in, enc_win_h, enc_win_w)            
 
             # encoder forward
             output = self.encoder.single_forward(memeory_win, src_key_padding_mask=mask_win, pos=pos_embed_win, layer_idx=idx)
 
             # reverse encoder window
             memeory = enc_win_partition_reverse(output, enc_win_h, enc_win_w, h, w)
+            if shift_h > 0 or shift_w > 0:
+                memeory = torch.roll(memeory, shifts=(shift_h, shift_w), dims=(2, 3))
             if self.return_intermediate:
                 memeory_list.append(memeory)        
         memory_ = memeory_list if self.return_intermediate else memeory
@@ -405,6 +420,7 @@ def build_encoder(args, **kwargs):
         num_encoder_layers=args.enc_layers,
         activation=getattr(args, 'transformer_activation', 'relu'),
         norm_style=getattr(args, 'transformer_norm_style', 'post'),
+        enc_shift_mode=getattr(args, 'enc_shift_mode', 'none'),
         **kwargs,
     )
 

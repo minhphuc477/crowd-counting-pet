@@ -67,6 +67,7 @@ def make_args(
         decoder_attention=decoder_attention,
         decoder_memory_halo=decoder_memory_halo,
         enc_win_sizes='',
+        enc_shift_mode='none',
         sparse_dec_win_size='',
         dense_dec_win_size='',
         context_patch_size='',
