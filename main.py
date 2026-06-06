@@ -397,6 +397,8 @@ def get_args_parser():
     parser.add_argument('--data_path', default="", type=str)
     parser.add_argument('--patch_size', default=256, type=int,
                         help='training crop size for crop-based crowd datasets')
+    parser.add_argument('--patch_size_choices', default='', type=str,
+                        help='comma-separated training crop sizes sampled per image; empty uses --patch_size')
     parser.add_argument('--crop_attempts', default=1, type=int,
                         help='number of random crop candidates tried per positive training image')
     parser.add_argument('--min_crop_points', default=0, type=int,
@@ -479,6 +481,7 @@ def merge_checkpoint_args(args, checkpoint):
         'list_backbones', 'syn_bn', 'deterministic', 'freeze_bn',
         # allow overriding schedule/eval settings at resume time
         'epochs', 'eval_freq', 'eval_before_train', 'eval_protocol', 'data_path', 'eval_max_size',
+        'patch_size', 'patch_size_choices', 'crop_attempts', 'min_crop_points',
     }
     if getattr(args, 'resume_model_only', False):
         runtime_keys.update({

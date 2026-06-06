@@ -63,6 +63,7 @@ class SHA(Dataset):
         self.train = train
         self.flip = flip
         self.patch_size = patch_size
+        self.patch_size_choices = _parse_patch_size_choices(patch_size)
         self.crop_attempts = max(1, int(crop_attempts))
         self.min_crop_points = max(0, int(min_crop_points))
     
@@ -95,6 +96,7 @@ class SHA(Dataset):
         if self.transform is not None:
             img = self.transform(img)
         img = torch.as_tensor(img, dtype=torch.float32)
+        patch_size = random.choice(self.patch_size_choices) if self.train else int(self.patch_size)
 
         # random scale
         if self.train:
@@ -103,7 +105,7 @@ class SHA(Dataset):
             scale = random.uniform(*scale_range)
             
             # interpolation
-            if scale * min_size > self.patch_size:  
+            if scale * min_size > patch_size:
                 img = F.interpolate(
                     img.unsqueeze(0),
                     scale_factor=scale,
@@ -118,7 +120,7 @@ class SHA(Dataset):
             img, points = random_crop_with_retries(
                 img,
                 points,
-                patch_size=self.patch_size,
+                patch_size=patch_size,
                 attempts=self.crop_attempts,
                 min_points=self.min_crop_points,
             )
@@ -320,6 +322,20 @@ def random_crop_with_retries(img, points, patch_size=256, attempts=8, min_points
     return best_img, best_points
 
 
+def _parse_patch_size_choices(patch_size):
+    if isinstance(patch_size, str):
+        raw_values = [value.strip() for value in patch_size.replace(';', ',').split(',')]
+        choices = [int(value) for value in raw_values if value]
+    elif isinstance(patch_size, (list, tuple)):
+        choices = [int(value) for value in patch_size]
+    else:
+        choices = [int(patch_size)]
+    choices = sorted({value for value in choices if value > 0})
+    if not choices:
+        raise ValueError('patch_size must contain at least one positive integer')
+    return choices
+
+
 # center_crop removed: validation images are evaluated at full resolution.
 
 
@@ -336,7 +352,7 @@ def build(image_set, args):
             train=True,
             transform=transform,
             flip=True,
-            patch_size=args.patch_size,
+            patch_size=getattr(args, 'patch_size_choices', '') or args.patch_size,
             crop_attempts=getattr(args, 'crop_attempts', 1),
             min_crop_points=getattr(args, 'min_crop_points', 0),
         )

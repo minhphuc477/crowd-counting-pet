@@ -11,6 +11,7 @@ from torch.utils.data import Dataset
 
 from .image_io import load_rgb_image
 from .SHA import IMAGE_EXTENSIONS, random_crop_with_retries
+from .SHA import _parse_patch_size_choices
 
 
 class QNRF(Dataset):
@@ -63,6 +64,7 @@ class QNRF(Dataset):
         self.train = train
         self.flip = flip
         self.patch_size = patch_size
+        self.patch_size_choices = _parse_patch_size_choices(patch_size)
         self.crop_attempts = max(1, int(crop_attempts))
         self.min_crop_points = max(0, int(min_crop_points))
         self.eval_max_size = int(eval_max_size) if eval_max_size is not None else 1536
@@ -93,12 +95,13 @@ class QNRF(Dataset):
         if self.transform is not None:
             img = self.transform(img)
         img = torch.as_tensor(img, dtype=torch.float32)
+        patch_size = random.choice(self.patch_size_choices) if self.train else int(self.patch_size)
 
         if self.train:
             scale_range = [0.8, 1.2]
             min_size = min(img.shape[1:])
             scale = random.uniform(*scale_range)
-            if scale * min_size > self.patch_size:
+            if scale * min_size > patch_size:
                 img = F.interpolate(
                     img.unsqueeze(0),
                     scale_factor=scale,
@@ -111,7 +114,7 @@ class QNRF(Dataset):
             img, points = random_crop_with_retries(
                 img,
                 points,
-                patch_size=self.patch_size,
+                patch_size=patch_size,
                 attempts=self.crop_attempts,
                 min_points=self.min_crop_points,
             )
@@ -294,7 +297,7 @@ def build(image_set, args):
             train=True,
             transform=transform,
             flip=True,
-            patch_size=args.patch_size,
+            patch_size=getattr(args, 'patch_size_choices', '') or args.patch_size,
             crop_attempts=getattr(args, 'crop_attempts', 1),
             min_crop_points=getattr(args, 'min_crop_points', 0),
         )
