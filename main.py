@@ -482,12 +482,13 @@ def merge_checkpoint_args(args, checkpoint):
         'resume_model_only', 'resume_allow_arch_change', 'num_workers', 'world_size', 'dist_url',
         'list_backbones', 'syn_bn', 'deterministic', 'freeze_bn', 'amp',
         # allow overriding schedule/eval settings at resume time
-        'epochs', 'eval_freq', 'eval_before_train', 'eval_protocol', 'data_path', 'eval_max_size',
+        'epochs', 'batch_size', 'eval_freq', 'eval_before_train', 'eval_protocol', 'data_path', 'eval_max_size',
         'patch_size', 'patch_size_choices', 'crop_attempts', 'min_crop_points',
     }
     if getattr(args, 'resume_model_only', False):
         runtime_keys.update({
             'lr', 'lr_backbone', 'lr_backbone_adapter', 'weight_decay',
+            'freeze_backbone_epochs', 'clip_max_norm',
             'lr_scheduler', 'lr_drop', 'lr_gamma', 'warmup_epochs', 'hold_epochs',
             'min_lr', 'ema_decay',
             'score_threshold', 'split_threshold', 'split_threshold_quantile',
