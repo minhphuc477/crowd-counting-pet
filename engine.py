@@ -4,6 +4,7 @@ Train and eval functions used in main.py
 import math
 import os
 import sys
+from contextlib import nullcontext
 from typing import Iterable
 import numpy as np
 import cv2
@@ -14,6 +15,14 @@ import torch.nn.functional as F
 
 import util.misc as utils
 from util.misc import NestedTensor
+
+
+def autocast_context(device, enabled=False):
+    if not enabled or device.type != 'cuda':
+        return nullcontext()
+    if hasattr(torch, 'amp') and hasattr(torch.amp, 'autocast'):
+        return torch.amp.autocast('cuda')
+    return torch.cuda.amp.autocast()
 
 
 class DeNormalize(object):
@@ -80,7 +89,8 @@ def visualization(samples, targets, pred, vis_dir, split_map=None):
 def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
                     data_loader: Iterable, optimizer: torch.optim.Optimizer,
                     device: torch.device, epoch: int, max_norm: float = 0,
-                    model_ema=None, model_without_ddp=None, freeze_bn: bool = False):
+                    model_ema=None, model_without_ddp=None, freeze_bn: bool = False,
+                    amp_enabled: bool = False, scaler=None):
     model.train()
     criterion.train()
     if freeze_bn:
@@ -97,8 +107,9 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
         targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
         gt_points = [target['points'] for target in targets]
 
-        outputs = model(samples, epoch=epoch, train=True, 
-                                        criterion=criterion, targets=targets)
+        with autocast_context(device, amp_enabled):
+            outputs = model(samples, epoch=epoch, train=True,
+                                            criterion=criterion, targets=targets)
         loss_dict, weight_dict, losses = outputs['loss_dict'], outputs['weight_dict'], outputs['losses']
 
         # reduce losses over all GPUs for logging purposes
@@ -120,10 +131,18 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
             sys.exit(1)
         
         optimizer.zero_grad()
-        losses.backward()
-        if max_norm > 0:
-            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm)
-        optimizer.step()
+        if amp_enabled and scaler is not None:
+            scaler.scale(losses).backward()
+            if max_norm > 0:
+                scaler.unscale_(optimizer)
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm)
+            scaler.step(optimizer)
+            scaler.update()
+        else:
+            losses.backward()
+            if max_norm > 0:
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm)
+            optimizer.step()
         if model_ema is not None:
             source_model = model_without_ddp if model_without_ddp is not None else model
             model_ema.update(source_model)
