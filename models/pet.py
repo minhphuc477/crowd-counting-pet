@@ -432,6 +432,10 @@ class PET(nn.Module):
         self.apg_consistency_coef = float(getattr(args, 'apg_consistency_coef', 0.0))
         self.apg_consistency_k = max(1, int(getattr(args, 'apg_consistency_k', 4)))
         self.apg_consistency_sigma = float(getattr(args, 'apg_consistency_sigma', 8.0))
+        self.apg_soft_loss_coef = float(getattr(args, 'apg_soft_loss_coef', 0.0))
+        self.apg_soft_pos_k = max(1, int(getattr(args, 'apg_soft_pos_k', 4)))
+        self.apg_soft_sigma = float(getattr(args, 'apg_soft_sigma', 6.0))
+        self.apg_soft_point_coef = float(getattr(args, 'apg_soft_point_coef', 2.0))
         self.ifi_point_coef = float(getattr(args, 'ifi_point_coef', 1.0))
         self.ifi_neg_k = max(0, int(getattr(args, 'ifi_neg_k', 4)))
         self.ifi_neg_radius = float(getattr(args, 'ifi_neg_radius', 12.0))
@@ -562,6 +566,21 @@ class PET(nn.Module):
             weight_dict['loss_apg_sp'] = self.apg_loss_coef
             weight_dict['loss_apg_ds'] = self.apg_loss_coef
             losses += (loss_apg_sparse + loss_apg_dense) * self.apg_loss_coef
+        if self.apg_soft_loss_coef > 0:
+            apg_active = epoch >= self.apg_start_epoch and (
+                self.apg_end_epoch < 0 or epoch <= self.apg_end_epoch
+            )
+            if apg_active:
+                loss_apg_soft_sparse = self.compute_soft_apg_loss(output_sparse, targets)
+                loss_apg_soft_dense = self.compute_soft_apg_loss(output_dense, targets)
+            else:
+                loss_apg_soft_sparse = output_sparse['pred_logits'].sum() * 0.0
+                loss_apg_soft_dense = output_dense['pred_logits'].sum() * 0.0
+            loss_dict['loss_apg_soft_sp'] = loss_apg_soft_sparse
+            loss_dict['loss_apg_soft_ds'] = loss_apg_soft_dense
+            weight_dict['loss_apg_soft_sp'] = self.apg_soft_loss_coef
+            weight_dict['loss_apg_soft_ds'] = self.apg_soft_loss_coef
+            losses += (loss_apg_soft_sparse + loss_apg_soft_dense) * self.apg_soft_loss_coef
         if self.ifi_loss_coef > 0:
             ifi_active = epoch >= self.ifi_start_epoch and (
                 self.ifi_end_epoch < 0 or epoch <= self.ifi_end_epoch
@@ -691,6 +710,58 @@ class PET(nn.Module):
             loss = loss + self.apg_contrastive_coef * torch.stack(contrastive_losses).mean()
         if consistency_losses:
             loss = loss + self.apg_consistency_coef * torch.stack(consistency_losses).mean()
+        return loss
+
+    def compute_soft_apg_loss(self, output, targets):
+        """Gaussian APG on PET's actual point-query logits and offsets."""
+        logits = output['pred_logits']
+        pred_points = output['pred_points']
+        point_queries = output.get('points_queries')
+        if point_queries is None:
+            return logits.sum() * 0.0
+
+        device = logits.device
+        dtype = pred_points.dtype
+        img_h, img_w = output['img_shape']
+        query_abs = point_queries.to(device=device, dtype=dtype).clone()
+        query_abs[:, 0] *= img_h
+        query_abs[:, 1] *= img_w
+
+        sigma = max(float(self.apg_soft_sigma), 1e-6)
+        cls_losses = []
+        point_losses = []
+        for batch_idx, target in enumerate(targets):
+            gt_points = target['points'].to(device=device, dtype=dtype)
+            if gt_points.numel() == 0 or query_abs.numel() == 0:
+                continue
+            k = min(self.apg_soft_pos_k, query_abs.shape[0])
+            query_dist = torch.cdist(gt_points, query_abs, p=2)
+            local_idx = torch.unique(query_dist.topk(k, largest=False).indices.reshape(-1))
+            if local_idx.numel() == 0:
+                continue
+            local_query_abs = query_abs[local_idx]
+            local_dist, local_gt_idx = torch.cdist(local_query_abs, gt_points, p=2).min(dim=1)
+            score_target = torch.exp(-0.5 * (local_dist / sigma).pow(2)).clamp(0.0, 1.0)
+            logit_margin = logits[batch_idx, local_idx, 1] - logits[batch_idx, local_idx, 0]
+            cls_losses.append(
+                F.binary_cross_entropy_with_logits(logit_margin, score_target, reduction='mean')
+            )
+
+            gt_norm = gt_points[local_gt_idx].clone()
+            gt_norm[:, 0] /= img_h
+            gt_norm[:, 1] /= img_w
+            point_raw = F.smooth_l1_loss(
+                pred_points[batch_idx, local_idx],
+                gt_norm,
+                reduction='none',
+            ).sum(dim=-1)
+            point_losses.append((point_raw * score_target).sum() / (score_target.sum() + 1e-6))
+
+        if not cls_losses:
+            return logits.sum() * 0.0
+        loss = torch.stack(cls_losses).mean()
+        if point_losses:
+            loss = loss + self.apg_soft_point_coef * torch.stack(point_losses).mean()
         return loss
 
     def _sample_ifi_features(self, encode_src, batch_idx, points_abs, img_h, img_w):

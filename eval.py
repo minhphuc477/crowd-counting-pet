@@ -109,6 +109,10 @@ def get_args_parser():
     parser.add_argument('--apg_consistency_coef', default=0.0, type=float)
     parser.add_argument('--apg_consistency_k', default=4, type=int)
     parser.add_argument('--apg_consistency_sigma', default=8.0, type=float)
+    parser.add_argument('--apg_soft_loss_coef', default=0.0, type=float)
+    parser.add_argument('--apg_soft_pos_k', default=4, type=int)
+    parser.add_argument('--apg_soft_sigma', default=6.0, type=float)
+    parser.add_argument('--apg_soft_point_coef', default=2.0, type=float)
     parser.add_argument('--ifi_loss_coef', default=0.0, type=float)
     parser.add_argument('--ifi_point_coef', default=1.0, type=float)
     parser.add_argument('--ifi_neg_k', default=4, type=int)
@@ -302,6 +306,10 @@ def main(args):
                 f'missing_keys={len(missing)}',
                 f'unexpected_keys={len(unexpected)}',
             )
+            if missing:
+                print('  missing:', missing[:20])
+            if unexpected:
+                print('  unexpected:', unexpected[:20])
         print(f'loaded checkpoint model state: {eval_model_key}')
         cur_epoch = checkpoint['epoch'] if 'epoch' in checkpoint else 0
     

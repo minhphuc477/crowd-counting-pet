@@ -80,9 +80,13 @@ def visualization(samples, targets, pred, vis_dir, split_map=None):
 def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
                     data_loader: Iterable, optimizer: torch.optim.Optimizer,
                     device: torch.device, epoch: int, max_norm: float = 0,
-                    model_ema=None, model_without_ddp=None):
+                    model_ema=None, model_without_ddp=None, freeze_bn: bool = False):
     model.train()
     criterion.train()
+    if freeze_bn:
+        for module in model.modules():
+            if isinstance(module, torch.nn.modules.batchnorm._BatchNorm):
+                module.eval()
     metric_logger = utils.MetricLogger(delimiter="  ")
     metric_logger.add_meter('lr', utils.SmoothedValue(window_size=1, fmt='{value:.6f}'))
     header = 'Epoch: [{}]'.format(epoch)

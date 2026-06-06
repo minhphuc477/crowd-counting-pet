@@ -169,6 +169,8 @@ def get_args_parser():
                         help='train the VGG FPN fusion block at --lr; disabled keeps original PET optimizer grouping')
     parser.add_argument('--freeze_backbone_epochs', default=0, type=int,
                         help='freeze pretrained backbone feature extractor for this many initial epochs')
+    parser.add_argument('--freeze_bn', action='store_true',
+                        help='keep BatchNorm running statistics fixed during training/fine-tuning')
     parser.add_argument('--batch_size', default=8, type=int)
     parser.add_argument('--weight_decay', default=1e-4, type=float)
     parser.add_argument('--epochs', default=1500, type=int)
@@ -327,6 +329,14 @@ def get_args_parser():
                         help='nearest queries per GT used by APG consistency')
     parser.add_argument('--apg_consistency_sigma', default=8.0, type=float,
                         help='pixel Gaussian sigma for APG consistency weights')
+    parser.add_argument('--apg_soft_loss_coef', default=0.0, type=float,
+                        help='Gaussian soft APG loss weight on PET inference logits; 0 disables it')
+    parser.add_argument('--apg_soft_pos_k', default=4, type=int,
+                        help='nearest point queries per GT used by Gaussian soft APG')
+    parser.add_argument('--apg_soft_sigma', default=6.0, type=float,
+                        help='pixel sigma for Gaussian soft APG classification targets')
+    parser.add_argument('--apg_soft_point_coef', default=2.0, type=float,
+                        help='point-regression coefficient inside Gaussian soft APG')
     parser.add_argument('--ifi_loss_coef', default=0.0, type=float,
                         help='Interpolated Feature Guidance auxiliary loss weight; 0 disables it')
     parser.add_argument('--ifi_point_coef', default=1.0, type=float,
@@ -409,6 +419,8 @@ def get_args_parser():
                         help='start epoch')
     parser.add_argument('--num_workers', default=2, type=int)
     parser.add_argument('--eval_freq', default=5, type=int)
+    parser.add_argument('--eval_before_train', action='store_true',
+                        help='run validation once before the first training epoch')
     parser.add_argument('--syn_bn', default=0, type=int)
     parser.add_argument('--ema_decay', default=0.0, type=float,
                         help='exponential moving average decay for eval/checkpointing; 0 disables EMA')
@@ -464,9 +476,9 @@ def merge_checkpoint_args(args, checkpoint):
     runtime_keys = {
         'resume', 'device', 'output_dir', 'seed', 'start_epoch',
         'resume_model_only', 'resume_allow_arch_change', 'num_workers', 'world_size', 'dist_url',
-        'list_backbones', 'syn_bn', 'deterministic',
+        'list_backbones', 'syn_bn', 'deterministic', 'freeze_bn',
         # allow overriding schedule/eval settings at resume time
-        'epochs', 'eval_freq', 'eval_protocol', 'data_path', 'eval_max_size',
+        'epochs', 'eval_freq', 'eval_before_train', 'eval_protocol', 'data_path', 'eval_max_size',
     }
     if getattr(args, 'resume_model_only', False):
         runtime_keys.update({
@@ -483,6 +495,7 @@ def merge_checkpoint_args(args, checkpoint):
             'apg_loss_coef', 'apg_pos_k', 'apg_point_coef', 'apg_start_epoch', 'apg_end_epoch',
             'apg_contrastive_coef', 'apg_neg_k', 'apg_margin',
             'apg_consistency_coef', 'apg_consistency_k', 'apg_consistency_sigma',
+            'apg_soft_loss_coef', 'apg_soft_pos_k', 'apg_soft_sigma', 'apg_soft_point_coef',
             'ifi_loss_coef', 'ifi_point_coef', 'ifi_neg_k', 'ifi_neg_radius',
             'ifi_neg_min_dist', 'ifi_start_epoch', 'ifi_end_epoch',
             'qd_apg_loss_coef', 'qd_apg_point_coef', 'qd_apg_suppress_coef',
@@ -752,6 +765,10 @@ def main(args):
                 f'missing_keys={len(missing)}',
                 f'unexpected_keys={len(unexpected)}',
             )
+            if missing:
+                print('  missing:', missing[:20])
+            if unexpected:
+                print('  unexpected:', unexpected[:20])
         if model_ema is not None:
             if args.resume_model_only:
                 model_ema.set(model_without_ddp)
@@ -787,6 +804,25 @@ def main(args):
             payload['model_raw'] = model_without_ddp.state_dict()
         return payload
 
+    if getattr(args, 'eval_before_train', False):
+        t1 = time.time()
+        eval_model = model_ema.module if model_ema is not None else model
+        if args.eval_protocol == 'crowd_no_overlap':
+            test_stats = evaluate_crowd_no_overlap(eval_model, data_loader_val, device, vis_dir=None)
+        else:
+            test_stats = evaluate(eval_model, data_loader_val, device, args.start_epoch, None)
+        t2 = time.time()
+        print("\n==========================")
+        print(
+            "\npretrain_eval epoch:", args.start_epoch,
+            "mae:", test_stats['mae'],
+            "mse:", test_stats['mse'],
+            "pred_cnt:", test_stats.get('pred_cnt', 0.0),
+            "gt_cnt:", test_stats.get('gt_cnt', 0.0),
+            "eval_time:", t2 - t1,
+        )
+        print("==========================\n")
+
     # training
     print("Start training")
     start_time = time.time()
@@ -809,7 +845,8 @@ def main(args):
         t1 = time.time()
         train_stats = train_one_epoch(
             model, criterion, data_loader_train, optimizer, device, epoch,
-            args.clip_max_norm, model_ema=model_ema, model_without_ddp=model_without_ddp)
+            args.clip_max_norm, model_ema=model_ema, model_without_ddp=model_without_ddp,
+            freeze_bn=getattr(args, 'freeze_bn', False))
         t2 = time.time()
         print('[ep %d][lr %.7f][%.2fs]' % \
               (epoch, optimizer.param_groups[0]['lr'], t2 - t1))
