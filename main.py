@@ -171,6 +171,8 @@ def get_args_parser():
                         help='freeze pretrained backbone feature extractor for this many initial epochs')
     parser.add_argument('--freeze_bn', action='store_true',
                         help='keep BatchNorm running statistics fixed during training/fine-tuning')
+    parser.add_argument('--amp', action='store_true',
+                        help='train with CUDA automatic mixed precision to reduce activation memory')
     parser.add_argument('--batch_size', default=8, type=int)
     parser.add_argument('--weight_decay', default=1e-4, type=float)
     parser.add_argument('--epochs', default=1500, type=int)
@@ -478,7 +480,7 @@ def merge_checkpoint_args(args, checkpoint):
     runtime_keys = {
         'resume', 'device', 'output_dir', 'seed', 'start_epoch',
         'resume_model_only', 'resume_allow_arch_change', 'num_workers', 'world_size', 'dist_url',
-        'list_backbones', 'syn_bn', 'deterministic', 'freeze_bn',
+        'list_backbones', 'syn_bn', 'deterministic', 'freeze_bn', 'amp',
         # allow overriding schedule/eval settings at resume time
         'epochs', 'eval_freq', 'eval_before_train', 'eval_protocol', 'data_path', 'eval_max_size',
         'patch_size', 'patch_size_choices', 'crop_attempts', 'min_crop_points',
@@ -692,6 +694,18 @@ def main(args):
             print(f'optimizer group {group_name}: tensors={n_tensors}, params={n_params}, lr={lr}')
     optimizer = torch.optim.AdamW(param_dicts, lr=args.lr,
                                   weight_decay=args.weight_decay)
+    amp_enabled = bool(getattr(args, 'amp', False) and device.type == 'cuda')
+    scaler = None
+    if amp_enabled:
+        if hasattr(torch, 'amp') and hasattr(torch.amp, 'GradScaler'):
+            try:
+                scaler = torch.amp.GradScaler('cuda')
+            except TypeError:
+                scaler = torch.amp.GradScaler(enabled=True)
+        else:
+            scaler = torch.cuda.amp.GradScaler()
+        if utils.is_main_process():
+            print('AMP enabled: CUDA autocast + GradScaler')
     if args.lr_scheduler == 'step':
         lr_drop = args.epochs if args.lr_drop <= 0 else args.lr_drop
         lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, lr_drop, gamma=args.lr_gamma)
@@ -784,6 +798,8 @@ def main(args):
         if not args.resume_model_only and 'optimizer' in checkpoint and 'lr_scheduler' in checkpoint and 'epoch' in checkpoint:
             optimizer.load_state_dict(checkpoint['optimizer'])
             lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])
+            if scaler is not None and 'scaler' in checkpoint:
+                scaler.load_state_dict(checkpoint['scaler'])
             args.start_epoch = checkpoint['epoch'] + 1
             best_mae = checkpoint.get('best_mae', best_mae)
             best_mse = checkpoint.get('best_mse', best_mse)
@@ -803,6 +819,8 @@ def main(args):
         if model_ema is not None:
             payload['model_ema'] = model_ema.state_dict()
             payload['ema_decay'] = args.ema_decay
+        if scaler is not None:
+            payload['scaler'] = scaler.state_dict()
         if include_raw_model:
             payload['model_raw'] = model_without_ddp.state_dict()
         return payload
@@ -849,7 +867,9 @@ def main(args):
         train_stats = train_one_epoch(
             model, criterion, data_loader_train, optimizer, device, epoch,
             args.clip_max_norm, model_ema=model_ema, model_without_ddp=model_without_ddp,
-            freeze_bn=getattr(args, 'freeze_bn', False))
+            freeze_bn=getattr(args, 'freeze_bn', False),
+            amp_enabled=amp_enabled,
+            scaler=scaler)
         t2 = time.time()
         print('[ep %d][lr %.7f][%.2fs]' % \
               (epoch, optimizer.param_groups[0]['lr'], t2 - t1))
