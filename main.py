@@ -174,6 +174,8 @@ def get_args_parser():
     parser.add_argument('--amp', action='store_true',
                         help='train with CUDA automatic mixed precision to reduce activation memory')
     parser.add_argument('--batch_size', default=8, type=int)
+    parser.add_argument('--accum_iter', default=1, type=int,
+                        help='gradient accumulation steps; effective batch size is batch_size * accum_iter')
     parser.add_argument('--weight_decay', default=1e-4, type=float)
     parser.add_argument('--epochs', default=1500, type=int)
     parser.add_argument('--lr_scheduler', default='step', type=str,
@@ -482,7 +484,7 @@ def merge_checkpoint_args(args, checkpoint):
         'resume_model_only', 'resume_allow_arch_change', 'num_workers', 'world_size', 'dist_url',
         'list_backbones', 'syn_bn', 'deterministic', 'freeze_bn', 'amp',
         # allow overriding schedule/eval settings at resume time
-        'epochs', 'batch_size', 'eval_freq', 'eval_before_train', 'eval_protocol', 'data_path', 'eval_max_size',
+        'epochs', 'batch_size', 'accum_iter', 'eval_freq', 'eval_before_train', 'eval_protocol', 'data_path', 'eval_max_size',
         'patch_size', 'patch_size_choices', 'crop_attempts', 'min_crop_points',
     }
     if getattr(args, 'resume_model_only', False):
@@ -870,7 +872,8 @@ def main(args):
             args.clip_max_norm, model_ema=model_ema, model_without_ddp=model_without_ddp,
             freeze_bn=getattr(args, 'freeze_bn', False),
             amp_enabled=amp_enabled,
-            scaler=scaler)
+            scaler=scaler,
+            accum_iter=getattr(args, 'accum_iter', 1))
         t2 = time.time()
         print('[ep %d][lr %.7f][%.2fs]' % \
               (epoch, optimizer.param_groups[0]['lr'], t2 - t1))

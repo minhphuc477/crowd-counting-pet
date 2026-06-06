@@ -90,9 +90,10 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
                     data_loader: Iterable, optimizer: torch.optim.Optimizer,
                     device: torch.device, epoch: int, max_norm: float = 0,
                     model_ema=None, model_without_ddp=None, freeze_bn: bool = False,
-                    amp_enabled: bool = False, scaler=None):
+                    amp_enabled: bool = False, scaler=None, accum_iter: int = 1):
     model.train()
     criterion.train()
+    accum_iter = max(1, int(accum_iter))
     if freeze_bn:
         for module in model.modules():
             if isinstance(module, torch.nn.modules.batchnorm._BatchNorm):
@@ -102,7 +103,8 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
     header = 'Epoch: [{}]'.format(epoch)
     print_freq = 10
 
-    for samples, targets in metric_logger.log_every(data_loader, print_freq, header):
+    optimizer.zero_grad(set_to_none=True)
+    for step, (samples, targets) in enumerate(metric_logger.log_every(data_loader, print_freq, header)):
         samples = samples.to(device)
         targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
         gt_points = [target['points'] for target in targets]
@@ -130,20 +132,25 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
             print(loss_dict_reduced)
             sys.exit(1)
         
-        optimizer.zero_grad()
+        should_step = (step + 1) % accum_iter == 0 or (step + 1) == len(data_loader)
+        losses_to_backward = losses / accum_iter
         if amp_enabled and scaler is not None:
-            scaler.scale(losses).backward()
-            if max_norm > 0:
-                scaler.unscale_(optimizer)
-                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm)
-            scaler.step(optimizer)
-            scaler.update()
+            scaler.scale(losses_to_backward).backward()
+            if should_step:
+                if max_norm > 0:
+                    scaler.unscale_(optimizer)
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm)
+                scaler.step(optimizer)
+                scaler.update()
+                optimizer.zero_grad(set_to_none=True)
         else:
-            losses.backward()
-            if max_norm > 0:
-                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm)
-            optimizer.step()
-        if model_ema is not None:
+            losses_to_backward.backward()
+            if should_step:
+                if max_norm > 0:
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm)
+                optimizer.step()
+                optimizer.zero_grad(set_to_none=True)
+        if should_step and model_ema is not None:
             source_model = model_without_ddp if model_without_ddp is not None else model
             model_ema.update(source_model)
 
