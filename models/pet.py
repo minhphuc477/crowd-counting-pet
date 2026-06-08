@@ -139,13 +139,22 @@ class BasePETCount(nn.Module):
         # Prune inactive windows before the decoder (matches original PET).
         div = kwargs['div']
         div_win = window_partition(div.unsqueeze(1), window_size_h=dec_win_h, window_size_w=dec_win_w)
-        valid_div = (div_win > 0.5).sum(dim=0)[:, 0]
+        route_threshold = float(kwargs.get('div_active_threshold', 0.5))
+        route_strict = bool(kwargs.get('div_active_strict', True))
+        if route_strict:
+            pixel_active = div_win > route_threshold
+        else:
+            pixel_active = div_win >= route_threshold
+        valid_div = pixel_active.sum(dim=0)[:, 0]
         v_idx = valid_div > 0
-        # When the split map is still near 0.5 (early training / weak split loss),
-        # strict >0.5 pruning removes every window and eval returns pred_cnt=0
-        # even though training still supervises the full query grid.
+        # If routing is still flat, keep only the strongest windows instead of the
+        # full query grid (which causes pred_cnt ~= image_h/8 * image_w/8).
         if not bool(v_idx.any().item()):
-            v_idx = torch.ones_like(valid_div, dtype=torch.bool)
+            window_scores = div_win.squeeze(-1).mean(dim=0)
+            keep = max(1, int(math.ceil(0.25 * window_scores.shape[0])))
+            _, top_idx = torch.topk(window_scores, k=keep)
+            v_idx = torch.zeros(window_scores.shape[0], dtype=torch.bool, device=div.device)
+            v_idx[top_idx] = True
         query_embed_win = query_embed_win[:, v_idx]
         query_feats_win = query_feats_win[:, v_idx]
         points_queries_win = points_queries_win[:, v_idx].reshape(-1, 2)
@@ -1180,14 +1189,26 @@ class PET(nn.Module):
     def get_score_mask(self, scores):
         if self.score_threshold >= 0:
             threshold = torch.as_tensor(self.score_threshold, dtype=scores.dtype, device=scores.device)
+            mask = scores > threshold
+            # Untrained classifiers keep most queries near 0.5 and pass a fixed
+            # threshold, which explodes pred_cnt to the full query grid.
+            if scores.numel() > 32:
+                pass_frac = mask.sum().float() / float(scores.numel())
+                if pass_frac > 0.25 and float(scores.max().item()) <= 0.55:
+                    q = torch.quantile(
+                        scores.detach().reshape(-1).float(),
+                        0.995,
+                    ).to(dtype=scores.dtype, device=scores.device)
+                    q = q.clamp(threshold + 0.02, 0.99)
+                    mask = scores > q
+            return mask
+        flat = scores.detach().reshape(-1).float()
+        if flat.numel() == 0:
+            threshold = torch.as_tensor(0.5, dtype=scores.dtype, device=scores.device)
         else:
-            flat = scores.detach().reshape(-1).float()
-            if flat.numel() == 0:
-                threshold = torch.as_tensor(0.5, dtype=scores.dtype, device=scores.device)
-            else:
-                threshold = torch.quantile(flat, 0.95).to(dtype=scores.dtype, device=scores.device)
-                threshold = threshold.clamp(0.05, 0.95)
-        return scores >= threshold
+            threshold = torch.quantile(flat, 0.95).to(dtype=scores.dtype, device=scores.device)
+            threshold = threshold.clamp(0.05, 0.95)
+        return scores > threshold
 
     def apply_eval_point_nms(self, pred_logits, pred_points, pred_offsets, points_queries, scores, img_shape):
         radius = float(self.eval_nms_radius)
@@ -1295,6 +1316,7 @@ class PET(nn.Module):
         split_map_dense = split_map_raw_dense
         split_map_sparse = 1 - split_map_raw_sparse
         split_threshold = self.get_split_threshold(split_map)
+        route_threshold = float(split_threshold.item() if torch.is_tensor(split_threshold) else split_threshold)
         split_mask_sparse = split_map_raw_sparse <= split_threshold
         split_mask_dense = split_map_raw_dense > split_threshold
         sparse_active = 'train' in kwargs or bool(split_mask_sparse.any().item())
@@ -1306,6 +1328,8 @@ class PET(nn.Module):
         if sparse_active:
             sparse_kwargs = dict(kwargs)
             sparse_kwargs['div'] = split_map_sparse.reshape(bs, sp_h, sp_w)
+            sparse_kwargs['div_active_threshold'] = 1.0 - route_threshold
+            sparse_kwargs['div_active_strict'] = False
             sparse_kwargs['dec_win_size'] = list(self.sparse_dec_win_size)
             outputs_sparse = self.quadtree_sparse(samples, features, context_info, **sparse_kwargs)
         else:
@@ -1315,6 +1339,8 @@ class PET(nn.Module):
         if dense_active:
             dense_kwargs = dict(kwargs)
             dense_kwargs['div'] = split_map_dense.reshape(bs, ds_h, ds_w)
+            dense_kwargs['div_active_threshold'] = route_threshold
+            dense_kwargs['div_active_strict'] = True
             dense_kwargs['dec_win_size'] = list(self.dense_dec_win_size)
             outputs_dense = self.quadtree_dense(samples, features, context_info, **dense_kwargs)
         else:
