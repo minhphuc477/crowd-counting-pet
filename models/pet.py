@@ -59,6 +59,11 @@ class BasePETCount(nn.Module):
         hidden_dim = args.hidden_dim
 
         self.class_embed = nn.Linear(hidden_dim, num_classes + 1)
+        prior_prob = 0.01
+        bias_value = -math.log((1 - prior_prob) / prior_prob)
+        nn.init.constant_(self.class_embed.bias, 0.0)
+        self.class_embed.bias.data[1:] = bias_value
+        
         self.coord_embed = MLP(hidden_dim, hidden_dim, 2, 3)
 
         self.pq_stride = args.sparse_stride if quadtree_layer == 'sparse' else args.dense_stride
