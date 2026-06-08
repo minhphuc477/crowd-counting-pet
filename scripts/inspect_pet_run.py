@@ -36,6 +36,7 @@ KEY_ARGS = (
     'score_threshold',
     'eval_nms_radius',
     'eval_branch_gate',
+    'eval_soft_split_gate',
     'split_threshold',
     'patch_size',
     'patch_size_choices',
