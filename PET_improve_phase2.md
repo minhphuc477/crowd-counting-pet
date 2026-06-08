@@ -91,10 +91,10 @@ if scale * min_size >= self.patch_size:
 Additionally, enable multi-scale crop training which the fork supports:
 
 ```bash
---patch_size_choices 192,256,320
+--patch_size_choices 192,256
 ```
 
-This trains the model on three different crop scales, teaching it to handle both sparse and very dense regions. The model will see the same crowd at different scales and learn density-invariant features.
+This trains the model on two crop scales that still fit the current PET padding behavior on a 15 GB GPU. Do not use `320` as a default: with the current 256-multiple padding path, 320 crops can become 512-padded tensors and trigger OOM.
 
 **Expected gain:** 0.5–1.5 MAE. Small individually but compounds with everything else.
 
@@ -115,11 +115,16 @@ Your fork already supports this through the timm adapter. The `lite_fpn` adapter
 **Training command:**
 
 ```bash
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+export DATA=./data/ShanghaiTech/part_A
+export BATCH=1
+export ACCUM=4
+
 CUDA_VISIBLE_DEVICES=0 python main.py \
   --backbone convnextv2_base \
   --timm_adapter lite_fpn \
   --dataset_file SHA \
-  --data_path ./data/ShanghaiTech/part_A \
+  --data_path "$DATA" \
   --epochs 1500 \
   --lr_scheduler warmup_hold_cosine \
   --warmup_epochs 20 \
@@ -131,9 +136,11 @@ CUDA_VISIBLE_DEVICES=0 python main.py \
   --weight_decay 1e-4 \
   --clip_max_norm 0.1 \
   --ema_decay 0.9999 \
-  --batch_size 4 \
+  --batch_size "$BATCH" \
+  --accum_iter "$ACCUM" \
+  --amp \
   --patch_size 256 \
-  --patch_size_choices 192,256,320 \
+  --patch_size_choices 192,256 \
   --quadtree_loss_coef 0.5 \
   --split_count_threshold 2 \
   --split_pos_weight 2.0 \
@@ -148,9 +155,9 @@ CUDA_VISIBLE_DEVICES=0 python main.py \
 
 **Why `ema_decay=0.9999`:** EMA with high decay smooths out the noisy SHA-A gradient landscape. The EMA model is evaluated at each checkpoint, and because it is a running average of 1000+ recent models, it is substantially less noisy than the raw model. This alone is worth ~0.5 MAE.
 
-**Why `batch_size=4`:** ConvNeXtV2-Base needs more GPU memory than VGG. Batch size 4 with gradient accumulation (`--accum_iter 2`) gives effective batch size 8, matching the paper.
+**Why configurable batch size:** ConvNeXtV2-Base needs much more GPU memory than VGG. On the 15 GB card, start with `BATCH=1 ACCUM=4` and only raise `BATCH` after the startup log confirms the resolved `batch config`.
 
-**Expected MAE:** 47–49. This is verified against published results of ConvNeXtV2-Base on crowd counting benchmarks in the literature. The combination of stronger features + fixed split supervision + EMA should reliably land below 49.
+**Expected MAE target:** 47–49 if pretrained ConvNeXtV2 features transfer cleanly and the split map becomes stable. Treat this as the next high-ceiling experiment, not a guaranteed result.
 
 ---
 
@@ -180,11 +187,16 @@ CUDA_VISIBLE_DEVICES=0 python main.py \
 This is the single command that combines everything:
 
 ```bash
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+export DATA=./data/ShanghaiTech/part_A
+export BATCH=1
+export ACCUM=4
+
 CUDA_VISIBLE_DEVICES=0 python main.py \
   --backbone convnextv2_base \
   --timm_adapter lite_fpn \
   --dataset_file SHA \
-  --data_path ./data/ShanghaiTech/part_A \
+  --data_path "$DATA" \
   --epochs 1500 \
   --lr_scheduler warmup_hold_cosine \
   --warmup_epochs 20 \
@@ -196,10 +208,11 @@ CUDA_VISIBLE_DEVICES=0 python main.py \
   --weight_decay 1e-4 \
   --clip_max_norm 0.1 \
   --ema_decay 0.9999 \
-  --batch_size 4 \
-  --accum_iter 2 \
+  --batch_size "$BATCH" \
+  --accum_iter "$ACCUM" \
+  --amp \
   --patch_size 256 \
-  --patch_size_choices 192,256,320 \
+  --patch_size_choices 192,256 \
   --quadtree_loss_coef 0.5 \
   --split_count_threshold 2 \
   --split_pos_weight 2.0 \
@@ -256,14 +269,14 @@ These are time sinks that will not improve results, based on everything discover
 | + Fixed scale augmentation (Phase 2)   | 50–52 | Augmentation fix + multi-scale crops |
 | + ConvNeXtV2 backbone (Phase 3)        | 47–49 | The primary lever                    |
 | + APG loss (Phase 4)                   | 46–48 | Auxiliary point supervision          |
-| + TTA at inference (Phase 5)           | 45–47 | Free 0.5–1 MAE, no retraining       |
+| + TTA at inference (Phase 5)           | TBD   | Ablation only; flip TTA worsened the current APG+LC run |
 | + Hungarian loss replacement (Phase 6) | 44–46 | OT or Bayesian loss                  |
 
 The gap between "honest VGG floor" (53–55) and "target" (44–46) is ~10 MAE points. The backbone change accounts for ~5 of those points. Everything else is refinement on top.
 
 ---
 
-## Phase 5: Test-Time Augmentation (Free MAE, Zero Retraining)
+## Phase 5: Test-Time Augmentation (Ablation Only, Zero Retraining)
 
 **What:** Run inference on each test image multiple times with different augmentations and average the predicted counts. Your fork already has a `--tta_flip` flag for horizontal flip TTA.
 
@@ -287,7 +300,7 @@ For point-based models like PET, TTA is applied as:
 
 The per-image MAE shown in your diagnostic (errors of +215, -77) are partially noise from the model seeing an image from only one angle. TTA reduces this noise.
 
-**Expected gain:** 0.5–1.0 MAE. Free — no retraining needed.
+**Expected gain:** unknown. Horizontal flip TTA worsened the current APG+LC checkpoint, so use this only as a post-training sweep on a stronger checkpoint.
 
 **Important:** TTA is only applied at inference. It does not change training. Run it on your Phase 3 or Phase 4 checkpoint.
 
@@ -364,11 +377,31 @@ def bayesian_loss(pred_points, pred_scores, gt_points, sigma=8.0):
 
 **Which to use:** Start with Bayesian Loss (Option B). It is simpler, has fewer hyperparameters (just sigma), and is validated specifically on SHA. OT Loss is more theoretically principled but requires tuning epsilon and num_iters.
 
-**Add to training:**
+**Add to training, conservative option first:**
+
+Use this when Bayesian is combined with APG+GT split supervision. It keeps the
+Bayesian term auxiliary instead of letting it dominate the PET/APG objective.
+
+```bash
+--bayesian_loss_coef 0.05 \
+--bayesian_sigma 8.0 \
+--bayesian_bg_coef 0.02 \
+--bayesian_loss_gate detach \
+--bayesian_start_epoch 150
+```
+
+**Aggressive original option:**
+
+Keep this as an ablation, not as the first run. It is closer to replacing the
+matching objective and may be useful if the conservative run underfits, but it
+can destabilize APG+LC.
 
 ```bash
 --bayesian_loss_coef 1.0 \
---bayesian_sigma 8.0
+--bayesian_sigma 8.0 \
+--bayesian_bg_coef 0.05 \
+--bayesian_loss_gate detach \
+--bayesian_start_epoch 150
 ```
 
 **Expected gain over Phase 4:** 1–2 MAE. The smoother gradient signal from Bayesian/OT loss particularly helps with SHA's 300-image limitation — the Hungarian matcher's discrete assignments are too noisy at this dataset scale.
@@ -411,10 +444,10 @@ Work through these strictly in order. Do not skip phases. Each phase must be val
 | 2        | Scale aug fix         | Fix SHA.py +`--patch_size_choices` | 5 lines        | 0.5–1.5 MAE  |
 | 3        | ConvNeXtV2 backbone   | `--backbone convnextv2_base`       | 0 code changes | 4–6 MAE      |
 | 4        | APG loss              | `--apg_loss_coef 1.0`              | 0 code changes | 0.5–1 MAE    |
-| 5        | TTA at inference      | `--tta_flip --tta_scales`          | 0 code changes | 0.5–1 MAE    |
+| 5        | TTA at inference      | `--tta_flip --tta_scales`          | 0 code changes | TBD          |
 | 6        | Bayesian loss         | Add bayesian_loss.py                 | ~50 lines      | 1–2 MAE      |
 | 7        | Soft split map        | Modify split head forward            | ~20 lines      | 1–2 MAE      |
 
-**Total expected MAE with all phases:** 44–47, reliably and reproducibly, without being hardware or seed dependent.
+**Total expected MAE target with all phases:** 44–47 if the ConvNeXtV2 transfer and smoother matching losses help. The current measured floor is still APG+LC at 50.43, so each extra phase must be validated instead of assumed.
 
 **The key difference from the original 49:** All gains in phases 1–7 come from structural improvements that are robust to PyTorch version, hardware, and random seed. None of them depend on getting lucky with a particular optimization trajectory on a small dataset. That is what makes them worth pursuing — they are real improvements, not noise.z

@@ -223,8 +223,7 @@ Validated smoke checks:
   `bayesian_loss_coef` under `--resume_model_only`.
 - `--auto_backbone_recipe` no longer overrides an explicitly supplied
   `--batch_size`.
-- Training startup prints `batch config: batch_size=... accum_iter=...
-  effective_batch_size=... train_batches=...`.
+- Training startup prints `batch config: batch_size=... accum_iter=... effective_batch_size=... train_batches=...`.
 - Dataset/TTA helper smoke check passed.
 - Bayesian loss finite/backward smoke check passed.
 - Soft split score-gate smoke check passed.
@@ -253,7 +252,7 @@ repo behavior and previous failed trials:
 ```bash
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 export DATA=./data/ShanghaiTech/part_A
-export BATCH=1
+export BATCH=2
 export ACCUM=4
 
 CUDA_VISIBLE_DEVICES=0 python main.py \
@@ -280,7 +279,7 @@ CUDA_VISIBLE_DEVICES=0 python main.py \
   --clip_max_norm 0.1 \
   --ema_decay 0.9999 \
   --patch_size 256 \
-  --patch_size_choices 256 \
+  --patch_size_choices 192,256 \
   --crop_attempts 12 \
   --min_crop_points 1 \
   --split_loss_variant gt \
@@ -305,9 +304,14 @@ split + APG run is healthy by epoch 300-600.
 For a 15 GB GPU, start with `BATCH=1 ACCUM=4`. If memory allows, try
 `BATCH=2 ACCUM=4` or `BATCH=4 ACCUM=2`. The first log lines should print the
 resolved batch config; for SHA, `BATCH=1` should be about 300 train batches,
-not 37.
+not 37. Do not include `320` unless you are ready for 512-padded crops.
 
 ### Bayesian ablation
+
+This keeps the old high-weight Bayesian idea as an option. The command below is
+the conservative combined-loss version; to run the aggressive original variant,
+change `--bayesian_loss_coef 0.05` to `--bayesian_loss_coef 1.0` and set a
+different `--output_dir`.
 
 ```bash
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
@@ -339,7 +343,7 @@ CUDA_VISIBLE_DEVICES=0 python main.py \
   --clip_max_norm 0.1 \
   --ema_decay 0.9999 \
   --patch_size 256 \
-  --patch_size_choices 256 \
+  --patch_size_choices 192,256 \
   --crop_attempts 12 \
   --min_crop_points 1 \
   --split_loss_variant gt \

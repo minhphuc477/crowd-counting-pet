@@ -90,10 +90,10 @@ if scale * min_size >= self.patch_size:
 Additionally, enable multi-scale crop training which the fork supports:
 
 ```bash
---patch_size_choices 192,256,320
+--patch_size_choices 192,256
 ```
 
-This trains the model on three different crop scales, teaching it to handle both sparse and very dense regions. The model will see the same crowd at different scales and learn density-invariant features.
+This trains the model on two crop scales that still fit the current PET padding behavior on a 15 GB GPU. Do not use `320` as a default: with the current 256-multiple padding path, 320 crops can become 512-padded tensors and trigger OOM.
 
 **Expected gain:** 0.5–1.5 MAE. Small individually but compounds with everything else.
 
@@ -114,11 +114,16 @@ Your fork already supports this through the timm adapter. The `lite_fpn` adapter
 **Training command:**
 
 ```bash
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+export DATA=./data/ShanghaiTech/part_A
+export BATCH=1
+export ACCUM=4
+
 CUDA_VISIBLE_DEVICES=0 python main.py \
   --backbone convnextv2_base \
   --timm_adapter lite_fpn \
   --dataset_file SHA \
-  --data_path ./data/ShanghaiTech/part_A \
+  --data_path "$DATA" \
   --epochs 1500 \
   --lr_scheduler warmup_hold_cosine \
   --warmup_epochs 20 \
@@ -130,9 +135,11 @@ CUDA_VISIBLE_DEVICES=0 python main.py \
   --weight_decay 1e-4 \
   --clip_max_norm 0.1 \
   --ema_decay 0.9999 \
-  --batch_size 4 \
+  --batch_size "$BATCH" \
+  --accum_iter "$ACCUM" \
+  --amp \
   --patch_size 256 \
-  --patch_size_choices 192,256,320 \
+  --patch_size_choices 192,256 \
   --quadtree_loss_coef 0.5 \
   --split_count_threshold 2 \
   --split_pos_weight 2.0 \
@@ -147,9 +154,9 @@ CUDA_VISIBLE_DEVICES=0 python main.py \
 
 **Why `ema_decay=0.9999`:** EMA with high decay smooths out the noisy SHA-A gradient landscape. The EMA model is evaluated at each checkpoint, and because it is a running average of 1000+ recent models, it is substantially less noisy than the raw model. This alone is worth ~0.5 MAE.
 
-**Why `batch_size=4`:** ConvNeXtV2-Base needs more GPU memory than VGG. Batch size 4 with gradient accumulation (`--accum_iter 2`) gives effective batch size 8, matching the paper.
+**Why configurable batch size:** ConvNeXtV2-Base needs much more GPU memory than VGG. On the 15 GB card, start with `BATCH=1 ACCUM=4` and only raise `BATCH` after the startup log confirms the resolved `batch config`.
 
-**Expected MAE:** 47–49. This is verified against published results of ConvNeXtV2-Base on crowd counting benchmarks in the literature. The combination of stronger features + fixed split supervision + EMA should reliably land below 49.
+**Expected MAE target:** 47–49 if pretrained ConvNeXtV2 features transfer cleanly and the split map becomes stable. Treat this as the next high-ceiling experiment, not a guaranteed result.
 
 ---
 
@@ -179,11 +186,16 @@ CUDA_VISIBLE_DEVICES=0 python main.py \
 This is the single command that combines everything:
 
 ```bash
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+export DATA=./data/ShanghaiTech/part_A
+export BATCH=1
+export ACCUM=4
+
 CUDA_VISIBLE_DEVICES=0 python main.py \
   --backbone convnextv2_base \
   --timm_adapter lite_fpn \
   --dataset_file SHA \
-  --data_path ./data/ShanghaiTech/part_A \
+  --data_path "$DATA" \
   --epochs 1500 \
   --lr_scheduler warmup_hold_cosine \
   --warmup_epochs 20 \
@@ -195,10 +207,11 @@ CUDA_VISIBLE_DEVICES=0 python main.py \
   --weight_decay 1e-4 \
   --clip_max_norm 0.1 \
   --ema_decay 0.9999 \
-  --batch_size 4 \
-  --accum_iter 2 \
+  --batch_size "$BATCH" \
+  --accum_iter "$ACCUM" \
+  --amp \
   --patch_size 256 \
-  --patch_size_choices 192,256,320 \
+  --patch_size_choices 192,256 \
   --quadtree_loss_coef 0.5 \
   --split_count_threshold 2 \
   --split_pos_weight 2.0 \
@@ -236,7 +249,7 @@ These are time sinks that will not improve results, based on everything discover
 
 **Do not try to reproduce the paper's 49 on VGG.** It requires PyTorch 1.12 + their exact hardware. On PyTorch 2.x, the cuDNN kernel ordering changes the optimization trajectory permanently. Not worth the effort.
 
-**Do not tune the score threshold.** The diagnostic proved the model already filters internally. The threshold is not the bottleneck.
+**Do not treat score-threshold tuning as the main research lever.** Your sweeps improved the APG+LC checkpoint from roughly 50.9 to 50.43 MAE, so it is worth sweeping after training. It is not enough by itself to break through 49.
 
 **Do not add more training epochs to VGG.** The model is already at its local minimum at epoch 1500. More epochs at the same LR will not move it.
 
