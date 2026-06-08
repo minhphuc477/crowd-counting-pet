@@ -146,7 +146,18 @@ def load_data(img_gt_path, train):
     width, height = img.size
     points = load_points(gt_path, image_size=(height, width))
     if points.shape[0] == 0:
-        raise ValueError(f'Annotation file has zero valid points: {gt_path}')
+        # Annotation file exists but all points fell outside the image boundary
+        # after coordinate filtering.  Crashing the DataLoader worker would
+        # silently stall an epoch; warn instead and return a synthetic point at
+        # (0, 0) so the caller's crop logic can produce a valid (empty) crop.
+        import warnings
+        warnings.warn(
+            f'Annotation file has zero valid points after boundary filtering: {gt_path}. '
+            f'Returning a synthetic point at (0, 0) so training can continue.',
+            UserWarning,
+            stacklevel=2,
+        )
+        points = np.zeros((1, 2), dtype=np.float32)
     return img, points
 
 
