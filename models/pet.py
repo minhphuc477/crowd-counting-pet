@@ -1111,8 +1111,11 @@ class PET(nn.Module):
         return split_target
 
     def balanced_binary_loss(self, pred, target, pos_weight=1.0, neg_weight=1.0, eps=1e-6):
-        pred = pred.clamp(eps, 1.0 - eps)
-        raw_loss = F.binary_cross_entropy(pred, target, reduction='none')
+        # This receives sigmoid probabilities, not logits. Avoid
+        # F.binary_cross_entropy here because PyTorch rejects it under AMP.
+        pred = pred.float().clamp(eps, 1.0 - eps)
+        target = target.to(device=pred.device, dtype=pred.dtype)
+        raw_loss = -(target * pred.log() + (1.0 - target) * (1.0 - pred).log())
         pos_mask = target >= 0.5
         neg_mask = ~pos_mask
         loss = raw_loss.sum() * 0.0
