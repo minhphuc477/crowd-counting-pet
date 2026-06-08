@@ -252,7 +252,7 @@ repo behavior and previous failed trials:
 ```bash
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 export DATA=./data/ShanghaiTech/part_A
-export BATCH=2
+export BATCH=12
 export ACCUM=4
 
 CUDA_VISIBLE_DEVICES=0 python main.py \

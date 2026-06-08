@@ -141,6 +141,11 @@ class BasePETCount(nn.Module):
         div_win = window_partition(div.unsqueeze(1), window_size_h=dec_win_h, window_size_w=dec_win_w)
         valid_div = (div_win > 0.5).sum(dim=0)[:, 0]
         v_idx = valid_div > 0
+        # When the split map is still near 0.5 (early training / weak split loss),
+        # strict >0.5 pruning removes every window and eval returns pred_cnt=0
+        # even though training still supervises the full query grid.
+        if not bool(v_idx.any().item()):
+            v_idx = torch.ones_like(valid_div, dtype=torch.bool)
         query_embed_win = query_embed_win[:, v_idx]
         query_feats_win = query_feats_win[:, v_idx]
         points_queries_win = points_queries_win[:, v_idx].reshape(-1, 2)
