@@ -147,6 +147,7 @@ def get_args_parser():
     parser.add_argument('--score_threshold', default=0.5, type=float)
     parser.add_argument('--eval_nms_radius', default=0.0, type=float)
     parser.add_argument('--eval_branch_gate', default='none', choices=('none', 'query', 'pred'))
+    parser.add_argument('--eval_soft_split_gate', default='none', choices=('none', 'query', 'pred'))
 
     # dataset parameters
     parser.add_argument('--dataset_file', default="SHA")
@@ -210,7 +211,8 @@ def merge_checkpoint_args(args, checkpoint):
         'resume', 'device', 'vis_dir', 'results_file', 'data_path', 'dataset_file',
         'eval_max_size', 'num_workers', 'seed',
         'override_score_threshold', 'override_split_threshold', 'override_split_threshold_quantile',
-        'checkpoint_model_key', 'deterministic', 'tta_flip', 'tta_scales', 'eval_nms_radius', 'eval_branch_gate',
+        'checkpoint_model_key', 'deterministic', 'tta_flip', 'tta_scales',
+        'eval_nms_radius', 'eval_branch_gate', 'eval_soft_split_gate',
         'eval_protocol', 'resume_allow_arch_change',
     }
     if getattr(args, 'resume_allow_arch_change', False):
@@ -379,6 +381,7 @@ def main(args):
             'tta_scales': list(tta_scales),
             'eval_nms_radius': float(getattr(args, 'eval_nms_radius', 0.0)),
             'eval_branch_gate': getattr(args, 'eval_branch_gate', 'none'),
+            'eval_soft_split_gate': getattr(args, 'eval_soft_split_gate', 'none'),
         }, indent=2) + "\n", encoding="utf-8")
         print(f'eval results saved to: {results_file}')
 
