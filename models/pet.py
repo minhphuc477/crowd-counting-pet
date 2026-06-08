@@ -1225,8 +1225,8 @@ class PET(nn.Module):
         # Use an adaptive cap instead of a fixed keep ratio so counts still move
         # with confidence improvements across epochs.
         if score_std < 0.03 and score_max <= 0.75 and flat.numel() > 32:
-            dynamic_cap = 0.003 + 0.06 * max(score_max - 0.5, 0.0) + 0.8 * score_std
-            dynamic_cap = max(0.003, min(dynamic_cap, 0.05))
+            dynamic_cap = 0.02 + 0.20 * max(score_max - 0.5, 0.0) + 1.5 * score_std
+            dynamic_cap = max(0.02, min(dynamic_cap, 0.20))
             adaptive_floor = max(float(threshold.item()), 0.53)
             adaptive_floor = max(adaptive_floor, 0.5 + 6.0 * score_std)
             adaptive_floor = min(adaptive_floor, 0.99)
@@ -1245,8 +1245,8 @@ class PET(nn.Module):
         if fixed_th is not None and flat.numel() > 32:
             pass_frac = mask.sum().float() / float(flat.numel())
             if pass_frac > 0.20 and score_max <= 0.75:
-                leak_cap = 0.005 + 0.04 * max(score_max - fixed_th, 0.0)
-                leak_cap = max(0.005, min(leak_cap, 0.08))
+                leak_cap = 0.03 + 0.20 * max(score_max - fixed_th, 0.0)
+                leak_cap = max(0.03, min(leak_cap, 0.25))
                 mask = _topk_mask(leak_cap)
         return mask
 
