@@ -144,6 +144,19 @@ ARCHITECTURE_OVERRIDE_KEYS = {
     'fusion_mhf_spatial_kernel',
     'fusion_mhf_output_activation',
     'vgg_fpn_main_lr',
+    'msff_ca_mode',
+    'msff_ca_stacks',
+    'msff_ca_dilations',
+    'msff_ca_reduction',
+    'msff_ca_spatial_kernel',
+    'msff_ca_attn_loss_coef',
+    'msff_ca_attn_sigma',
+    'msff_ca_attn_weight_8x',
+    'msff_ca_attn_weight_4x',
+    'msff_ca_attn_pos_weight',
+    'msff_ca_attn_neg_weight',
+    'msff_ca_attn_start_epoch',
+    'msff_ca_attn_mid_dim',
 }
 
 
@@ -230,6 +243,33 @@ def get_args_parser():
                         help='spatial kernel size for VMambaCC-style MSEM')
     parser.add_argument('--fusion_mhf_output_activation', default='none', choices=('none', 'sigmoid'),
                         help='none follows the VMambaCC paper equation; sigmoid is a bounded ablation')
+    parser.add_argument('--msff_ca_mode', default='none', choices=('none', 'msca', 'attn', 'full'),
+                        help='multi-scale feature fusion + convolutional attention after input_proj; '
+                             'msca=DCAM only, attn=channel+spatial attention, full=both')
+    parser.add_argument('--msff_ca_stacks', default=1, type=int,
+                        help='number of stacked DCAM blocks when --msff_ca_mode includes msca')
+    parser.add_argument('--msff_ca_dilations', default='2,4,6', type=str,
+                        help='comma-separated dilation rates for DCAM branches')
+    parser.add_argument('--msff_ca_reduction', default=4, type=int,
+                        help='channel reduction ratio inside convolutional attention')
+    parser.add_argument('--msff_ca_spatial_kernel', default=7, type=int,
+                        help='spatial attention kernel size for --msff_ca_mode attn/full')
+    parser.add_argument('--msff_ca_attn_loss_coef', default=0.0, type=float,
+                        help='auxiliary SAM-style BCE loss on MSFF-CA foreground maps from GT points')
+    parser.add_argument('--msff_ca_attn_sigma', default=8.0, type=float,
+                        help='Gaussian radius in image pixels for GT point attention targets')
+    parser.add_argument('--msff_ca_attn_weight_8x', default=1.0, type=float,
+                        help='scale weight for 8x MSFF-CA attention supervision')
+    parser.add_argument('--msff_ca_attn_weight_4x', default=0.5, type=float,
+                        help='scale weight for 4x MSFF-CA attention supervision')
+    parser.add_argument('--msff_ca_attn_pos_weight', default=1.0, type=float,
+                        help='positive-pixel weight for balanced MSFF-CA attention BCE')
+    parser.add_argument('--msff_ca_attn_neg_weight', default=0.25, type=float,
+                        help='negative-pixel weight for balanced MSFF-CA attention BCE')
+    parser.add_argument('--msff_ca_attn_start_epoch', default=-1, type=int,
+                        help='epoch to start MSFF-CA attention loss; negative uses warmup_epochs')
+    parser.add_argument('--msff_ca_attn_mid_dim', default=64, type=int,
+                        help='hidden channels in the MSFF-CA semantic attention head')
     parser.add_argument('--position_embedding', default='sine', type=str, choices=('sine', 'learned', 'fourier'),
                         help="Type of positional embedding to use on top of the image features")
     # - transformer

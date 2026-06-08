@@ -14,6 +14,7 @@ from .matcher import build_matcher
 from .backbones import *
 from .transformer import *
 from .position_encoding import build_position_encoding
+from .msff_ca import build_msff_ca_enhancer, build_point_attention_targets
 
 
 def _parse_size_pair(value, default, name):
@@ -354,6 +355,15 @@ class PET(nn.Module):
             nn.Conv2d(backbone.num_channels, hidden_dim, kernel_size=1),
             ]
         )
+        self.msff_ca_4x = build_msff_ca_enhancer(args, hidden_dim)
+        self.msff_ca_8x = build_msff_ca_enhancer(args, hidden_dim)
+        self.msff_ca_attn_loss_coef = float(getattr(args, 'msff_ca_attn_loss_coef', 0.0))
+        self.msff_ca_attn_sigma = float(getattr(args, 'msff_ca_attn_sigma', 8.0))
+        self.msff_ca_attn_weight_8x = float(getattr(args, 'msff_ca_attn_weight_8x', 1.0))
+        self.msff_ca_attn_weight_4x = float(getattr(args, 'msff_ca_attn_weight_4x', 0.5))
+        self.msff_ca_attn_pos_weight = float(getattr(args, 'msff_ca_attn_pos_weight', 1.0))
+        self.msff_ca_attn_neg_weight = float(getattr(args, 'msff_ca_attn_neg_weight', 0.25))
+        self.msff_ca_attn_start_epoch = int(getattr(args, 'msff_ca_attn_start_epoch', -1))
 
         # context encoder
         self.encode_feats = '8x'
@@ -603,6 +613,28 @@ class PET(nn.Module):
             loss_dict['loss_qd_apg'] = loss_qd_apg
             weight_dict['loss_qd_apg'] = self.qd_apg_loss_coef
             losses += loss_qd_apg * self.qd_apg_loss_coef
+        if self.msff_ca_attn_loss_coef > 0:
+            attn_start_epoch = warmup_ep if self.msff_ca_attn_start_epoch < 0 else self.msff_ca_attn_start_epoch
+            attn_active = epoch >= attn_start_epoch and 'msff_ca_attn' in outputs
+            if attn_active:
+                loss_attn_8x, loss_attn_4x = self.compute_msff_ca_attn_loss(
+                    outputs['msff_ca_attn'],
+                    targets,
+                    samples.tensors.shape[-2:],
+                )
+            else:
+                zero = outputs['split_map_raw'].sum() * 0.0
+                loss_attn_8x = zero
+                loss_attn_4x = zero
+            loss_dict['loss_msff_ca_attn_8x'] = loss_attn_8x
+            loss_dict['loss_msff_ca_attn_4x'] = loss_attn_4x
+            weight_dict['loss_msff_ca_attn_8x'] = self.msff_ca_attn_loss_coef * self.msff_ca_attn_weight_8x
+            weight_dict['loss_msff_ca_attn_4x'] = self.msff_ca_attn_loss_coef * self.msff_ca_attn_weight_4x
+            if attn_active:
+                losses += (
+                    loss_attn_8x * weight_dict['loss_msff_ca_attn_8x']
+                    + loss_attn_4x * weight_dict['loss_msff_ca_attn_4x']
+                )
 
         if self.pet_loss_variant == 'paper':
             weight_split = self.quadtree_loss_coef if epoch >= warmup_ep else 0.0
@@ -1013,6 +1045,51 @@ class PET(nn.Module):
             return F.smooth_l1_loss(pred_counts, target_counts)
         return F.l1_loss(torch.log1p(pred_counts), torch.log1p(target_counts))
 
+    def _apply_msff_ca(self, module, features, return_attn=False):
+        if return_attn and getattr(module, 'enabled', False):
+            return module(features, return_attn=True)
+        return module(features), None
+
+    def compute_msff_ca_attn_loss(self, attn_outputs, targets, img_shape):
+        img_h, img_w = img_shape
+        ref = attn_outputs.get('8x')
+        if ref is None:
+            ref = attn_outputs.get('4x')
+        if ref is None:
+            zero = torch.tensor(0.0)
+            return zero, zero
+        device = ref.device
+        dtype = ref.dtype
+        loss_8x = ref.sum() * 0.0
+        loss_4x = ref.sum() * 0.0
+
+        logits_8x = attn_outputs.get('8x')
+        if logits_8x is not None:
+            _, _, fh, fw = logits_8x.shape
+            target_8x = build_point_attention_targets(
+                targets, fh, fw, img_h, img_w, self.msff_ca_attn_sigma, device, dtype,
+            )
+            loss_8x = self.balanced_binary_loss(
+                torch.sigmoid(logits_8x),
+                target_8x,
+                pos_weight=self.msff_ca_attn_pos_weight,
+                neg_weight=self.msff_ca_attn_neg_weight,
+            )
+
+        logits_4x = attn_outputs.get('4x')
+        if logits_4x is not None:
+            _, _, fh, fw = logits_4x.shape
+            target_4x = build_point_attention_targets(
+                targets, fh, fw, img_h, img_w, self.msff_ca_attn_sigma, device, dtype,
+            )
+            loss_4x = self.balanced_binary_loss(
+                torch.sigmoid(logits_4x),
+                target_4x,
+                pos_weight=self.msff_ca_attn_pos_weight,
+                neg_weight=self.msff_ca_attn_neg_weight,
+            )
+        return loss_8x, loss_4x
+
     def build_split_targets(self, targets, split_map, img_shape):
         bs, _, split_h, split_w = split_map.shape
         img_h, img_w = img_shape
@@ -1056,9 +1133,16 @@ class PET(nn.Module):
         dense_input_embed = self.pos_embed(samples)
         kwargs['dense_input_embed'] = dense_input_embed
 
-        # feature projection
-        features['4x'] = NestedTensor(self.input_proj[0](features['4x'].tensors), features['4x'].mask)
-        features['8x'] = NestedTensor(self.input_proj[1](features['8x'].tensors), features['8x'].mask)
+        # feature projection + multi-scale fusion / convolutional attention
+        need_msff_attn = 'train' in kwargs and self.msff_ca_attn_loss_coef > 0
+        proj_4x = self.input_proj[0](features['4x'].tensors)
+        proj_8x = self.input_proj[1](features['8x'].tensors)
+        feat_4x, attn_logits_4x = self._apply_msff_ca(self.msff_ca_4x, proj_4x, return_attn=need_msff_attn)
+        feat_8x, attn_logits_8x = self._apply_msff_ca(self.msff_ca_8x, proj_8x, return_attn=need_msff_attn)
+        features['4x'] = NestedTensor(feat_4x, features['4x'].mask)
+        features['8x'] = NestedTensor(feat_8x, features['8x'].mask)
+        if need_msff_attn:
+            kwargs['msff_ca_attn'] = {'4x': attn_logits_4x, '8x': attn_logits_8x}
 
         # forward
         if 'train' in kwargs:
@@ -1205,6 +1289,8 @@ class PET(nn.Module):
         outputs['split_threshold'] = split_threshold.detach()
         if 'train' in kwargs:
             outputs['encode_src'] = encode_src
+            if 'msff_ca_attn' in kwargs:
+                outputs['msff_ca_attn'] = kwargs['msff_ca_attn']
         return outputs
     
     def train_forward(self, samples, features, pos, **kwargs):
