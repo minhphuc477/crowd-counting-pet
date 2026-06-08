@@ -2,6 +2,15 @@ import torch
 import os
 from models import build_model
 import argparse
+import warnings
+warnings.filterwarnings("ignore")
+
+import torch.nn as nn
+old_mha_forward = nn.MultiheadAttention.forward
+def new_mha_forward(self, query, key, value, key_padding_mask=None, need_weights=False, attn_mask=None, average_attn_weights=True, is_causal=False):
+    return old_mha_forward(self, query, key, value, key_padding_mask=key_padding_mask, need_weights=False, attn_mask=attn_mask, average_attn_weights=average_attn_weights, is_causal=is_causal)
+nn.MultiheadAttention.forward = new_mha_forward
+
 
 def get_args_parser():
     parser = argparse.ArgumentParser('Set Point Query Transformer', add_help=False)
