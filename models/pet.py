@@ -402,6 +402,9 @@ class PET(nn.Module):
         self.eval_branch_gate = getattr(args, 'eval_branch_gate', 'none')
         if self.eval_branch_gate not in ('none', 'query', 'pred'):
             raise ValueError('eval_branch_gate must be one of "none", "query", or "pred"')
+        self.eval_soft_split_gate = getattr(args, 'eval_soft_split_gate', 'none')
+        if self.eval_soft_split_gate not in ('none', 'query', 'pred'):
+            raise ValueError('eval_soft_split_gate must be one of "none", "query", or "pred"')
         self.pet_loss_variant = getattr(args, 'pet_loss_variant', 'paper')
         self.split_loss_variant = getattr(args, 'split_loss_variant', 'auto')
         if self.split_loss_variant == 'auto':
@@ -1227,6 +1230,34 @@ class PET(nn.Module):
             return split_values > threshold
         raise ValueError(f'Unsupported branch: {branch}')
 
+    def apply_eval_soft_split_gate(self, output, split_map, branch, scores):
+        mode = self.eval_soft_split_gate
+        if mode == 'none' or output is None or scores.numel() == 0:
+            return scores
+        if mode == 'query':
+            points = output['points_queries']
+        else:
+            points = output['pred_points']
+        points = points.to(device=split_map.device, dtype=split_map.dtype).clamp(0.0, 1.0)
+        grid = torch.stack(
+            [points[:, 1] * 2.0 - 1.0, points[:, 0] * 2.0 - 1.0],
+            dim=-1,
+        ).view(1, -1, 1, 2)
+        split_values = F.grid_sample(
+            split_map[:1],
+            grid,
+            mode='bilinear',
+            padding_mode='border',
+            align_corners=False,
+        ).view_as(scores).to(device=scores.device, dtype=scores.dtype)
+        if branch == 'sparse':
+            responsibility = 1.0 - split_values
+        elif branch == 'dense':
+            responsibility = split_values
+        else:
+            raise ValueError(f'Unsupported branch: {branch}')
+        return scores * responsibility.clamp(0.0, 1.0)
+
     def pet_forward(self, samples, features, pos, **kwargs):
         # context encoding
         src, mask = features[self.encode_feats].decompose()
@@ -1305,7 +1336,8 @@ class PET(nn.Module):
 
         if out_sparse is not None:
             out_sparse_scores = torch.nn.functional.softmax(out_sparse['pred_logits'], -1)[..., 1]
-            index_sparse = self.get_score_mask(out_sparse_scores).to(out_sparse['pred_logits'].device)
+            out_sparse_eval_scores = self.apply_eval_soft_split_gate(out_sparse, outputs['split_map_raw'], 'sparse', out_sparse_scores)
+            index_sparse = self.get_score_mask(out_sparse_eval_scores).to(out_sparse['pred_logits'].device)
             sparse_gate = self.get_eval_branch_gate_mask(out_sparse, outputs['split_map_raw'], 'sparse')
             if sparse_gate is not None:
                 index_sparse = index_sparse & sparse_gate.to(device=index_sparse.device)
@@ -1313,11 +1345,12 @@ class PET(nn.Module):
             pred_points_parts.append(out_sparse['pred_points'][index_sparse])
             pred_offsets_parts.append(out_sparse['pred_offsets'][index_sparse])
             points_queries_parts.append(out_sparse['points_queries'][index_sparse])
-            score_parts.append(out_sparse_scores[index_sparse])
+            score_parts.append(out_sparse_eval_scores[index_sparse])
 
         if out_dense is not None:
             out_dense_scores = torch.nn.functional.softmax(out_dense['pred_logits'], -1)[..., 1]
-            index_dense = self.get_score_mask(out_dense_scores).to(out_dense['pred_logits'].device)
+            out_dense_eval_scores = self.apply_eval_soft_split_gate(out_dense, outputs['split_map_raw'], 'dense', out_dense_scores)
+            index_dense = self.get_score_mask(out_dense_eval_scores).to(out_dense['pred_logits'].device)
             dense_gate = self.get_eval_branch_gate_mask(out_dense, outputs['split_map_raw'], 'dense')
             if dense_gate is not None:
                 index_dense = index_dense & dense_gate.to(device=index_dense.device)
@@ -1325,7 +1358,7 @@ class PET(nn.Module):
             pred_points_parts.append(out_dense['pred_points'][index_dense])
             pred_offsets_parts.append(out_dense['pred_offsets'][index_dense])
             points_queries_parts.append(out_dense['points_queries'][index_dense])
-            score_parts.append(out_dense_scores[index_dense])
+            score_parts.append(out_dense_eval_scores[index_dense])
 
         if pred_logits_parts:
             pred_logits = torch.cat(pred_logits_parts, dim=0)

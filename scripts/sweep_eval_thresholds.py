@@ -69,11 +69,12 @@ def run_eval(
     split_threshold: float,
     eval_nms_radius: float,
     eval_branch_gate: str,
+    eval_soft_split_gate: str,
     run_dir: Path,
 ) -> dict:
     tag = (
         f"score_{score_threshold:.6g}_split_{split_threshold:.6g}_"
-        f"nms_{eval_nms_radius:.6g}_gate_{eval_branch_gate}"
+        f"nms_{eval_nms_radius:.6g}_gate_{eval_branch_gate}_soft_{eval_soft_split_gate}"
     ).replace(".", "p")
     results_file = run_dir / f"{tag}.json"
     log_file = run_dir / f"{tag}.log"
@@ -101,6 +102,8 @@ def run_eval(
         str(eval_nms_radius),
         "--eval_branch_gate",
         eval_branch_gate,
+        "--eval_soft_split_gate",
+        eval_soft_split_gate,
         "--eval_protocol",
         args.eval_protocol,
     ]
@@ -132,6 +135,7 @@ def run_eval(
         "split_threshold": float(split_threshold),
         "eval_nms_radius": float(eval_nms_radius),
         "eval_branch_gate": eval_branch_gate,
+        "eval_soft_split_gate": eval_soft_split_gate,
         "eval_protocol": args.eval_protocol,
         "tta_flip": bool(args.tta_flip),
         "tta_scales": args.tta_scales,
@@ -163,6 +167,7 @@ def write_outputs(records: list[dict], output_dir: Path) -> None:
         "split_threshold",
         "eval_nms_radius",
         "eval_branch_gate",
+        "eval_soft_split_gate",
         "eval_protocol",
         "tta_flip",
         "tta_scales",
@@ -218,6 +223,13 @@ def get_args() -> argparse.Namespace:
         help="eval-only sparse/dense split-ownership gates",
     )
     parser.add_argument(
+        "--eval_soft_split_gates",
+        nargs="+",
+        choices=("none", "query", "pred"),
+        default=["none"],
+        help="eval-only soft split responsibility gates multiplied into scores",
+    )
+    parser.add_argument(
         "--eval_protocol",
         default="pet",
         choices=("pet", "crowd_no_overlap"),
@@ -247,33 +259,37 @@ def main() -> int:
     splits = _unique_sorted(args.split_thresholds)
     radii = _unique_sorted(args.eval_nms_radii)
     gates = list(dict.fromkeys(args.eval_branch_gates))
+    soft_gates = list(dict.fromkeys(args.eval_soft_split_gates))
     records = []
-    total = len(scores) * len(splits) * len(radii) * len(gates)
+    total = len(scores) * len(splits) * len(radii) * len(gates) * len(soft_gates)
     index = 0
     for split_threshold in splits:
         for eval_branch_gate in gates:
-            for eval_nms_radius in radii:
-                for score_threshold in scores:
-                    index += 1
-                    print(
-                        f"[{index}/{total}] score_threshold={score_threshold} "
-                        f"split_threshold={split_threshold} eval_nms_radius={eval_nms_radius} "
-                        f"eval_branch_gate={eval_branch_gate}"
-                    )
-                    record = run_eval(
-                        args,
-                        score_threshold,
-                        split_threshold,
-                        eval_nms_radius,
-                        eval_branch_gate,
-                        output_dir,
-                    )
-                    records.append(record)
-                    if record.get("ok"):
-                        print(f"  mae={record['eval_mae']:.4f} mse={record['eval_mse']:.4f}")
-                    else:
-                        print(f"  failed; see {record['log_file']}")
-                    write_outputs(records, output_dir)
+            for eval_soft_split_gate in soft_gates:
+                for eval_nms_radius in radii:
+                    for score_threshold in scores:
+                        index += 1
+                        print(
+                            f"[{index}/{total}] score_threshold={score_threshold} "
+                            f"split_threshold={split_threshold} eval_nms_radius={eval_nms_radius} "
+                            f"eval_branch_gate={eval_branch_gate} "
+                            f"eval_soft_split_gate={eval_soft_split_gate}"
+                        )
+                        record = run_eval(
+                            args,
+                            score_threshold,
+                            split_threshold,
+                            eval_nms_radius,
+                            eval_branch_gate,
+                            eval_soft_split_gate,
+                            output_dir,
+                        )
+                        records.append(record)
+                        if record.get("ok"):
+                            print(f"  mae={record['eval_mae']:.4f} mse={record['eval_mse']:.4f}")
+                        else:
+                            print(f"  failed; see {record['log_file']}")
+                        write_outputs(records, output_dir)
 
     ok_records = [record for record in records if record.get("ok") and "eval_mae" in record]
     if not ok_records:
@@ -287,7 +303,8 @@ def main() -> int:
         f"score_threshold={best['score_threshold']} "
         f"split_threshold={best['split_threshold']} "
         f"eval_nms_radius={best['eval_nms_radius']} "
-        f"eval_branch_gate={best['eval_branch_gate']}"
+        f"eval_branch_gate={best['eval_branch_gate']} "
+        f"eval_soft_split_gate={best['eval_soft_split_gate']}"
     )
     print(f"Results saved to: {output_dir}")
     return 0
