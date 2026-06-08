@@ -1213,17 +1213,30 @@ class PET(nn.Module):
             threshold = torch.quantile(flat, 0.95).to(dtype=scores.dtype, device=scores.device)
             threshold = threshold.clamp(0.05, 0.95)
 
-        # Early training may collapse logits near 0.5. A fixed top-k fallback can
-        # freeze pred_cnt to almost the same value every epoch, so prefer a
-        # confidence floor that can still evolve with score dynamics.
-        if score_std < 0.015 and score_max <= 0.56 and flat.numel() > 32:
+        def _topk_mask(max_fraction):
+            max_fraction = float(max(1e-4, min(max_fraction, 1.0)))
+            k = max(1, int(math.ceil(max_fraction * flat.numel())))
+            _, top_idx = torch.topk(flat, k=k)
+            keep = torch.zeros(flat.numel(), dtype=torch.bool, device=scores.device)
+            keep[top_idx] = True
+            return keep.view_as(scores)
+
+        # Early/weak classifiers can pass most queries and explode pred_cnt.
+        # Use an adaptive cap instead of a fixed keep ratio so counts still move
+        # with confidence improvements across epochs.
+        if score_std < 0.03 and score_max <= 0.75 and flat.numel() > 32:
+            dynamic_cap = 0.003 + 0.06 * max(score_max - 0.5, 0.0) + 0.8 * score_std
+            dynamic_cap = max(0.003, min(dynamic_cap, 0.05))
             adaptive_floor = max(float(threshold.item()), 0.53)
-            adaptive_floor = max(adaptive_floor, 0.5 + 4.0 * score_std)
-            adaptive_floor = min(adaptive_floor, 0.95)
+            adaptive_floor = max(adaptive_floor, 0.5 + 6.0 * score_std)
+            adaptive_floor = min(adaptive_floor, 0.99)
             adaptive_threshold = torch.as_tensor(adaptive_floor, dtype=scores.dtype, device=scores.device)
             mask = scores > adaptive_threshold
+            pass_frac = float(mask.sum().item()) / float(flat.numel())
+            if pass_frac > dynamic_cap:
+                return _topk_mask(dynamic_cap)
             if not bool(mask.any().item()):
-                mask = scores >= scores.max()
+                return _topk_mask(dynamic_cap)
             return mask
 
         mask = scores > threshold
@@ -1231,10 +1244,10 @@ class PET(nn.Module):
         # Partially trained head still leaking too many weak positives.
         if fixed_th is not None and flat.numel() > 32:
             pass_frac = mask.sum().float() / float(flat.numel())
-            if pass_frac > 0.20 and score_max <= 0.58:
-                q = torch.quantile(flat, 0.995).to(dtype=scores.dtype, device=scores.device)
-                q = q.clamp(fixed_th + 0.01, 0.99)
-                mask = scores > q
+            if pass_frac > 0.20 and score_max <= 0.75:
+                leak_cap = 0.005 + 0.04 * max(score_max - fixed_th, 0.0)
+                leak_cap = max(0.005, min(leak_cap, 0.08))
+                mask = _topk_mask(leak_cap)
         return mask
 
     def apply_eval_point_nms(self, pred_logits, pred_points, pred_offsets, points_queries, scores, img_shape):
