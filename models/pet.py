@@ -1186,29 +1186,48 @@ class PET(nn.Module):
         threshold = self.get_split_threshold(split_map)
         return split_map >= threshold
 
-    def get_score_mask(self, scores):
-        if self.score_threshold >= 0:
-            threshold = torch.as_tensor(self.score_threshold, dtype=scores.dtype, device=scores.device)
-            mask = scores > threshold
-            # Untrained classifiers keep most queries near 0.5 and pass a fixed
-            # threshold, which explodes pred_cnt to the full query grid.
-            if scores.numel() > 32:
-                pass_frac = mask.sum().float() / float(scores.numel())
-                if pass_frac > 0.25 and float(scores.max().item()) <= 0.55:
-                    q = torch.quantile(
-                        scores.detach().reshape(-1).float(),
-                        0.995,
-                    ).to(dtype=scores.dtype, device=scores.device)
-                    q = q.clamp(threshold + 0.02, 0.99)
-                    mask = scores > q
-            return mask
+    def _flat_score_topk_mask(self, scores, keep_ratio=0.035):
+        """Keep a small top-k slice when person scores are still near-random."""
         flat = scores.detach().reshape(-1).float()
         if flat.numel() == 0:
-            threshold = torch.as_tensor(0.5, dtype=scores.dtype, device=scores.device)
+            return torch.zeros_like(scores, dtype=torch.bool)
+        k = max(1, int(math.ceil(keep_ratio * flat.numel())))
+        _, top_idx = torch.topk(flat, k=k)
+        mask = torch.zeros(flat.numel(), dtype=torch.bool, device=scores.device)
+        mask[top_idx] = True
+        return mask.view_as(scores)
+
+    def get_score_mask(self, scores):
+        flat = scores.detach().reshape(-1).float()
+        if flat.numel() == 0:
+            return torch.zeros_like(scores, dtype=torch.bool)
+
+        score_std = float(flat.std(unbiased=False).item()) if flat.numel() > 1 else 0.0
+        score_max = float(flat.max().item())
+
+        if self.score_threshold >= 0:
+            fixed_th = float(self.score_threshold)
+            threshold = torch.as_tensor(fixed_th, dtype=scores.dtype, device=scores.device)
         else:
+            fixed_th = None
             threshold = torch.quantile(flat, 0.95).to(dtype=scores.dtype, device=scores.device)
             threshold = threshold.clamp(0.05, 0.95)
-        return scores > threshold
+
+        # Early training: logits collapse near 0.5. A fixed threshold then flips
+        # between pred_cnt=0 (scores > 0.5) and full-grid overcount (scores >= 0.5).
+        if score_std < 0.015 and score_max <= 0.56 and flat.numel() > 32:
+            return self._flat_score_topk_mask(scores)
+
+        mask = scores >= threshold
+
+        # Partially trained head still leaking too many weak positives.
+        if fixed_th is not None and flat.numel() > 32:
+            pass_frac = mask.sum().float() / float(flat.numel())
+            if pass_frac > 0.20 and score_max <= 0.58:
+                q = torch.quantile(flat, 0.995).to(dtype=scores.dtype, device=scores.device)
+                q = q.clamp(fixed_th + 0.01, 0.99)
+                mask = scores >= q
+        return mask
 
     def apply_eval_point_nms(self, pred_logits, pred_points, pred_offsets, points_queries, scores, img_shape):
         radius = float(self.eval_nms_radius)
