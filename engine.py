@@ -169,21 +169,47 @@ def _predict_count(model, samples, targets):
     return outputs, float(len(outputs_scores))
 
 
+def _ceil_to_multiple(value, multiple=256):
+    return max(multiple, int(math.ceil(float(value) / multiple)) * multiple)
+
+
+def _resize_nested_tensor(samples, scale):
+    scale = float(scale)
+    if abs(scale - 1.0) < 1e-6:
+        return samples
+    h, w = samples.tensors.shape[-2:]
+    scaled_h = max(1, int(round(h * scale)))
+    scaled_w = max(1, int(round(w * scale)))
+    pad_h = _ceil_to_multiple(scaled_h)
+    pad_w = _ceil_to_multiple(scaled_w)
+    tensors = F.interpolate(samples.tensors, size=(scaled_h, scaled_w), mode='bilinear', align_corners=False)
+    mask = F.interpolate(samples.mask[:, None].float(), size=(scaled_h, scaled_w), mode='nearest')[:, 0].to(torch.bool)
+    if pad_h != scaled_h or pad_w != scaled_w:
+        tensors = F.pad(tensors, (0, pad_w - scaled_w, 0, pad_h - scaled_h), value=0.0)
+        mask = F.pad(mask, (0, pad_w - scaled_w, 0, pad_h - scaled_h), value=True)
+    return NestedTensor(tensors, mask)
+
+
 @torch.no_grad()
-def evaluate_crowd_no_overlap(model, data_loader, device, vis_dir=None):
+def evaluate_crowd_no_overlap(model, data_loader, device, vis_dir=None, tta_flip=False, tta_scales=None):
     """P2PNet/APGCC-style full-image crowd evaluation without crop overlap.
 
     The APGCC issue #7 refers to P2PNet's evaluator. PET already evaluates full
     validation images, so this wrapper preserves that protocol while accepting
     PET targets (`points`) and its thresholded `test_forward()` output.
     """
-    return evaluate(model, data_loader, device, vis_dir=vis_dir, tta_flip=False)
+    return evaluate(model, data_loader, device, vis_dir=vis_dir, tta_flip=tta_flip, tta_scales=tta_scales)
 
 
 # evaluation
 @torch.no_grad()
-def evaluate(model, data_loader, device, epoch=0, vis_dir=None, tta_flip=False):
+def evaluate(model, data_loader, device, epoch=0, vis_dir=None, tta_flip=False, tta_scales=None):
     model.eval()
+    if tta_scales is None:
+        tta_scales = (1.0,)
+    tta_scales = tuple(dict.fromkeys(float(scale) for scale in tta_scales if float(scale) > 0))
+    if not tta_scales:
+        tta_scales = (1.0,)
 
     metric_logger = utils.MetricLogger(delimiter="  ")
     header = 'Test:'
@@ -205,13 +231,20 @@ def evaluate(model, data_loader, device, epoch=0, vis_dir=None, tta_flip=False):
         # surviving (person) queries in pred_logits, so len(outputs_scores) is
         # the predicted count — matching the original PET evaluation protocol.
         outputs_points = outputs['pred_points'][0]
-        if tta_flip:
-            flipped_samples = NestedTensor(
-                torch.flip(samples.tensors, dims=[3]),
-                torch.flip(samples.mask, dims=[2]),
-            )
-            _, predict_cnt_flip = _predict_count(model, flipped_samples, targets)
-            predict_cnt = 0.5 * (predict_cnt + predict_cnt_flip)
+        if tta_flip or any(abs(scale - 1.0) > 1e-6 for scale in tta_scales):
+            tta_counts = []
+            for scale in tta_scales:
+                scaled_samples = _resize_nested_tensor(samples, scale)
+                _, scaled_count = _predict_count(model, scaled_samples, targets)
+                tta_counts.append(scaled_count)
+                if tta_flip:
+                    flipped_samples = NestedTensor(
+                        torch.flip(scaled_samples.tensors, dims=[3]),
+                        torch.flip(scaled_samples.mask, dims=[2]),
+                    )
+                    _, flipped_count = _predict_count(model, flipped_samples, targets)
+                    tta_counts.append(flipped_count)
+            predict_cnt = float(sum(tta_counts) / len(tta_counts))
         gt_cnt = targets[0]['points'].shape[0]
 
         # compute error

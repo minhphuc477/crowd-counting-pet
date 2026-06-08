@@ -100,20 +100,7 @@ class SHA(Dataset):
 
         # random scale
         if self.train:
-            scale_range = [0.8, 1.2]           
-            min_size = min(img.shape[1:])
-            scale = random.uniform(*scale_range)
-            
-            # interpolation
-            if scale * min_size > patch_size:
-                img = F.interpolate(
-                    img.unsqueeze(0),
-                    scale_factor=scale,
-                    mode='bilinear',
-                    align_corners=False,
-                ).squeeze(0)
-                if points.shape[0] > 0:
-                    points *= scale
+            img, points = safe_random_scale(img, points, patch_size)
 
         # crop/resize patch
         if self.train:
@@ -302,6 +289,22 @@ def random_crop(img, points, patch_size=256):
         result_points[:, 0] *= fH
         result_points[:, 1] *= fW
     return result_img, result_points
+
+
+def safe_random_scale(img, points, patch_size=256, scale_range=(0.8, 1.2)):
+    """Apply scale jitter only when the scaled image can still supply a crop."""
+    scale = random.uniform(*scale_range)
+    min_size = min(img.shape[1:])
+    if scale * min_size >= patch_size:
+        img = F.interpolate(
+            img.unsqueeze(0),
+            scale_factor=scale,
+            mode='bilinear',
+            align_corners=False,
+        ).squeeze(0)
+        if points.shape[0] > 0:
+            points = points * scale
+    return img, points
 
 
 def random_crop_with_retries(img, points, patch_size=256, attempts=8, min_points=1):

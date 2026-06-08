@@ -311,6 +311,18 @@ def get_args_parser():
                         help='epoch to enable local region count; negative uses warmup_epochs')
     parser.add_argument('--region_count_end_epoch', default=-1, type=int,
                         help='epoch after which local region count turns off; negative keeps it on')
+    parser.add_argument('--bayesian_loss_coef', default=0.0, type=float,
+                        help='optional point-level Bayesian expected-count loss weight; 0 disables it')
+    parser.add_argument('--bayesian_sigma', default=8.0, type=float,
+                        help='pixel Gaussian sigma for the Bayesian point-count auxiliary')
+    parser.add_argument('--bayesian_bg_coef', default=0.05, type=float,
+                        help='background suppression weight inside the Bayesian auxiliary')
+    parser.add_argument('--bayesian_loss_gate', default='detach', choices=('none', 'detach', 'soft', 'hard'),
+                        help='quadtree gate used by Bayesian auxiliary')
+    parser.add_argument('--bayesian_start_epoch', default=-1, type=int,
+                        help='epoch to enable Bayesian auxiliary; negative uses warmup_epochs')
+    parser.add_argument('--bayesian_end_epoch', default=-1, type=int,
+                        help='epoch after which Bayesian auxiliary turns off; negative keeps it on')
     parser.add_argument('--apg_loss_coef', default=0.0, type=float,
                         help='Auxiliary Point Guidance loss weight; 0 disables it')
     parser.add_argument('--apg_pos_k', default=1, type=int,
@@ -371,6 +383,8 @@ def get_args_parser():
                         help="Relative classification weight of the no-object class")
     parser.add_argument('--pet_loss_variant', default='paper', choices=('paper', 'balanced'),
                         help='paper matches official PET; balanced enables experimental zero/negative-region losses')
+    parser.add_argument('--split_loss_variant', default='auto', choices=('auto', 'paper', 'gt', 'paper_gt'),
+                        help='split-map supervision: auto follows pet_loss_variant, paper uses PET min/max, gt uses per-cell GT BCE, paper_gt combines both')
     parser.add_argument('--negative_loss_coef', default=0.1, type=float,
                         help='extra scale for all-negative classification and split-map regions')
     parser.add_argument('--non_div_loss_coef', default=0.25, type=float,
@@ -393,6 +407,8 @@ def get_args_parser():
                         help='optional eval-only point NMS radius in pixels; 0 disables duplicate suppression')
     parser.add_argument('--eval_branch_gate', default='none', choices=('none', 'query', 'pred'),
                         help='eval-only split-aware sparse/dense ownership gate; none keeps PET concatenation')
+    parser.add_argument('--eval_soft_split_gate', default='none', choices=('none', 'query', 'pred'),
+                        help='eval-only soft split responsibility multiplied into person scores before thresholding')
     parser.add_argument('--eval_protocol', default='pet', choices=('pet', 'crowd_no_overlap'),
                         help='validation protocol used during training')
 
@@ -461,7 +477,10 @@ def apply_backbone_recipe(args):
     if recipe is None:
         return
 
+    explicit_args = set(getattr(args, '_explicit_args', set()))
     for key, tuned_value in recipe.items():
+        if key in explicit_args:
+            continue
         default_value = BASE_TRAINING_DEFAULTS.get(key)
         current_value = getattr(args, key, default_value)
         if default_value is not None and current_value == default_value:
@@ -494,12 +513,14 @@ def merge_checkpoint_args(args, checkpoint):
             'lr_scheduler', 'lr_drop', 'lr_gamma', 'warmup_epochs', 'hold_epochs',
             'min_lr', 'ema_decay',
             'score_threshold', 'split_threshold', 'split_threshold_quantile',
-            'eval_nms_radius', 'eval_branch_gate',
+            'eval_nms_radius', 'eval_branch_gate', 'eval_soft_split_gate',
         })
         explicit_args = set(getattr(args, '_explicit_args', set()))
         aux_resume_keys = {
             'region_count_loss_coef', 'region_count_grid', 'region_count_gate',
             'region_count_type', 'region_count_start_epoch', 'region_count_end_epoch',
+            'bayesian_loss_coef', 'bayesian_sigma', 'bayesian_bg_coef',
+            'bayesian_loss_gate', 'bayesian_start_epoch', 'bayesian_end_epoch',
             'apg_loss_coef', 'apg_pos_k', 'apg_point_coef', 'apg_start_epoch', 'apg_end_epoch',
             'apg_contrastive_coef', 'apg_neg_k', 'apg_margin',
             'apg_consistency_coef', 'apg_consistency_k', 'apg_consistency_sigma',
@@ -508,6 +529,7 @@ def merge_checkpoint_args(args, checkpoint):
             'ifi_neg_min_dist', 'ifi_start_epoch', 'ifi_end_epoch',
             'qd_apg_loss_coef', 'qd_apg_point_coef', 'qd_apg_suppress_coef',
             'qd_apg_start_epoch', 'qd_apg_end_epoch', 'qd_apg_route_source',
+            'split_loss_variant',
         }
         runtime_keys.update(key for key in aux_resume_keys if key in explicit_args)
         if getattr(args, 'resume_allow_arch_change', False):
@@ -755,6 +777,16 @@ def main(args):
     data_loader_val = DataLoader(dataset_val, 1, sampler=sampler_val,
                                 drop_last=False, collate_fn=utils.collate_fn, num_workers=args.num_workers,
                                 worker_init_fn=seed_worker, generator=data_loader_generator)
+    if utils.is_main_process():
+        accum_iter = max(1, int(getattr(args, 'accum_iter', 1)))
+        print(
+            'batch config:',
+            f'batch_size={args.batch_size}',
+            f'accum_iter={accum_iter}',
+            f'effective_batch_size={args.batch_size * accum_iter}',
+            f'train_samples={len(dataset_train)}',
+            f'train_batches={len(batch_sampler_train)}',
+        )
 
     # output directory and log
     output_dir = resolve_output_dir(args)

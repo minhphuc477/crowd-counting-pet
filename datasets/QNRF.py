@@ -4,13 +4,12 @@ import random
 import numpy as np
 import scipy.io as io
 import torch
-import torch.nn.functional as F
 import torchvision.transforms as standard_transforms
 from PIL import Image
 from torch.utils.data import Dataset
 
 from .image_io import load_rgb_image
-from .SHA import IMAGE_EXTENSIONS, random_crop_with_retries
+from .SHA import IMAGE_EXTENSIONS, random_crop_with_retries, safe_random_scale
 from .SHA import _parse_patch_size_choices
 
 
@@ -98,18 +97,7 @@ class QNRF(Dataset):
         patch_size = random.choice(self.patch_size_choices) if self.train else int(self.patch_size)
 
         if self.train:
-            scale_range = [0.8, 1.2]
-            min_size = min(img.shape[1:])
-            scale = random.uniform(*scale_range)
-            if scale * min_size > patch_size:
-                img = F.interpolate(
-                    img.unsqueeze(0),
-                    scale_factor=scale,
-                    mode='bilinear',
-                    align_corners=False,
-                ).squeeze(0)
-                if points.shape[0] > 0:
-                    points *= scale
+            img, points = safe_random_scale(img, points, patch_size)
 
             img, points = random_crop_with_retries(
                 img,

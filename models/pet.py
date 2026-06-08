@@ -403,6 +403,11 @@ class PET(nn.Module):
         if self.eval_branch_gate not in ('none', 'query', 'pred'):
             raise ValueError('eval_branch_gate must be one of "none", "query", or "pred"')
         self.pet_loss_variant = getattr(args, 'pet_loss_variant', 'paper')
+        self.split_loss_variant = getattr(args, 'split_loss_variant', 'auto')
+        if self.split_loss_variant == 'auto':
+            self.split_loss_variant = 'paper' if self.pet_loss_variant == 'paper' else 'paper_gt'
+        if self.split_loss_variant not in ('paper', 'gt', 'paper_gt'):
+            raise ValueError('split_loss_variant must be one of "auto", "paper", "gt", or "paper_gt"')
         self.count_loss_coef = float(getattr(args, 'count_loss_coef', 0.0))
         self.count_loss_gate = getattr(args, 'count_loss_gate', 'detach')
         if self.count_loss_gate not in ('detach', 'soft', 'hard'):
@@ -421,6 +426,14 @@ class PET(nn.Module):
             raise ValueError('region_count_type must be one of "log_l1", "l1", or "smooth_l1"')
         self.region_count_start_epoch = int(getattr(args, 'region_count_start_epoch', -1))
         self.region_count_end_epoch = int(getattr(args, 'region_count_end_epoch', -1))
+        self.bayesian_loss_coef = float(getattr(args, 'bayesian_loss_coef', 0.0))
+        self.bayesian_sigma = float(getattr(args, 'bayesian_sigma', 8.0))
+        self.bayesian_bg_coef = float(getattr(args, 'bayesian_bg_coef', 0.05))
+        self.bayesian_loss_gate = getattr(args, 'bayesian_loss_gate', 'detach')
+        if self.bayesian_loss_gate not in ('none', 'detach', 'soft', 'hard'):
+            raise ValueError('bayesian_loss_gate must be one of "none", "detach", "soft", or "hard"')
+        self.bayesian_start_epoch = int(getattr(args, 'bayesian_start_epoch', -1))
+        self.bayesian_end_epoch = int(getattr(args, 'bayesian_end_epoch', -1))
         self.apg_loss_coef = float(getattr(args, 'apg_loss_coef', 0.0))
         self.apg_pos_k = max(1, int(getattr(args, 'apg_pos_k', 1)))
         self.apg_point_coef = float(getattr(args, 'apg_point_coef', 5.0))
@@ -551,6 +564,18 @@ class PET(nn.Module):
             loss_dict['loss_region_count'] = loss_region_count
             weight_dict['loss_region_count'] = self.region_count_loss_coef
             losses += loss_region_count * self.region_count_loss_coef
+        if self.bayesian_loss_coef > 0:
+            bayesian_start_epoch = warmup_ep if self.bayesian_start_epoch < 0 else self.bayesian_start_epoch
+            bayesian_active = epoch >= bayesian_start_epoch and (
+                self.bayesian_end_epoch < 0 or epoch <= self.bayesian_end_epoch
+            )
+            if bayesian_active:
+                loss_bayesian = self.compute_bayesian_point_loss(outputs, targets)
+            else:
+                loss_bayesian = outputs['split_map_raw'].sum() * 0.0
+            loss_dict['loss_bayesian'] = loss_bayesian
+            weight_dict['loss_bayesian'] = self.bayesian_loss_coef
+            losses += loss_bayesian * self.bayesian_loss_coef
         if self.apg_loss_coef > 0:
             apg_active = epoch >= self.apg_start_epoch and (
                 self.apg_end_epoch < 0 or epoch <= self.apg_end_epoch
@@ -604,7 +629,7 @@ class PET(nn.Module):
             weight_dict['loss_qd_apg'] = self.qd_apg_loss_coef
             losses += loss_qd_apg * self.qd_apg_loss_coef
 
-        if self.pet_loss_variant == 'paper':
+        if self.split_loss_variant == 'paper':
             weight_split = self.quadtree_loss_coef if epoch >= warmup_ep else 0.0
             loss_dict['loss_split'] = loss_split_prior
             weight_dict['loss_split'] = weight_split
@@ -619,14 +644,16 @@ class PET(nn.Module):
             neg_weight=self.negative_loss_coef,
         )
         weight_split_quality = self.quadtree_loss_coef if epoch >= warmup_ep else 0.0
-        weight_split_prior = self.quadtree_prior_coef if epoch >= warmup_ep else 0.0
-        loss_dict['loss_split_quality'] = loss_split_quality
-        weight_dict['loss_split_quality'] = weight_split_quality
-        loss_dict['loss_split_prior'] = loss_split_prior
-        weight_dict['loss_split_prior'] = weight_split_prior
+        loss_dict['loss_split_gt'] = loss_split_quality
+        weight_dict['loss_split_gt'] = weight_split_quality
 
         # final loss
-        losses += loss_split_quality * weight_split_quality + loss_split_prior * weight_split_prior
+        losses += loss_split_quality * weight_split_quality
+        if self.split_loss_variant == 'paper_gt':
+            weight_split_prior = self.quadtree_prior_coef if epoch >= warmup_ep else 0.0
+            loss_dict['loss_split_prior'] = loss_split_prior
+            weight_dict['loss_split_prior'] = weight_split_prior
+            losses += loss_split_prior * weight_split_prior
         return {'loss_dict':loss_dict, 'weight_dict':weight_dict, 'losses':losses}
 
     def compute_apg_loss(self, output, targets):
@@ -957,26 +984,29 @@ class PET(nn.Module):
             return F.smooth_l1_loss(pred_counts, target_counts)
         return F.l1_loss(torch.log1p(pred_counts), torch.log1p(target_counts))
 
-    def _region_count_gates(self, outputs, branch_name, scores):
-        if self.region_count_gate == 'none':
+    def _split_gates_for_scores(self, outputs, branch_name, scores, mode):
+        if mode == 'none':
             return torch.ones_like(scores)
         if branch_name == 'sparse':
-            if self.region_count_gate == 'hard':
+            if mode == 'hard':
                 threshold = outputs['split_threshold'].to(device=scores.device, dtype=scores.dtype)
                 gates = ((1.0 - outputs['split_map_sparse'].to(device=scores.device, dtype=scores.dtype)) <= threshold).to(scores.dtype)
             else:
                 gates = outputs['split_map_sparse'].to(device=scores.device, dtype=scores.dtype)
         elif branch_name == 'dense':
-            if self.region_count_gate == 'hard':
+            if mode == 'hard':
                 threshold = outputs['split_threshold'].to(device=scores.device, dtype=scores.dtype)
                 gates = (outputs['split_map_dense'].to(device=scores.device, dtype=scores.dtype) > threshold).to(scores.dtype)
             else:
                 gates = outputs['split_map_dense'].to(device=scores.device, dtype=scores.dtype)
         else:
             raise ValueError(f'Unsupported branch: {branch_name}')
-        if self.region_count_gate == 'detach':
+        if mode == 'detach':
             gates = gates.detach()
         return gates.reshape_as(scores).clamp(0, 1)
+
+    def _region_count_gates(self, outputs, branch_name, scores):
+        return self._split_gates_for_scores(outputs, branch_name, scores, self.region_count_gate)
 
     def compute_region_count_loss(self, outputs, targets):
         """Local Point-to-Region count calibration on PET's real query logits."""
@@ -1012,6 +1042,54 @@ class PET(nn.Module):
         if self.region_count_type == 'smooth_l1':
             return F.smooth_l1_loss(pred_counts, target_counts)
         return F.l1_loss(torch.log1p(pred_counts), torch.log1p(target_counts))
+
+    def compute_bayesian_point_loss(self, outputs, targets):
+        """Point-level expected-count loss around each GT point.
+
+        This adapts Bayesian crowd-count supervision to PET's point outputs:
+        the expected gated person probability near each GT point should be one,
+        while probability far from any GT point is softly suppressed.
+        """
+        output_sparse, output_dense = outputs['sparse'], outputs['dense']
+        device = output_sparse['pred_logits'].device
+        sigma = max(float(self.bayesian_sigma), 1e-6)
+        pos_losses = []
+        bg_losses = []
+
+        for branch_name, output in (('sparse', output_sparse), ('dense', output_dense)):
+            scores = F.softmax(output['pred_logits'], -1)[..., 1]
+            gates = self._split_gates_for_scores(outputs, branch_name, scores, self.bayesian_loss_gate)
+            weighted_scores = (scores * gates).float()
+            img_h, img_w = output['img_shape']
+            pred_points = output['pred_points'].clamp(0.0, 1.0).float()
+            pred_abs = pred_points.clone()
+            pred_abs[..., 0] *= float(img_h)
+            pred_abs[..., 1] *= float(img_w)
+
+            for batch_idx, target in enumerate(targets):
+                gt_points = target['points'].to(device=device, dtype=torch.float32)
+                branch_scores = weighted_scores[batch_idx]
+                if gt_points.numel() == 0:
+                    bg_losses.append(branch_scores.mean())
+                    continue
+
+                distances = torch.cdist(gt_points, pred_abs[batch_idx], p=2)
+                weights = torch.exp(-0.5 * (distances / sigma).pow(2))
+                expected = (weights * branch_scores.unsqueeze(0)).sum(dim=1)
+                pos_losses.append(F.smooth_l1_loss(expected, torch.ones_like(expected)))
+
+                if self.bayesian_bg_coef > 0:
+                    background_weight = (1.0 - weights.max(dim=0).values).clamp(0.0, 1.0).detach()
+                    bg_losses.append((branch_scores * background_weight).mean())
+
+        if not pos_losses and not bg_losses:
+            return output_sparse['pred_logits'].sum() * 0.0
+        loss = output_sparse['pred_logits'].sum() * 0.0
+        if pos_losses:
+            loss = loss + torch.stack(pos_losses).mean()
+        if bg_losses and self.bayesian_bg_coef > 0:
+            loss = loss + self.bayesian_bg_coef * torch.stack(bg_losses).mean()
+        return loss
 
     def build_split_targets(self, targets, split_map, img_shape):
         bs, _, split_h, split_w = split_map.shape

@@ -108,6 +108,8 @@ def run_eval(
         cmd.extend(["--data_path", args.data_path])
     if args.tta_flip:
         cmd.append("--tta_flip")
+    if args.tta_scales:
+        cmd.extend(["--tta_scales", args.tta_scales])
 
     started = time.time()
     proc = subprocess.run(
@@ -132,6 +134,7 @@ def run_eval(
         "eval_branch_gate": eval_branch_gate,
         "eval_protocol": args.eval_protocol,
         "tta_flip": bool(args.tta_flip),
+        "tta_scales": args.tta_scales,
         "returncode": int(proc.returncode),
         "elapsed_sec": float(time.time() - started),
         "results_file": str(results_file),
@@ -162,6 +165,7 @@ def write_outputs(records: list[dict], output_dir: Path) -> None:
         "eval_branch_gate",
         "eval_protocol",
         "tta_flip",
+        "tta_scales",
         "eval_mae",
         "eval_mse",
         "pred_cnt",
@@ -198,6 +202,7 @@ def get_args() -> argparse.Namespace:
     parser.add_argument("--timeout", default=1800, type=int, help="Per-eval timeout in seconds; 0 disables")
     parser.add_argument("--output_dir", default="", help="Where to save sweep logs/results")
     parser.add_argument("--tta_flip", action="store_true", help="average original and horizontal-flip counts")
+    parser.add_argument("--tta_scales", default="1.0", help="comma-separated eval scales passed to eval.py")
     parser.add_argument(
         "--eval_nms_radii",
         nargs="+",
