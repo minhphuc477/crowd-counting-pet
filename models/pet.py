@@ -195,10 +195,9 @@ class BasePETCount(nn.Module):
         points_queries[:, 0] /= img_h
         points_queries[:, 1] /= img_w
 
-        # rescale offset range during testing
-        if 'test' in kwargs:
-            outputs_offsets[...,0] /= (img_h / 256)
-            outputs_offsets[...,1] /= (img_w / 256)
+        # Rescale offset range to maintain scale-invariant targets during multi-scale training
+        outputs_offsets[...,0] /= (img_h / 256)
+        outputs_offsets[...,1] /= (img_w / 256)
 
         outputs_points = outputs_offsets[-1] + points_queries
         outputs_logits = _finite_tensor(outputs_class[-1], nan=0.0, posinf=1e4, neginf=-1e4)
