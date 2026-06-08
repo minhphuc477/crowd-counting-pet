@@ -206,17 +206,28 @@ Implemented from the two phase plans:
   - New `eval.py` / sweep flag: `--tta_scales`.
   - Scaled images are resized first and then padded to PET-compatible 256
     multiples.
+- Optional STEERER-inspired soft split score gating at inference.
+  - New flag: `--eval_soft_split_gate {none,query,pred}`.
+  - This multiplies person scores by sparse/dense split responsibility before
+    thresholding.
+  - It is off by default because hard branch gates and NMS did not help the
+    known APG+LC checkpoint.
 - Inspector updates.
   - `scripts/inspect_pet_run.py` now prints AMP, accumulation, freeze, split
-    loss, and Bayesian flags.
+    loss, Bayesian, and soft split eval flags.
 
 Validated smoke checks:
 
 - `python -m py_compile main.py eval.py engine.py models/pet.py datasets/SHA.py datasets/QNRF.py scripts/sweep_eval_thresholds.py scripts/inspect_pet_run.py`
 - Resume merge keeps `batch_size`, `accum_iter`, `split_loss_variant`, and
   `bayesian_loss_coef` under `--resume_model_only`.
+- `--auto_backbone_recipe` no longer overrides an explicitly supplied
+  `--batch_size`.
+- Training startup prints `batch config: batch_size=... accum_iter=...
+  effective_batch_size=... train_batches=...`.
 - Dataset/TTA helper smoke check passed.
 - Bayesian loss finite/backward smoke check passed.
+- Soft split score-gate smoke check passed.
 
 ## Recommended Next Experiment Direction
 
@@ -242,6 +253,8 @@ repo behavior and previous failed trials:
 ```bash
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 export DATA=./data/ShanghaiTech/part_A
+export BATCH=1
+export ACCUM=4
 
 CUDA_VISIBLE_DEVICES=0 python main.py \
   --backbone convnextv2_base \
@@ -251,8 +264,8 @@ CUDA_VISIBLE_DEVICES=0 python main.py \
   --output_dir outputs/SHA/convnextv2_base_gt_split_apg_seed42 \
   --device cuda \
   --num_workers 2 \
-  --batch_size 1 \
-  --accum_iter 4 \
+  --batch_size "$BATCH" \
+  --accum_iter "$ACCUM" \
   --amp \
   --epochs 1500 \
   --eval_freq 5 \
@@ -282,17 +295,25 @@ CUDA_VISIBLE_DEVICES=0 python main.py \
   --split_threshold 0.5 \
   --eval_nms_radius 0 \
   --eval_branch_gate none \
+  --eval_soft_split_gate none \
   --seed 42
 ```
 
 Use this first without Bayesian loss. Add Bayesian only after the ConvNeXt + GT
 split + APG run is healthy by epoch 300-600.
 
+For a 15 GB GPU, start with `BATCH=1 ACCUM=4`. If memory allows, try
+`BATCH=2 ACCUM=4` or `BATCH=4 ACCUM=2`. The first log lines should print the
+resolved batch config; for SHA, `BATCH=1` should be about 300 train batches,
+not 37.
+
 ### Bayesian ablation
 
 ```bash
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 export DATA=./data/ShanghaiTech/part_A
+export BATCH=1
+export ACCUM=4
 
 CUDA_VISIBLE_DEVICES=0 python main.py \
   --backbone convnextv2_base \
@@ -302,8 +323,8 @@ CUDA_VISIBLE_DEVICES=0 python main.py \
   --output_dir outputs/SHA/convnextv2_base_gt_split_apg_bayes_seed42 \
   --device cuda \
   --num_workers 2 \
-  --batch_size 1 \
-  --accum_iter 4 \
+  --batch_size "$BATCH" \
+  --accum_iter "$ACCUM" \
   --amp \
   --epochs 1500 \
   --eval_freq 5 \
@@ -338,6 +359,7 @@ CUDA_VISIBLE_DEVICES=0 python main.py \
   --split_threshold 0.5 \
   --eval_nms_radius 0 \
   --eval_branch_gate none \
+  --eval_soft_split_gate none \
   --seed 42
 ```
 
@@ -358,4 +380,24 @@ python eval.py \
   --override_score_threshold 0.5 \
   --override_split_threshold 0.5 \
   --results_file eval_results/SHA/convnextv2_base_gt_split_apg_tta.json
+```
+
+### Soft Split Eval Sweep
+
+Run after a checkpoint is trained to test the Phase 7 idea without changing the
+training recipe:
+
+```bash
+python scripts/sweep_eval_thresholds.py \
+  --resume outputs/SHA/convnextv2_base_gt_split_apg_seed42/best_checkpoint.pth \
+  --dataset_file SHA \
+  --data_path "$DATA" \
+  --device cuda \
+  --num_workers 2 \
+  --output_dir eval_results/SHA/convnextv2_base_gt_split_apg_soft_split_sweep \
+  --score_thresholds 0.42 0.45 0.48 0.50 0.52 0.54 0.56 0.58 0.60 \
+  --split_thresholds 0.45 0.50 \
+  --eval_nms_radii 0 \
+  --eval_branch_gates none \
+  --eval_soft_split_gates none query pred
 ```
