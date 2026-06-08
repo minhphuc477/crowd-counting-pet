@@ -188,6 +188,7 @@ def get_args_parser():
     parser.add_argument('--num_workers', default=2, type=int)
     parser.add_argument('--deterministic', dest='deterministic', action='store_true', default=True)
     parser.add_argument('--no_deterministic', dest='deterministic', action='store_false')
+    parser.add_argument('--amp_dtype', default='auto', choices=('auto', 'float16', 'bfloat16'))
 
     # distributed training parameters
     parser.add_argument('--world_size', default=1, type=int,
@@ -214,6 +215,7 @@ def merge_checkpoint_args(args, checkpoint):
         'checkpoint_model_key', 'deterministic', 'tta_flip', 'tta_scales',
         'eval_nms_radius', 'eval_branch_gate', 'eval_soft_split_gate',
         'eval_protocol', 'resume_allow_arch_change',
+        'amp_dtype',
     }
     if getattr(args, 'resume_allow_arch_change', False):
         runtime_keys.update({

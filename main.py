@@ -173,6 +173,8 @@ def get_args_parser():
                         help='keep BatchNorm running statistics fixed during training/fine-tuning')
     parser.add_argument('--amp', action='store_true',
                         help='train with CUDA automatic mixed precision to reduce activation memory')
+    parser.add_argument('--amp_dtype', default='auto', choices=('auto', 'float16', 'bfloat16'),
+                        help='CUDA autocast dtype. auto uses bfloat16 when supported, otherwise float16')
     parser.add_argument('--batch_size', default=8, type=int)
     parser.add_argument('--accum_iter', default=1, type=int,
                         help='gradient accumulation steps; effective batch size is batch_size * accum_iter')
@@ -501,7 +503,7 @@ def merge_checkpoint_args(args, checkpoint):
     runtime_keys = {
         'resume', 'device', 'output_dir', 'seed', 'start_epoch',
         'resume_model_only', 'resume_allow_arch_change', 'num_workers', 'world_size', 'dist_url',
-        'list_backbones', 'syn_bn', 'deterministic', 'freeze_bn', 'amp',
+        'list_backbones', 'syn_bn', 'deterministic', 'freeze_bn', 'amp', 'amp_dtype',
         # allow overriding schedule/eval settings at resume time
         'epochs', 'batch_size', 'accum_iter', 'eval_freq', 'eval_before_train', 'eval_protocol', 'data_path', 'eval_max_size',
         'patch_size', 'patch_size_choices', 'crop_attempts', 'min_crop_points',
@@ -720,17 +722,25 @@ def main(args):
     optimizer = torch.optim.AdamW(param_dicts, lr=args.lr,
                                   weight_decay=args.weight_decay)
     amp_enabled = bool(getattr(args, 'amp', False) and device.type == 'cuda')
+    amp_dtype = None
     scaler = None
     if amp_enabled:
-        if hasattr(torch, 'amp') and hasattr(torch.amp, 'GradScaler'):
-            try:
-                scaler = torch.amp.GradScaler('cuda')
-            except TypeError:
-                scaler = torch.amp.GradScaler(enabled=True)
-        else:
-            scaler = torch.cuda.amp.GradScaler()
+        amp_dtype_name = getattr(args, 'amp_dtype', 'auto')
+        if amp_dtype_name == 'auto':
+            bf16_supported = bool(getattr(torch.cuda, 'is_bf16_supported', lambda: False)())
+            amp_dtype_name = 'bfloat16' if bf16_supported else 'float16'
+        amp_dtype = torch.bfloat16 if amp_dtype_name == 'bfloat16' else torch.float16
+        if amp_dtype == torch.float16:
+            if hasattr(torch, 'amp') and hasattr(torch.amp, 'GradScaler'):
+                try:
+                    scaler = torch.amp.GradScaler('cuda')
+                except TypeError:
+                    scaler = torch.amp.GradScaler(enabled=True)
+            else:
+                scaler = torch.cuda.amp.GradScaler()
         if utils.is_main_process():
-            print('AMP enabled: CUDA autocast + GradScaler')
+            scaler_state = ' + GradScaler' if scaler is not None else ''
+            print(f'AMP enabled: CUDA autocast dtype={amp_dtype_name}{scaler_state}')
     if args.lr_scheduler == 'step':
         lr_drop = args.epochs if args.lr_drop <= 0 else args.lr_drop
         lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, lr_drop, gamma=args.lr_gamma)
@@ -905,6 +915,7 @@ def main(args):
             freeze_bn=getattr(args, 'freeze_bn', False),
             amp_enabled=amp_enabled,
             scaler=scaler,
+            amp_dtype=amp_dtype,
             accum_iter=getattr(args, 'accum_iter', 1))
         t2 = time.time()
         print('[ep %d][lr %.7f][%.2fs]' % \

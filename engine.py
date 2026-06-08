@@ -17,12 +17,15 @@ import util.misc as utils
 from util.misc import NestedTensor
 
 
-def autocast_context(device, enabled=False):
+def autocast_context(device, enabled=False, dtype=None):
     if not enabled or device.type != 'cuda':
         return nullcontext()
+    kwargs = {}
+    if dtype is not None:
+        kwargs['dtype'] = dtype
     if hasattr(torch, 'amp') and hasattr(torch.amp, 'autocast'):
-        return torch.amp.autocast('cuda')
-    return torch.cuda.amp.autocast()
+        return torch.amp.autocast('cuda', **kwargs)
+    return torch.cuda.amp.autocast(**kwargs)
 
 
 class DeNormalize(object):
@@ -90,7 +93,8 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
                     data_loader: Iterable, optimizer: torch.optim.Optimizer,
                     device: torch.device, epoch: int, max_norm: float = 0,
                     model_ema=None, model_without_ddp=None, freeze_bn: bool = False,
-                    amp_enabled: bool = False, scaler=None, accum_iter: int = 1):
+                    amp_enabled: bool = False, scaler=None, accum_iter: int = 1,
+                    amp_dtype=None):
     model.train()
     criterion.train()
     accum_iter = max(1, int(accum_iter))
@@ -109,7 +113,7 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
         targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
         gt_points = [target['points'] for target in targets]
 
-        with autocast_context(device, amp_enabled):
+        with autocast_context(device, amp_enabled, amp_dtype):
             outputs = model(samples, epoch=epoch, train=True,
                                             criterion=criterion, targets=targets)
         loss_dict, weight_dict, losses = outputs['loss_dict'], outputs['weight_dict'], outputs['losses']
