@@ -1213,12 +1213,20 @@ class PET(nn.Module):
             threshold = torch.quantile(flat, 0.95).to(dtype=scores.dtype, device=scores.device)
             threshold = threshold.clamp(0.05, 0.95)
 
-        # Early training: logits collapse near 0.5. A fixed threshold then flips
-        # between pred_cnt=0 (scores > 0.5) and full-grid overcount (scores >= 0.5).
+        # Early training may collapse logits near 0.5. A fixed top-k fallback can
+        # freeze pred_cnt to almost the same value every epoch, so prefer a
+        # confidence floor that can still evolve with score dynamics.
         if score_std < 0.015 and score_max <= 0.56 and flat.numel() > 32:
-            return self._flat_score_topk_mask(scores)
+            adaptive_floor = max(float(threshold.item()), 0.53)
+            adaptive_floor = max(adaptive_floor, 0.5 + 4.0 * score_std)
+            adaptive_floor = min(adaptive_floor, 0.95)
+            adaptive_threshold = torch.as_tensor(adaptive_floor, dtype=scores.dtype, device=scores.device)
+            mask = scores > adaptive_threshold
+            if not bool(mask.any().item()):
+                mask = scores >= scores.max()
+            return mask
 
-        mask = scores >= threshold
+        mask = scores > threshold
 
         # Partially trained head still leaking too many weak positives.
         if fixed_th is not None and flat.numel() > 32:
@@ -1226,7 +1234,7 @@ class PET(nn.Module):
             if pass_frac > 0.20 and score_max <= 0.58:
                 q = torch.quantile(flat, 0.995).to(dtype=scores.dtype, device=scores.device)
                 q = q.clamp(fixed_th + 0.01, 0.99)
-                mask = scores >= q
+                mask = scores > q
         return mask
 
     def apply_eval_point_nms(self, pred_logits, pred_points, pred_offsets, points_queries, scores, img_shape):
