@@ -38,6 +38,9 @@ CUDA_VISIBLE_DEVICES=0 python main.py \
   --quadtree_loss_coef 0.1 \
   --split_count_threshold 1 \
   --split_pos_weight 2.0 \
+  --apg_loss_coef 1.0 \
+  --apg_pos_k 1 \
+  --apg_point_coef 5.0 \
   --score_threshold 0.5 \
   --split_threshold 0.5 \
   --eval_nms_radius 0 \
