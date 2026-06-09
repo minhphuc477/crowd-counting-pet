@@ -12,6 +12,7 @@ CUDA_VISIBLE_DEVICES=0 python main.py \
   --output_dir outputs/SHA/convnextv2_base_SOTA_48 \
   --resume outputs/SHA/convnextv2_base_gt_split_fixed/checkpoint.pth \
   --resume_model_only \
+  --resume_allow_arch_change \
   --device cuda \
   --num_workers 2 \
   --batch_size "$BATCH" \
