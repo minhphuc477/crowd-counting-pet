@@ -42,9 +42,6 @@ CUDA_VISIBLE_DEVICES=0 python main.py \
   --qd_apg_point_coef 5.0 \
   --qd_apg_suppress_coef 0.5 \
   --qd_apg_route_source gt_count \
-  --ifi_loss_coef 0.1 \
-  --ifi_neg_radius 12.0 \
-  --apg_contrastive_coef 0.05 \
   --score_threshold 0.5 \
   --split_threshold 0.5 \
   --eval_nms_radius 0 \
