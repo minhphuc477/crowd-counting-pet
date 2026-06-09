@@ -394,6 +394,18 @@ class PET(nn.Module):
         self.msff_ca_attn_pos_weight = float(getattr(args, 'msff_ca_attn_pos_weight', 1.0))
         self.msff_ca_attn_neg_weight = float(getattr(args, 'msff_ca_attn_neg_weight', 0.25))
         self.msff_ca_attn_start_epoch = int(getattr(args, 'msff_ca_attn_start_epoch', -1))
+        self.msff_calib_mode = getattr(args, 'msff_calib_mode', 'none')
+        if self.msff_calib_mode == 'full' and getattr(args, 'msff_ca_mode', 'none') == 'none':
+            raise ValueError('--msff_calib_mode full requires --msff_ca_mode msca, attn, or full')
+        self.msff_foreground_gate = (
+            self.msff_calib_mode == 'full' or bool(getattr(args, 'msff_foreground_gate', False))
+        )
+        self.msff_shared_count_head = self.msff_calib_mode == 'full'
+        self.msff_foreground_floor = float(getattr(args, 'msff_foreground_floor', 0.1))
+        if self.msff_shared_count_head:
+            self.count_log_temperature = nn.Parameter(torch.zeros(1))
+        else:
+            self.count_log_temperature = None
 
         # context encoder
         self.encode_feats = '8x'
@@ -447,9 +459,13 @@ class PET(nn.Module):
         if self.eval_soft_split_gate not in ('none', 'query', 'pred'):
             raise ValueError('eval_soft_split_gate must be one of "none", "query", or "pred"')
         self.pet_loss_variant = getattr(args, 'pet_loss_variant', 'paper')
-        self.split_loss_variant = getattr(args, 'split_loss_variant', 'auto')
-        if self.split_loss_variant == 'auto':
-            self.split_loss_variant = 'paper' if self.pet_loss_variant == 'paper' else 'paper_gt'
+        split_loss_variant = getattr(args, 'split_loss_variant', 'auto')
+        if split_loss_variant == 'auto':
+            if self.msff_calib_mode == 'full':
+                split_loss_variant = 'gt'
+            else:
+                split_loss_variant = 'paper' if self.pet_loss_variant == 'paper' else 'paper_gt'
+        self.split_loss_variant = split_loss_variant
         if self.split_loss_variant not in ('paper', 'gt', 'paper_gt'):
             raise ValueError('split_loss_variant must be one of "auto", "paper", "gt", or "paper_gt"')
         self.count_loss_coef = float(getattr(args, 'count_loss_coef', 0.0))
@@ -1014,6 +1030,85 @@ class PET(nn.Module):
             loss = loss + self.qd_apg_suppress_coef * torch.stack(suppress_losses).mean()
         return loss
 
+    def _person_scores_from_logits(self, pred_logits):
+        return F.softmax(pred_logits, dim=-1)[..., 1]
+
+    def _apply_count_temperature(self, scores):
+        if not self.msff_shared_count_head or self.count_log_temperature is None:
+            return scores
+        temperature = torch.exp(self.count_log_temperature).clamp(0.05, 5.0)
+        probs = scores.clamp(1e-6, 1.0 - 1e-6)
+        logits = torch.log(probs / (1.0 - probs))
+        return torch.sigmoid(logits / temperature)
+
+    def _sample_msff_foreground(self, foreground_map, query_points):
+        if foreground_map is None:
+            if query_points.dim() == 1:
+                return torch.ones((), device=query_points.device, dtype=query_points.dtype)
+            return torch.ones(query_points.shape[:-1], device=query_points.device, dtype=query_points.dtype)
+
+        squeeze_batch = False
+        if query_points.dim() == 2:
+            query_points = query_points.unsqueeze(0)
+            squeeze_batch = True
+        if foreground_map.dim() == 3:
+            foreground_map = foreground_map.unsqueeze(0)
+
+        batch_size = query_points.shape[0]
+        if foreground_map.shape[0] == 1 and batch_size > 1:
+            foreground_map = foreground_map.expand(batch_size, -1, -1, -1)
+
+        grid = torch.stack(
+            [query_points[..., 1] * 2.0 - 1.0, query_points[..., 0] * 2.0 - 1.0],
+            dim=-1,
+        ).unsqueeze(2)
+        sampled = F.grid_sample(
+            foreground_map,
+            grid,
+            mode='bilinear',
+            padding_mode='border',
+            align_corners=False,
+        )
+        fg = sampled.squeeze(-1).squeeze(1).clamp(0.0, 1.0)
+        if squeeze_batch:
+            fg = fg.squeeze(0)
+        return fg
+
+    def _calibrate_branch_scores(self, output, branch, outputs, foreground_map=None):
+        scores = self._person_scores_from_logits(output['pred_logits'])
+        scores = self.apply_eval_soft_split_gate(output, outputs['split_map_raw'], branch, scores)
+        if self.msff_foreground_gate and foreground_map is not None:
+            query_points = output.get('points_queries')
+            if query_points is None:
+                query_points = output['pred_points']
+            fg = self._sample_msff_foreground(foreground_map, query_points)
+            floor = self.msff_foreground_floor
+            scores = scores * (floor + (1.0 - floor) * fg)
+        return self._apply_count_temperature(scores)
+
+    def aggregate_soft_person_count(self, outputs, gate_mode=None):
+        gate_mode = self.count_loss_gate if gate_mode is None else gate_mode
+        foreground_maps = outputs.get('msff_foreground', {})
+        pred_counts = None
+        for branch, output, map_key in (
+            ('sparse', outputs.get('sparse'), '8x'),
+            ('dense', outputs.get('dense'), '4x'),
+        ):
+            if output is None:
+                continue
+            scores = self._calibrate_branch_scores(
+                output,
+                branch,
+                outputs,
+                foreground_maps.get(map_key),
+            )
+            gates = self._split_gates_for_scores(outputs, branch, scores, gate_mode)
+            branch_count = (scores * gates).sum(dim=-1) if scores.dim() > 1 else (scores * gates).sum()
+            pred_counts = branch_count if pred_counts is None else pred_counts + branch_count
+        if pred_counts is None:
+            return outputs['split_map_raw'].sum() * 0.0
+        return pred_counts
+
     def compute_count_loss(self, outputs, targets):
         output_sparse, output_dense = outputs['sparse'], outputs['dense']
         device = output_sparse['pred_logits'].device
@@ -1024,22 +1119,15 @@ class PET(nn.Module):
             device=device,
         )
 
-        sparse_scores = F.softmax(output_sparse['pred_logits'], -1)[..., 1]
-        dense_scores = F.softmax(output_dense['pred_logits'], -1)[..., 1]
-
-        if self.count_loss_gate == 'hard':
-            threshold = outputs['split_threshold'].to(device=device, dtype=dtype)
-            sparse_gate = ((1.0 - outputs['split_map_sparse'].to(device=device, dtype=dtype)) <= threshold).to(dtype)
-            dense_gate = (outputs['split_map_dense'].to(device=device, dtype=dtype) > threshold).to(dtype)
+        if self.msff_shared_count_head:
+            pred_counts = self.aggregate_soft_person_count(outputs)
         else:
-            sparse_gate = outputs['split_map_sparse'].to(device=device, dtype=dtype)
-            dense_gate = outputs['split_map_dense'].to(device=device, dtype=dtype)
-            if self.count_loss_gate == 'detach':
-                sparse_gate = sparse_gate.detach()
-                dense_gate = dense_gate.detach()
+            sparse_scores = self._person_scores_from_logits(output_sparse['pred_logits'])
+            dense_scores = self._person_scores_from_logits(output_dense['pred_logits'])
+            sparse_gate = self._split_gates_for_scores(outputs, 'sparse', sparse_scores, self.count_loss_gate)
+            dense_gate = self._split_gates_for_scores(outputs, 'dense', dense_scores, self.count_loss_gate)
+            pred_counts = (sparse_scores * sparse_gate).sum(dim=1) + (dense_scores * dense_gate).sum(dim=1)
 
-        pred_counts = (sparse_scores * sparse_gate.reshape_as(sparse_scores)).sum(dim=1)
-        pred_counts = pred_counts + (dense_scores * dense_gate.reshape_as(dense_scores)).sum(dim=1)
         if self.count_loss_type == 'l1':
             return F.l1_loss(pred_counts, target_counts)
         if self.count_loss_type == 'smooth_l1':
@@ -1110,10 +1198,12 @@ class PET(nn.Module):
             return self.cfi(feat_4x, feat_8x)
         return feat_4x, feat_8x
 
-    def _apply_msff_ca(self, module, features, return_attn=False):
-        if return_attn and getattr(module, 'enabled', False):
-            return module(features, return_attn=True)
-        return module(features), None
+    def _apply_msff_ca(self, module, features, return_attn=False, return_foreground=False):
+        if not getattr(module, 'enabled', False):
+            return features, None, None
+        if return_attn or return_foreground:
+            return module(features, return_attn=return_attn, return_foreground=return_foreground)
+        return module(features), None, None
 
     def compute_msff_ca_attn_loss(self, attn_outputs, targets, img_shape):
         img_h, img_w = img_shape
@@ -1203,15 +1293,22 @@ class PET(nn.Module):
 
         # feature projection -> continuous interpolation -> optional MSFF-CA
         need_msff_attn = 'train' in kwargs and self.msff_ca_attn_loss_coef > 0
+        need_msff_foreground = self.msff_foreground_gate
         proj_4x = self.input_proj[0](features['4x'].tensors)
         proj_8x = self.input_proj[1](features['8x'].tensors)
         proj_4x, proj_8x = self._apply_cfi(proj_4x, proj_8x)
-        feat_4x, attn_logits_4x = self._apply_msff_ca(self.msff_ca_4x, proj_4x, return_attn=need_msff_attn)
-        feat_8x, attn_logits_8x = self._apply_msff_ca(self.msff_ca_8x, proj_8x, return_attn=need_msff_attn)
+        feat_4x, attn_logits_4x, fg_4x = self._apply_msff_ca(
+            self.msff_ca_4x, proj_4x, return_attn=need_msff_attn, return_foreground=need_msff_foreground,
+        )
+        feat_8x, attn_logits_8x, fg_8x = self._apply_msff_ca(
+            self.msff_ca_8x, proj_8x, return_attn=need_msff_attn, return_foreground=need_msff_foreground,
+        )
         features['4x'] = NestedTensor(feat_4x, features['4x'].mask)
         features['8x'] = NestedTensor(feat_8x, features['8x'].mask)
         if need_msff_attn:
             kwargs['msff_ca_attn'] = {'4x': attn_logits_4x, '8x': attn_logits_8x}
+        if need_msff_foreground:
+            kwargs['msff_foreground'] = {'4x': fg_4x, '8x': fg_8x}
 
         # forward
         if 'train' in kwargs:
@@ -1449,6 +1546,10 @@ class PET(nn.Module):
                 outputs['ifi_feat_8x'] = features['8x'].tensors
             if 'msff_ca_attn' in kwargs:
                 outputs['msff_ca_attn'] = kwargs['msff_ca_attn']
+            if 'msff_foreground' in kwargs:
+                outputs['msff_foreground'] = kwargs['msff_foreground']
+        elif 'msff_foreground' in kwargs:
+            outputs['msff_foreground'] = kwargs['msff_foreground']
         return outputs
     
     def train_forward(self, samples, features, pos, **kwargs):
@@ -1469,9 +1570,18 @@ class PET(nn.Module):
         score_parts = []
         template_out = out_sparse if out_sparse is not None else out_dense
 
+        foreground_maps = outputs.get('msff_foreground', {})
+
         if out_sparse is not None:
-            out_sparse_scores = torch.nn.functional.softmax(out_sparse['pred_logits'], -1)[..., 1]
-            out_sparse_eval_scores = self.apply_eval_soft_split_gate(out_sparse, outputs['split_map_raw'], 'sparse', out_sparse_scores)
+            if self.msff_shared_count_head or self.msff_foreground_gate:
+                out_sparse_eval_scores = self._calibrate_branch_scores(
+                    out_sparse, 'sparse', outputs, foreground_maps.get('8x'),
+                )
+            else:
+                out_sparse_scores = self._person_scores_from_logits(out_sparse['pred_logits'])
+                out_sparse_eval_scores = self.apply_eval_soft_split_gate(
+                    out_sparse, outputs['split_map_raw'], 'sparse', out_sparse_scores,
+                )
             index_sparse = self.get_score_mask(out_sparse_eval_scores).to(out_sparse['pred_logits'].device)
             sparse_gate = self.get_eval_branch_gate_mask(out_sparse, outputs['split_map_raw'], 'sparse')
             if sparse_gate is not None:
@@ -1483,8 +1593,15 @@ class PET(nn.Module):
             score_parts.append(out_sparse_eval_scores[index_sparse])
 
         if out_dense is not None:
-            out_dense_scores = torch.nn.functional.softmax(out_dense['pred_logits'], -1)[..., 1]
-            out_dense_eval_scores = self.apply_eval_soft_split_gate(out_dense, outputs['split_map_raw'], 'dense', out_dense_scores)
+            if self.msff_shared_count_head or self.msff_foreground_gate:
+                out_dense_eval_scores = self._calibrate_branch_scores(
+                    out_dense, 'dense', outputs, foreground_maps.get('4x'),
+                )
+            else:
+                out_dense_scores = self._person_scores_from_logits(out_dense['pred_logits'])
+                out_dense_eval_scores = self.apply_eval_soft_split_gate(
+                    out_dense, outputs['split_map_raw'], 'dense', out_dense_scores,
+                )
             index_dense = self.get_score_mask(out_dense_eval_scores).to(out_dense['pred_logits'].device)
             dense_gate = self.get_eval_branch_gate_mask(out_dense, outputs['split_map_raw'], 'dense')
             if dense_gate is not None:

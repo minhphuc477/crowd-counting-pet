@@ -157,6 +157,9 @@ ARCHITECTURE_OVERRIDE_KEYS = {
     'msff_ca_attn_neg_weight',
     'msff_ca_attn_start_epoch',
     'msff_ca_attn_mid_dim',
+    'msff_calib_mode',
+    'msff_foreground_gate',
+    'msff_foreground_floor',
     'cfi_mode',
     'cfi_num_scales',
     'cfi_mid_dim',
@@ -279,6 +282,12 @@ def get_args_parser():
                         help='epoch to start MSFF-CA attention loss; negative uses warmup_epochs')
     parser.add_argument('--msff_ca_attn_mid_dim', default=64, type=int,
                         help='hidden channels in the MSFF-CA semantic attention head')
+    parser.add_argument('--msff_calib_mode', default='none', choices=('none', 'full'),
+                        help='full wires MSFF foreground into query scores, shared count calibration, and GT-first split loss')
+    parser.add_argument('--msff_foreground_gate', action='store_true',
+                        help='multiply query person scores by MSFF foreground maps (auto-enabled by --msff_calib_mode full)')
+    parser.add_argument('--msff_foreground_floor', default=0.1, type=float,
+                        help='minimum MSFF foreground multiplier applied to query scores')
     parser.add_argument('--cfi_mode', default='none', choices=('none', 'lite', 'full'),
                         help='continuous feature interpolation between 4x/8x after input_proj and before encoder/decoders')
     parser.add_argument('--cfi_num_scales', default=3, type=int,
@@ -534,6 +543,28 @@ def get_explicit_arg_names(argv):
     return names
 
 
+def apply_msff_calib_recipe(args):
+    """Enable the MSFF full calibrated-counting recipe with safe defaults."""
+    if getattr(args, 'msff_calib_mode', 'none') != 'full':
+        return
+
+    explicit = set(getattr(args, '_explicit_args', set()))
+    if getattr(args, 'split_loss_variant', 'auto') == 'auto':
+        args.split_loss_variant = 'gt'
+    if 'count_loss_coef' not in explicit and float(getattr(args, 'count_loss_coef', 0.0)) == 0.0:
+        args.count_loss_coef = 0.01
+    if 'count_loss_gate' not in explicit:
+        args.count_loss_gate = 'detach'
+    if 'count_loss_type' not in explicit:
+        args.count_loss_type = 'log_l1'
+    if 'count_loss_start_epoch' not in explicit and int(getattr(args, 'count_loss_start_epoch', -1)) < 0:
+        args.count_loss_start_epoch = 100
+    if 'quadtree_loss_coef' not in explicit and float(getattr(args, 'quadtree_loss_coef', 0.1)) == 0.1:
+        args.quadtree_loss_coef = 0.3
+    if 'split_pos_weight' not in explicit and float(getattr(args, 'split_pos_weight', 1.0)) == 1.0:
+        args.split_pos_weight = 2.0
+
+
 def apply_backbone_recipe(args):
     """Apply backbone-specific fine-tuning defaults when the user left a generic setting in place."""
     recipe = get_backbone_recipe(args.backbone)
@@ -753,6 +784,7 @@ def main(args):
 
     if getattr(args, 'auto_backbone_recipe', False):
         apply_backbone_recipe(args)
+    apply_msff_calib_recipe(args)
     print(args)
     device = torch.device(args.device)
 

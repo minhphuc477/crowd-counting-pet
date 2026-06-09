@@ -154,6 +154,7 @@ class MSFFCAEnhancer(nn.Module):
         reduction=4,
         spatial_kernel=7,
         with_attn_head=False,
+        with_foreground_head=False,
         attn_mid_channels=64,
     ):
         super().__init__()
@@ -188,22 +189,36 @@ class MSFFCAEnhancer(nn.Module):
         nn.init.zeros_(self.out_proj.weight)
         self.attn_head = (
             SemanticAttentionHead(channels, mid_channels=attn_mid_channels)
-            if with_attn_head
+            if (with_attn_head or with_foreground_head)
             else None
         )
 
-    def forward(self, x, return_attn=False):
+    def _foreground_map(self, x, out):
+        if self.attn_head is not None:
+            return torch.sigmoid(self.attn_head(out))
+        if self.use_attn:
+            spatial_stats = torch.cat(
+                [out.max(dim=1, keepdim=True)[0], out.mean(dim=1, keepdim=True)],
+                dim=1,
+            )
+            return torch.sigmoid(self.attn.spatial_gate(spatial_stats))
+        return torch.ones(x.shape[0], 1, x.shape[2], x.shape[3], device=x.device, dtype=x.dtype)
+
+    def forward(self, x, return_attn=False, return_foreground=False):
         if not self.enabled:
-            return (x, None) if return_attn else x
+            if return_attn or return_foreground:
+                return x, None, None
+            return x
         out = x
         if self.use_msca:
             out = self.msca(out)
-        attn_logits = self.attn_head(out) if self.attn_head is not None else None
+        attn_logits = self.attn_head(out) if self.attn_head is not None and return_attn else None
         if self.use_attn:
             out = self.attn(out)
         enhanced = x + self.out_proj(out)
-        if return_attn:
-            return enhanced, attn_logits
+        foreground = self._foreground_map(x, out) if return_foreground else None
+        if return_attn or return_foreground:
+            return enhanced, attn_logits, foreground
         return enhanced
 
 
@@ -211,7 +226,9 @@ def build_msff_ca_enhancer(args, channels):
     mode = getattr(args, 'msff_ca_mode', 'none')
     if mode == 'none':
         return nn.Identity()
+    msff_calib = getattr(args, 'msff_calib_mode', 'none') == 'full'
     with_attn_head = float(getattr(args, 'msff_ca_attn_loss_coef', 0.0)) > 0.0
+    with_foreground_head = msff_calib or bool(getattr(args, 'msff_foreground_gate', False))
     return MSFFCAEnhancer(
         channels,
         mode=mode,
@@ -223,5 +240,6 @@ def build_msff_ca_enhancer(args, channels):
         reduction=getattr(args, 'msff_ca_reduction', 4),
         spatial_kernel=getattr(args, 'msff_ca_spatial_kernel', 7),
         with_attn_head=with_attn_head,
+        with_foreground_head=with_foreground_head,
         attn_mid_channels=getattr(args, 'msff_ca_attn_mid_dim', 64),
     )
