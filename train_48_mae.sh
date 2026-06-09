@@ -30,8 +30,8 @@ CUDA_VISIBLE_DEVICES=0 python main.py \
   --weight_decay 0.0001 \
   --clip_max_norm 0.1 \
   --ema_decay 0.999 \
-  --patch_size 384 \
-  --patch_size_choices 256,384 \
+  --patch_size 256 \
+  --patch_size_choices 192,256 \
   --crop_attempts 12 \
   --min_crop_points 1 \
   --split_loss_variant gt \
