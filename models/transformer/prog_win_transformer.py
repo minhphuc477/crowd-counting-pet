@@ -376,7 +376,8 @@ class EncoderLayer(nn.Module):
                      pos: Optional[Tensor]):
         q = k = self.with_pos_embed(src, pos)
         src2 = self.self_attn(q, k, value=src, attn_mask=src_mask,
-                              key_padding_mask=src_key_padding_mask)[0]
+                              key_padding_mask=src_key_padding_mask, need_weights=False)[0]
+        src2 = torch.nan_to_num(src2, nan=0.0)
         src = src + src2
         src = self.norm1(src)
 
@@ -392,7 +393,8 @@ class EncoderLayer(nn.Module):
         src_norm = self.norm1(src)
         q = k = self.with_pos_embed(src_norm, pos)
         src2 = self.self_attn(q, k, value=src_norm, attn_mask=src_mask,
-                              key_padding_mask=src_key_padding_mask)[0]
+                              key_padding_mask=src_key_padding_mask, need_weights=False)[0]
+        src2 = torch.nan_to_num(src2, nan=0.0)
         src = src + src2
 
         src_norm = self.norm2(src)
@@ -438,7 +440,8 @@ class DecoderLayer(nn.Module):
                      pos: Optional[Tensor],
                      query_pos: Optional[Tensor]):
         q = k = self.with_pos_embed(tgt, query_pos)
-        tgt2 = self.self_attn(q, k, value=tgt, attn_mask=tgt_mask, key_padding_mask=tgt_key_padding_mask)[0]
+        tgt2 = self.self_attn(q, k, value=tgt, attn_mask=tgt_mask, key_padding_mask=tgt_key_padding_mask, need_weights=False)[0]
+        tgt2 = torch.nan_to_num(tgt2, nan=0.0)
         tgt = tgt + tgt2
         tgt = self.norm1(tgt)
 
@@ -446,7 +449,8 @@ class DecoderLayer(nn.Module):
         tgt2 = self.multihead_attn(query=self.with_pos_embed(tgt, query_pos),
                                    key=self.with_pos_embed(memory, pos),
                                    value=memory, attn_mask=memory_mask,
-                                   key_padding_mask=memory_key_padding_mask)[0]
+                                   key_padding_mask=memory_key_padding_mask, need_weights=False)[0]
+        tgt2 = torch.nan_to_num(tgt2, nan=0.0)
         tgt = tgt + tgt2
         tgt = self.norm2(tgt)
 
@@ -465,14 +469,16 @@ class DecoderLayer(nn.Module):
                     query_pos: Optional[Tensor]):
         tgt_norm = self.norm1(tgt)
         q = k = self.with_pos_embed(tgt_norm, query_pos)
-        tgt2 = self.self_attn(q, k, value=tgt_norm, attn_mask=tgt_mask, key_padding_mask=tgt_key_padding_mask)[0]
+        tgt2 = self.self_attn(q, k, value=tgt_norm, attn_mask=tgt_mask, key_padding_mask=tgt_key_padding_mask, need_weights=False)[0]
+        tgt2 = torch.nan_to_num(tgt2, nan=0.0)
         tgt = tgt + tgt2
 
         tgt_norm = self.norm2(tgt)
         tgt2 = self.multihead_attn(query=self.with_pos_embed(tgt_norm, query_pos),
                                    key=self.with_pos_embed(memory, pos),
                                    value=memory, attn_mask=memory_mask,
-                                   key_padding_mask=memory_key_padding_mask)[0]
+                                   key_padding_mask=memory_key_padding_mask, need_weights=False)[0]
+        tgt2 = torch.nan_to_num(tgt2, nan=0.0)
         tgt = tgt + tgt2
 
         tgt_norm = self.norm3(tgt)

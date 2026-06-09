@@ -114,6 +114,12 @@ def get_args_parser():
     parser.add_argument('--region_count_type', default='log_l1', choices=('log_l1', 'l1', 'smooth_l1'))
     parser.add_argument('--region_count_start_epoch', default=-1, type=int)
     parser.add_argument('--region_count_end_epoch', default=-1, type=int)
+    parser.add_argument('--bayesian_loss_coef', default=0.0, type=float)
+    parser.add_argument('--bayesian_sigma', default=8.0, type=float)
+    parser.add_argument('--bayesian_bg_coef', default=0.05, type=float)
+    parser.add_argument('--bayesian_loss_gate', default='detach', choices=('none', 'detach', 'soft', 'hard'))
+    parser.add_argument('--bayesian_start_epoch', default=-1, type=int)
+    parser.add_argument('--bayesian_end_epoch', default=-1, type=int)
     parser.add_argument('--apg_loss_coef', default=0.0, type=float)
     parser.add_argument('--apg_pos_k', default=1, type=int)
     parser.add_argument('--apg_point_coef', default=5.0, type=float)
@@ -149,6 +155,7 @@ def get_args_parser():
     parser.add_argument('--eos_coef', default=0.5, type=float,
                         help="Relative classification weight of the no-object class")   # cross-entropy weights
     parser.add_argument('--pet_loss_variant', default='paper', choices=('paper', 'balanced'))
+    parser.add_argument('--split_loss_variant', default='auto', choices=('auto', 'paper', 'gt', 'paper_gt'))
     parser.add_argument('--negative_loss_coef', default=0.1, type=float)
     parser.add_argument('--non_div_loss_coef', default=0.25, type=float)
     parser.add_argument('--quadtree_loss_coef', default=0.1, type=float)
@@ -160,6 +167,7 @@ def get_args_parser():
     parser.add_argument('--score_threshold', default=0.5, type=float)
     parser.add_argument('--eval_nms_radius', default=0.0, type=float)
     parser.add_argument('--eval_branch_gate', default='none', choices=('none', 'query', 'pred'))
+    parser.add_argument('--eval_soft_split_gate', default='none', choices=('none', 'query', 'pred'))
 
     # dataset parameters
     parser.add_argument('--dataset_file', default="SHA")
@@ -193,11 +201,14 @@ def get_args_parser():
                         help='checkpoint state to evaluate; auto prefers model_ema when present')
     parser.add_argument('--tta_flip', action='store_true',
                         help='average original and horizontal-flip predicted counts at evaluation time')
+    parser.add_argument('--tta_scales', default='1.0',
+                        help='comma-separated eval scales; dimensions are rounded to PET-compatible 256 multiples')
     parser.add_argument('--eval_protocol', default='pet', choices=('pet', 'crowd_no_overlap'),
                         help='pet uses the current metric dict; crowd_no_overlap uses P2PNet/APGCC-style MAE/RMSE')
     parser.add_argument('--num_workers', default=2, type=int)
     parser.add_argument('--deterministic', dest='deterministic', action='store_true', default=True)
     parser.add_argument('--no_deterministic', dest='deterministic', action='store_false')
+    parser.add_argument('--amp_dtype', default='auto', choices=('auto', 'float16', 'bfloat16'))
 
     # distributed training parameters
     parser.add_argument('--world_size', default=1, type=int,
@@ -221,8 +232,10 @@ def merge_checkpoint_args(args, checkpoint):
         'resume', 'device', 'vis_dir', 'results_file', 'data_path', 'dataset_file',
         'eval_max_size', 'num_workers', 'seed',
         'override_score_threshold', 'override_split_threshold', 'override_split_threshold_quantile',
-        'checkpoint_model_key', 'deterministic', 'tta_flip', 'eval_nms_radius', 'eval_branch_gate',
+        'checkpoint_model_key', 'deterministic', 'tta_flip', 'tta_scales',
+        'eval_nms_radius', 'eval_branch_gate', 'eval_soft_split_gate',
         'eval_protocol', 'resume_allow_arch_change',
+        'amp_dtype',
     }
     if getattr(args, 'resume_allow_arch_change', False):
         runtime_keys.update({
@@ -245,6 +258,23 @@ def apply_eval_overrides(args):
     if override_split_threshold_quantile is not None:
         args.split_threshold_quantile = float(override_split_threshold_quantile)
     return args
+
+
+def parse_tta_scales(value):
+    if isinstance(value, (list, tuple)):
+        raw_values = value
+    else:
+        raw_values = str(value).replace(';', ',').split(',')
+    scales = []
+    for raw in raw_values:
+        text = str(raw).strip()
+        if not text:
+            continue
+        scale = float(text)
+        if scale <= 0:
+            raise ValueError('tta_scales must contain positive values')
+        scales.append(scale)
+    return tuple(dict.fromkeys(scales)) or (1.0,)
 
 
 def seed_worker(worker_id):
@@ -336,11 +366,19 @@ def main(args):
     
     # evaluation
     vis_dir = None if args.vis_dir == "" else args.vis_dir
+    tta_scales = parse_tta_scales(getattr(args, 'tta_scales', '1.0'))
     if args.eval_protocol == 'crowd_no_overlap':
-        test_stats = evaluate_crowd_no_overlap(model, data_loader_val, device, vis_dir=vis_dir)
+        test_stats = evaluate_crowd_no_overlap(
+            model,
+            data_loader_val,
+            device,
+            vis_dir=vis_dir,
+            tta_flip=args.tta_flip,
+            tta_scales=tta_scales,
+        )
         mae, mse = test_stats['mae'], test_stats['mse']
     else:
-        test_stats = evaluate(model, data_loader_val, device, vis_dir=vis_dir, tta_flip=args.tta_flip)
+        test_stats = evaluate(model, data_loader_val, device, vis_dir=vis_dir, tta_flip=args.tta_flip, tta_scales=tta_scales)
         mae, mse = test_stats['mae'], test_stats['mse']
     line = f'\nepoch: {cur_epoch}, mae: {mae}, mse: {mse}' 
     print(line)
@@ -362,8 +400,10 @@ def main(args):
             'eval_model': eval_model_key,
             'eval_protocol': args.eval_protocol,
             'tta_flip': bool(args.tta_flip),
+            'tta_scales': list(tta_scales),
             'eval_nms_radius': float(getattr(args, 'eval_nms_radius', 0.0)),
             'eval_branch_gate': getattr(args, 'eval_branch_gate', 'none'),
+            'eval_soft_split_gate': getattr(args, 'eval_soft_split_gate', 'none'),
         }, indent=2) + "\n", encoding="utf-8")
         print(f'eval results saved to: {results_file}')
 

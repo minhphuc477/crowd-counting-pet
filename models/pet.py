@@ -45,6 +45,12 @@ def _parse_size_pair_list(value, default, name):
     return [_parse_size_pair(pair, None, name) for pair in value]
 
 
+def _finite_tensor(x, nan=0.0, posinf=1e4, neginf=-1e4):
+    if not torch.is_floating_point(x):
+        return x
+    return torch.nan_to_num(x, nan=nan, posinf=posinf, neginf=neginf)
+
+
 class BasePETCount(nn.Module):
     """ 
     Base PET model
@@ -56,6 +62,11 @@ class BasePETCount(nn.Module):
         hidden_dim = args.hidden_dim
 
         self.class_embed = nn.Linear(hidden_dim, num_classes + 1)
+        prior_prob = 0.01
+        bias_value = -math.log((1 - prior_prob) / prior_prob)
+        nn.init.constant_(self.class_embed.bias, 0.0)
+        self.class_embed.bias.data[1:] = bias_value
+        
         self.coord_embed = MLP(hidden_dim, hidden_dim, 2, 3)
 
         self.pq_stride = args.sparse_stride if quadtree_layer == 'sparse' else args.dense_stride
@@ -136,8 +147,22 @@ class BasePETCount(nn.Module):
         # Prune inactive windows before the decoder (matches original PET).
         div = kwargs['div']
         div_win = window_partition(div.unsqueeze(1), window_size_h=dec_win_h, window_size_w=dec_win_w)
-        valid_div = (div_win > 0.5).sum(dim=0)[:, 0]
+        route_threshold = float(kwargs.get('div_active_threshold', 0.5))
+        route_strict = bool(kwargs.get('div_active_strict', True))
+        if route_strict:
+            pixel_active = div_win > route_threshold
+        else:
+            pixel_active = div_win >= route_threshold
+        valid_div = pixel_active.sum(dim=0)[:, 0]
         v_idx = valid_div > 0
+        # If routing is still flat, keep only the strongest windows instead of the
+        # full query grid (which causes pred_cnt ~= image_h/8 * image_w/8).
+        if not bool(v_idx.any().item()):
+            window_scores = div_win.squeeze(-1).mean(dim=0)
+            keep = max(1, int(math.ceil(0.25 * window_scores.shape[0])))
+            _, top_idx = torch.topk(window_scores, k=keep)
+            v_idx = torch.zeros(window_scores.shape[0], dtype=torch.bool, device=div.device)
+            v_idx[top_idx] = True
         query_embed_win = query_embed_win[:, v_idx]
         query_feats_win = query_feats_win[:, v_idx]
         points_queries_win = points_queries_win[:, v_idx].reshape(-1, 2)
@@ -178,13 +203,15 @@ class BasePETCount(nn.Module):
         points_queries[:, 0] /= img_h
         points_queries[:, 1] /= img_w
 
-        # rescale offset range during testing
-        if 'test' in kwargs:
-            outputs_offsets[...,0] /= (img_h / 256)
-            outputs_offsets[...,1] /= (img_w / 256)
+        # Rescale offset range to maintain scale-invariant targets during multi-scale training
+        outputs_offsets[...,0] /= (img_h / 256)
+        outputs_offsets[...,1] /= (img_w / 256)
 
         outputs_points = outputs_offsets[-1] + points_queries
-        out = {'pred_logits': outputs_class[-1], 'pred_points': outputs_points, 'img_shape': img_shape, 'pred_offsets': outputs_offsets[-1]}
+        outputs_logits = _finite_tensor(outputs_class[-1], nan=0.0, posinf=1e4, neginf=-1e4)
+        outputs_points = _finite_tensor(outputs_points, nan=0.0, posinf=1.0, neginf=0.0)
+        outputs_offsets_last = _finite_tensor(outputs_offsets[-1], nan=0.0, posinf=1.0, neginf=-1.0)
+        out = {'pred_logits': outputs_logits, 'pred_points': outputs_points, 'img_shape': img_shape, 'pred_offsets': outputs_offsets_last}
     
         out['points_queries'] = points_queries
         out['pq_stride'] = self.pq_stride
@@ -416,7 +443,15 @@ class PET(nn.Module):
         self.eval_branch_gate = getattr(args, 'eval_branch_gate', 'none')
         if self.eval_branch_gate not in ('none', 'query', 'pred'):
             raise ValueError('eval_branch_gate must be one of "none", "query", or "pred"')
+        self.eval_soft_split_gate = getattr(args, 'eval_soft_split_gate', 'none')
+        if self.eval_soft_split_gate not in ('none', 'query', 'pred'):
+            raise ValueError('eval_soft_split_gate must be one of "none", "query", or "pred"')
         self.pet_loss_variant = getattr(args, 'pet_loss_variant', 'paper')
+        self.split_loss_variant = getattr(args, 'split_loss_variant', 'auto')
+        if self.split_loss_variant == 'auto':
+            self.split_loss_variant = 'paper' if self.pet_loss_variant == 'paper' else 'paper_gt'
+        if self.split_loss_variant not in ('paper', 'gt', 'paper_gt'):
+            raise ValueError('split_loss_variant must be one of "auto", "paper", "gt", or "paper_gt"')
         self.count_loss_coef = float(getattr(args, 'count_loss_coef', 0.0))
         self.count_loss_gate = getattr(args, 'count_loss_gate', 'detach')
         if self.count_loss_gate not in ('detach', 'soft', 'hard'):
@@ -435,6 +470,14 @@ class PET(nn.Module):
             raise ValueError('region_count_type must be one of "log_l1", "l1", or "smooth_l1"')
         self.region_count_start_epoch = int(getattr(args, 'region_count_start_epoch', -1))
         self.region_count_end_epoch = int(getattr(args, 'region_count_end_epoch', -1))
+        self.bayesian_loss_coef = float(getattr(args, 'bayesian_loss_coef', 0.0))
+        self.bayesian_sigma = float(getattr(args, 'bayesian_sigma', 8.0))
+        self.bayesian_bg_coef = float(getattr(args, 'bayesian_bg_coef', 0.05))
+        self.bayesian_loss_gate = getattr(args, 'bayesian_loss_gate', 'detach')
+        if self.bayesian_loss_gate not in ('none', 'detach', 'soft', 'hard'):
+            raise ValueError('bayesian_loss_gate must be one of "none", "detach", "soft", or "hard"')
+        self.bayesian_start_epoch = int(getattr(args, 'bayesian_start_epoch', -1))
+        self.bayesian_end_epoch = int(getattr(args, 'bayesian_end_epoch', -1))
         self.apg_loss_coef = float(getattr(args, 'apg_loss_coef', 0.0))
         self.apg_pos_k = max(1, int(getattr(args, 'apg_pos_k', 1)))
         self.apg_point_coef = float(getattr(args, 'apg_point_coef', 5.0))
@@ -565,6 +608,18 @@ class PET(nn.Module):
             loss_dict['loss_region_count'] = loss_region_count
             weight_dict['loss_region_count'] = self.region_count_loss_coef
             losses += loss_region_count * self.region_count_loss_coef
+        if self.bayesian_loss_coef > 0:
+            bayesian_start_epoch = warmup_ep if self.bayesian_start_epoch < 0 else self.bayesian_start_epoch
+            bayesian_active = epoch >= bayesian_start_epoch and (
+                self.bayesian_end_epoch < 0 or epoch <= self.bayesian_end_epoch
+            )
+            if bayesian_active:
+                loss_bayesian = self.compute_bayesian_point_loss(outputs, targets)
+            else:
+                loss_bayesian = outputs['split_map_raw'].sum() * 0.0
+            loss_dict['loss_bayesian'] = loss_bayesian
+            weight_dict['loss_bayesian'] = self.bayesian_loss_coef
+            losses += loss_bayesian * self.bayesian_loss_coef
         if self.apg_loss_coef > 0:
             apg_active = epoch >= self.apg_start_epoch and (
                 self.apg_end_epoch < 0 or epoch <= self.apg_end_epoch
@@ -640,7 +695,7 @@ class PET(nn.Module):
                     + loss_attn_4x * weight_dict['loss_msff_ca_attn_4x']
                 )
 
-        if self.pet_loss_variant == 'paper':
+        if self.split_loss_variant == 'paper':
             weight_split = self.quadtree_loss_coef if epoch >= warmup_ep else 0.0
             loss_dict['loss_split'] = loss_split_prior
             weight_dict['loss_split'] = weight_split
@@ -655,14 +710,16 @@ class PET(nn.Module):
             neg_weight=self.negative_loss_coef,
         )
         weight_split_quality = self.quadtree_loss_coef if epoch >= warmup_ep else 0.0
-        weight_split_prior = self.quadtree_prior_coef if epoch >= warmup_ep else 0.0
-        loss_dict['loss_split_quality'] = loss_split_quality
-        weight_dict['loss_split_quality'] = weight_split_quality
-        loss_dict['loss_split_prior'] = loss_split_prior
-        weight_dict['loss_split_prior'] = weight_split_prior
+        loss_dict['loss_split_gt'] = loss_split_quality
+        weight_dict['loss_split_gt'] = weight_split_quality
 
         # final loss
-        losses += loss_split_quality * weight_split_quality + loss_split_prior * weight_split_prior
+        losses += loss_split_quality * weight_split_quality
+        if self.split_loss_variant == 'paper_gt':
+            weight_split_prior = self.quadtree_prior_coef if epoch >= warmup_ep else 0.0
+            loss_dict['loss_split_prior'] = loss_split_prior
+            weight_dict['loss_split_prior'] = weight_split_prior
+            losses += loss_split_prior * weight_split_prior
         return {'loss_dict':loss_dict, 'weight_dict':weight_dict, 'losses':losses}
 
     def compute_apg_loss(self, output, targets):
@@ -989,26 +1046,29 @@ class PET(nn.Module):
             return F.smooth_l1_loss(pred_counts, target_counts)
         return F.l1_loss(torch.log1p(pred_counts), torch.log1p(target_counts))
 
-    def _region_count_gates(self, outputs, branch_name, scores):
-        if self.region_count_gate == 'none':
+    def _split_gates_for_scores(self, outputs, branch_name, scores, mode):
+        if mode == 'none':
             return torch.ones_like(scores)
         if branch_name == 'sparse':
-            if self.region_count_gate == 'hard':
+            if mode == 'hard':
                 threshold = outputs['split_threshold'].to(device=scores.device, dtype=scores.dtype)
                 gates = ((1.0 - outputs['split_map_sparse'].to(device=scores.device, dtype=scores.dtype)) <= threshold).to(scores.dtype)
             else:
                 gates = outputs['split_map_sparse'].to(device=scores.device, dtype=scores.dtype)
         elif branch_name == 'dense':
-            if self.region_count_gate == 'hard':
+            if mode == 'hard':
                 threshold = outputs['split_threshold'].to(device=scores.device, dtype=scores.dtype)
                 gates = (outputs['split_map_dense'].to(device=scores.device, dtype=scores.dtype) > threshold).to(scores.dtype)
             else:
                 gates = outputs['split_map_dense'].to(device=scores.device, dtype=scores.dtype)
         else:
             raise ValueError(f'Unsupported branch: {branch_name}')
-        if self.region_count_gate == 'detach':
+        if mode == 'detach':
             gates = gates.detach()
         return gates.reshape_as(scores).clamp(0, 1)
+
+    def _region_count_gates(self, outputs, branch_name, scores):
+        return self._split_gates_for_scores(outputs, branch_name, scores, self.region_count_gate)
 
     def compute_region_count_loss(self, outputs, targets):
         """Local Point-to-Region count calibration on PET's real query logits."""
@@ -1112,8 +1172,11 @@ class PET(nn.Module):
         return split_target
 
     def balanced_binary_loss(self, pred, target, pos_weight=1.0, neg_weight=1.0, eps=1e-6):
-        pred = pred.clamp(eps, 1.0 - eps)
-        raw_loss = F.binary_cross_entropy(pred, target, reduction='none')
+        # This receives sigmoid probabilities, not logits. Avoid
+        # F.binary_cross_entropy here because PyTorch rejects it under AMP.
+        pred = _finite_tensor(pred.float(), nan=0.5, posinf=1.0, neginf=0.0).clamp(eps, 1.0 - eps)
+        target = target.to(device=pred.device, dtype=pred.dtype)
+        raw_loss = -(target * pred.log() + (1.0 - target) * (1.0 - pred).log())
         pos_mask = target >= 0.5
         neg_mask = ~pos_mask
         loss = raw_loss.sum() * 0.0
@@ -1169,17 +1232,69 @@ class PET(nn.Module):
         threshold = self.get_split_threshold(split_map)
         return split_map >= threshold
 
+    def _flat_score_topk_mask(self, scores, keep_ratio=0.035):
+        """Keep a small top-k slice when person scores are still near-random."""
+        flat = scores.detach().reshape(-1).float()
+        if flat.numel() == 0:
+            return torch.zeros_like(scores, dtype=torch.bool)
+        k = max(1, int(math.ceil(keep_ratio * flat.numel())))
+        _, top_idx = torch.topk(flat, k=k)
+        mask = torch.zeros(flat.numel(), dtype=torch.bool, device=scores.device)
+        mask[top_idx] = True
+        return mask.view_as(scores)
+
     def get_score_mask(self, scores):
+        flat = scores.detach().reshape(-1).float()
+        if flat.numel() == 0:
+            return torch.zeros_like(scores, dtype=torch.bool)
+
+        score_std = float(flat.std(unbiased=False).item()) if flat.numel() > 1 else 0.0
+        score_max = float(flat.max().item())
+
         if self.score_threshold >= 0:
-            threshold = torch.as_tensor(self.score_threshold, dtype=scores.dtype, device=scores.device)
+            fixed_th = float(self.score_threshold)
+            threshold = torch.as_tensor(fixed_th, dtype=scores.dtype, device=scores.device)
         else:
-            flat = scores.detach().reshape(-1).float()
-            if flat.numel() == 0:
-                threshold = torch.as_tensor(0.5, dtype=scores.dtype, device=scores.device)
-            else:
-                threshold = torch.quantile(flat, 0.95).to(dtype=scores.dtype, device=scores.device)
-                threshold = threshold.clamp(0.05, 0.95)
-        return scores >= threshold
+            fixed_th = None
+            threshold = torch.quantile(flat, 0.95).to(dtype=scores.dtype, device=scores.device)
+            threshold = threshold.clamp(0.05, 0.95)
+
+        def _topk_mask(max_fraction):
+            max_fraction = float(max(1e-4, min(max_fraction, 1.0)))
+            k = max(1, int(math.ceil(max_fraction * flat.numel())))
+            _, top_idx = torch.topk(flat, k=k)
+            keep = torch.zeros(flat.numel(), dtype=torch.bool, device=scores.device)
+            keep[top_idx] = True
+            return keep.view_as(scores)
+
+        # Early/weak classifiers can pass most queries and explode pred_cnt.
+        # Use an adaptive cap instead of a fixed keep ratio so counts still move
+        # with confidence improvements across epochs.
+        if score_std < 0.03 and score_max <= 0.75 and flat.numel() > 32:
+            dynamic_cap = 0.02 + 0.20 * max(score_max - 0.5, 0.0) + 1.5 * score_std
+            dynamic_cap = max(0.02, min(dynamic_cap, 0.20))
+            adaptive_floor = max(float(threshold.item()), 0.53)
+            adaptive_floor = max(adaptive_floor, 0.5 + 6.0 * score_std)
+            adaptive_floor = min(adaptive_floor, 0.99)
+            adaptive_threshold = torch.as_tensor(adaptive_floor, dtype=scores.dtype, device=scores.device)
+            mask = scores > adaptive_threshold
+            pass_frac = float(mask.sum().item()) / float(flat.numel())
+            if pass_frac > dynamic_cap:
+                return _topk_mask(dynamic_cap)
+            if not bool(mask.any().item()):
+                return _topk_mask(dynamic_cap)
+            return mask
+
+        mask = scores > threshold
+
+        # Partially trained head still leaking too many weak positives.
+        if fixed_th is not None and flat.numel() > 32:
+            pass_frac = mask.sum().float() / float(flat.numel())
+            if pass_frac > 0.20 and score_max <= 0.75:
+                leak_cap = 0.03 + 0.20 * max(score_max - fixed_th, 0.0)
+                leak_cap = max(0.03, min(leak_cap, 0.25))
+                mask = _topk_mask(leak_cap)
+        return mask
 
     def apply_eval_point_nms(self, pred_logits, pred_points, pred_offsets, points_queries, scores, img_shape):
         radius = float(self.eval_nms_radius)
@@ -1239,6 +1354,34 @@ class PET(nn.Module):
             return split_values > threshold
         raise ValueError(f'Unsupported branch: {branch}')
 
+    def apply_eval_soft_split_gate(self, output, split_map, branch, scores):
+        mode = self.eval_soft_split_gate
+        if mode == 'none' or output is None or scores.numel() == 0:
+            return scores
+        if mode == 'query':
+            points = output['points_queries']
+        else:
+            points = output['pred_points']
+        points = points.to(device=split_map.device, dtype=split_map.dtype).clamp(0.0, 1.0)
+        grid = torch.stack(
+            [points[:, 1] * 2.0 - 1.0, points[:, 0] * 2.0 - 1.0],
+            dim=-1,
+        ).view(1, -1, 1, 2)
+        split_values = F.grid_sample(
+            split_map[:1],
+            grid,
+            mode='bilinear',
+            padding_mode='border',
+            align_corners=False,
+        ).view_as(scores).to(device=scores.device, dtype=scores.dtype)
+        if branch == 'sparse':
+            responsibility = 1.0 - split_values
+        elif branch == 'dense':
+            responsibility = split_values
+        else:
+            raise ValueError(f'Unsupported branch: {branch}')
+        return scores * responsibility.clamp(0.0, 1.0)
+
     def pet_forward(self, samples, features, pos, **kwargs):
         # context encoding
         src, mask = features[self.encode_feats].decompose()
@@ -1252,12 +1395,14 @@ class PET(nn.Module):
         bs, _, src_h, src_w = src.shape
         sp_h, sp_w = src_h, src_w
         ds_h, ds_w = int(src_h * 2), int(src_w * 2)
-        split_map = self.quadtree_splitter(encode_src)        
+        split_map = self.quadtree_splitter(encode_src)
+        split_map = _finite_tensor(split_map, nan=0.5, posinf=1.0, neginf=0.0).clamp(0.0, 1.0)
         split_map_raw_sparse = F.interpolate(split_map, (sp_h, sp_w)).reshape(bs, -1)
         split_map_raw_dense = F.interpolate(split_map, (ds_h, ds_w)).reshape(bs, -1)
         split_map_dense = split_map_raw_dense
         split_map_sparse = 1 - split_map_raw_sparse
         split_threshold = self.get_split_threshold(split_map)
+        route_threshold = float(split_threshold.item() if torch.is_tensor(split_threshold) else split_threshold)
         split_mask_sparse = split_map_raw_sparse <= split_threshold
         split_mask_dense = split_map_raw_dense > split_threshold
         sparse_active = 'train' in kwargs or bool(split_mask_sparse.any().item())
@@ -1269,6 +1414,8 @@ class PET(nn.Module):
         if sparse_active:
             sparse_kwargs = dict(kwargs)
             sparse_kwargs['div'] = split_map_sparse.reshape(bs, sp_h, sp_w)
+            sparse_kwargs['div_active_threshold'] = 1.0 - route_threshold
+            sparse_kwargs['div_active_strict'] = False
             sparse_kwargs['dec_win_size'] = list(self.sparse_dec_win_size)
             outputs_sparse = self.quadtree_sparse(samples, features, context_info, **sparse_kwargs)
         else:
@@ -1278,6 +1425,8 @@ class PET(nn.Module):
         if dense_active:
             dense_kwargs = dict(kwargs)
             dense_kwargs['div'] = split_map_dense.reshape(bs, ds_h, ds_w)
+            dense_kwargs['div_active_threshold'] = route_threshold
+            dense_kwargs['div_active_strict'] = True
             dense_kwargs['dec_win_size'] = list(self.dense_dec_win_size)
             outputs_dense = self.quadtree_dense(samples, features, context_info, **dense_kwargs)
         else:
@@ -1322,7 +1471,8 @@ class PET(nn.Module):
 
         if out_sparse is not None:
             out_sparse_scores = torch.nn.functional.softmax(out_sparse['pred_logits'], -1)[..., 1]
-            index_sparse = self.get_score_mask(out_sparse_scores).to(out_sparse['pred_logits'].device)
+            out_sparse_eval_scores = self.apply_eval_soft_split_gate(out_sparse, outputs['split_map_raw'], 'sparse', out_sparse_scores)
+            index_sparse = self.get_score_mask(out_sparse_eval_scores).to(out_sparse['pred_logits'].device)
             sparse_gate = self.get_eval_branch_gate_mask(out_sparse, outputs['split_map_raw'], 'sparse')
             if sparse_gate is not None:
                 index_sparse = index_sparse & sparse_gate.to(device=index_sparse.device)
@@ -1330,11 +1480,12 @@ class PET(nn.Module):
             pred_points_parts.append(out_sparse['pred_points'][index_sparse])
             pred_offsets_parts.append(out_sparse['pred_offsets'][index_sparse])
             points_queries_parts.append(out_sparse['points_queries'][index_sparse])
-            score_parts.append(out_sparse_scores[index_sparse])
+            score_parts.append(out_sparse_eval_scores[index_sparse])
 
         if out_dense is not None:
             out_dense_scores = torch.nn.functional.softmax(out_dense['pred_logits'], -1)[..., 1]
-            index_dense = self.get_score_mask(out_dense_scores).to(out_dense['pred_logits'].device)
+            out_dense_eval_scores = self.apply_eval_soft_split_gate(out_dense, outputs['split_map_raw'], 'dense', out_dense_scores)
+            index_dense = self.get_score_mask(out_dense_eval_scores).to(out_dense['pred_logits'].device)
             dense_gate = self.get_eval_branch_gate_mask(out_dense, outputs['split_map_raw'], 'dense')
             if dense_gate is not None:
                 index_dense = index_dense & dense_gate.to(device=index_dense.device)
@@ -1342,7 +1493,7 @@ class PET(nn.Module):
             pred_points_parts.append(out_dense['pred_points'][index_dense])
             pred_offsets_parts.append(out_dense['pred_offsets'][index_dense])
             points_queries_parts.append(out_dense['points_queries'][index_dense])
-            score_parts.append(out_dense_scores[index_dense])
+            score_parts.append(out_dense_eval_scores[index_dense])
 
         if pred_logits_parts:
             pred_logits = torch.cat(pred_logits_parts, dim=0)

@@ -1,9 +1,19 @@
 """
 Modules to compute bipartite matching
 """
+from contextlib import nullcontext
+
 import torch
 from scipy.optimize import linear_sum_assignment
 from torch import nn
+
+
+def _disable_autocast_for(device):
+    if device.type != 'cuda':
+        return nullcontext()
+    if hasattr(torch, 'amp') and hasattr(torch.amp, 'autocast'):
+        return torch.amp.autocast('cuda', enabled=False)
+    return torch.cuda.amp.autocast(enabled=False)
 
 class HungarianMatcher(nn.Module):
     """
@@ -50,27 +60,36 @@ class HungarianMatcher(nn.Module):
             empty = torch.empty(0, dtype=torch.int64, device=device)
             return [(empty, empty) for _ in range(bs)]
 
-        # flatten to compute the cost matrices in a batch
-        out_prob = outputs["pred_logits"].flatten(0, 1).softmax(-1)  # [batch_size * num_queries, 2]
-        out_points = outputs["pred_points"].flatten(0, 1)  # [batch_size * num_queries, 2]
+        # The matcher can be called inside AMP autocast. Keep the assignment
+        # cost in fp32: fp16 cdist can overflow on 256/512 pixel distances.
+        with _disable_autocast_for(device):
+            # flatten to compute the cost matrices in a batch
+            pred_logits = outputs["pred_logits"].detach().float()
+            pred_points = outputs["pred_points"].detach().float()
+            pred_logits = torch.nan_to_num(pred_logits, nan=0.0, posinf=1e4, neginf=-1e4)
+            pred_points = torch.nan_to_num(pred_points, nan=0.0, posinf=1.0, neginf=0.0)
+            out_prob = pred_logits.flatten(0, 1).softmax(-1)  # [batch_size * num_queries, 2]
+            out_points = pred_points.flatten(0, 1)  # [batch_size * num_queries, 2]
 
-        # concat target labels and points
-        tgt_ids = torch.cat([v["labels"] for v in targets])
-        tgt_points = torch.cat([v["points"] for v in targets])
+            # concat target labels and points
+            tgt_ids = torch.cat([v["labels"] for v in targets]).to(device=device)
+            tgt_points = torch.cat([v["points"] for v in targets]).to(device=device, dtype=torch.float32)
+            tgt_points = torch.nan_to_num(tgt_points, nan=0.0, posinf=1e6, neginf=0.0)
 
-        # compute the classification cost, i.e., - prob[target class]
-        cost_class = -out_prob[:, tgt_ids]
+            # compute the classification cost, i.e., - prob[target class]
+            cost_class = -out_prob[:, tgt_ids]
 
-        # compute the L2 cost between points
-        img_h, img_w = outputs['img_shape']
-        out_points_abs = out_points.clone()
-        out_points_abs[:,0] *= img_h
-        out_points_abs[:,1] *= img_w
-        cost_point = torch.cdist(out_points_abs, tgt_points, p=2)
+            # compute the L2 cost between points
+            img_h, img_w = outputs['img_shape']
+            out_points_abs = out_points.clone()
+            out_points_abs[:, 0] *= float(img_h)
+            out_points_abs[:, 1] *= float(img_w)
+            cost_point = torch.cdist(out_points_abs, tgt_points, p=2)
 
-        # final cost matrix
-        C = self.cost_point * cost_point + self.cost_class * cost_class
-        C = C.view(bs, num_queries, total_targets).cpu()
+            # final cost matrix
+            C = self.cost_point * cost_point + self.cost_class * cost_class
+            C = torch.nan_to_num(C, nan=1e6, posinf=1e6, neginf=-1e6)
+            C = C.view(bs, num_queries, total_targets).cpu()
 
         indices = []
         for i, c in enumerate(C.split(sizes, -1)):

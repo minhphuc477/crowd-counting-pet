@@ -219,6 +219,8 @@ class TimmBackboneBase(nn.Module):
             )
         else:
             raise ValueError(f'Unsupported timm adapter: {adapter}. Use "lite_fpn", "direct", or "fpn".')
+        self.output_norm_4x = nn.GroupNorm(32, num_channels)
+        self.output_norm_8x = nn.GroupNorm(32, num_channels)
 
     @staticmethod
     def _to_nchw(feature: torch.Tensor, expected_channels: int) -> torch.Tensor:
@@ -233,6 +235,13 @@ class TimmBackboneBase(nn.Module):
             f'with expected channels {expected_channels}.'
         )
 
+    @staticmethod
+    def _sanitize_feature(feature: torch.Tensor) -> torch.Tensor:
+        if not torch.is_floating_point(feature):
+            return feature
+        feature = torch.nan_to_num(feature, nan=0.0, posinf=1e4, neginf=-1e4)
+        return feature.clamp(min=-1e4, max=1e4)
+
     def forward(self, tensor_list: NestedTensor):
         feats = self.backbone(tensor_list.tensors)
         feats = [self._to_nchw(feat, ch) for feat, ch in zip(feats, self.stage_channels)]
@@ -244,6 +253,14 @@ class TimmBackboneBase(nn.Module):
             features_4x, features_8x = self.lite_fpn(feats)
         else:
             features_4x, features_8x = self.direct_adapter(feats)
+
+        # timm backbones expose features with very different scale statistics
+        # from PET's VGG path. Normalize and sanitize before the transformer so
+        # fp16/bf16 training cannot poison the split map and logits with NaNs.
+        features_4x = self.output_norm_4x(self._sanitize_feature(features_4x).float())
+        features_8x = self.output_norm_8x(self._sanitize_feature(features_8x).float())
+        features_4x = self._sanitize_feature(features_4x)
+        features_8x = self._sanitize_feature(features_8x)
 
         mask = tensor_list.mask
         assert mask is not None
