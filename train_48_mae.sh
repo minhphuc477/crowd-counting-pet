@@ -21,7 +21,7 @@ CUDA_VISIBLE_DEVICES=0 python main.py \
   --epochs 100 \
   --eval_freq 2 \
   --lr_scheduler warmup_hold_cosine \
-  --warmup_epochs 0 \
+  --warmup_epochs 10 \
   --hold_epochs 0 \
   --min_lr 1e-7 \
   --lr 0.00001 \
