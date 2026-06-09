@@ -10,7 +10,7 @@ CUDA_VISIBLE_DEVICES=0 python main.py \
   --dataset_file SHA \
   --data_path "$DATA" \
   --output_dir outputs/SHA/convnextv2_base_SOTA_48 \
-  --resume outputs/SHA/convnextv2_base_gt_split_fixed/checkpoint.pth \
+  --resume outputs/SHA/convnextv2_base_gt_split_fixed/best_checkpoint.pth \
   --resume_model_only \
   --resume_allow_arch_change \
   --device cuda \
