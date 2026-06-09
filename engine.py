@@ -181,17 +181,30 @@ def _resize_nested_tensor(samples, scale):
     scale = float(scale)
     if abs(scale - 1.0) < 1e-6:
         return samples
-    h, w = samples.tensors.shape[-2:]
-    scaled_h = max(1, int(round(h * scale)))
-    scaled_w = max(1, int(round(w * scale)))
+    
+    # Extract valid image dimensions from the mask
+    # Mask is False for valid pixels, True for padding (padded on bottom/right)
+    valid_h = (~samples.mask[0, :, 0]).sum().item()
+    valid_w = (~samples.mask[0, 0, :]).sum().item()
+    
+    valid_img = samples.tensors[:, :, :valid_h, :valid_w]
+    
+    scaled_h = max(1, int(round(valid_h * scale)))
+    scaled_w = max(1, int(round(valid_w * scale)))
     pad_h = _ceil_to_multiple(scaled_h)
     pad_w = _ceil_to_multiple(scaled_w)
-    tensors = F.interpolate(samples.tensors, size=(scaled_h, scaled_w), mode='bilinear', align_corners=False)
-    mask = F.interpolate(samples.mask[:, None].float(), size=(scaled_h, scaled_w), mode='nearest')[:, 0].to(torch.bool)
-    if pad_h != scaled_h or pad_w != scaled_w:
-        tensors = F.pad(tensors, (0, pad_w - scaled_w, 0, pad_h - scaled_h), value=0.0)
-        mask = F.pad(mask, (0, pad_w - scaled_w, 0, pad_h - scaled_h), value=True)
-    return NestedTensor(tensors, mask)
+    
+    tensors = F.interpolate(valid_img, size=(scaled_h, scaled_w), mode='bilinear', align_corners=False)
+    
+    # Recreate the padded tensor and mask
+    b, c = samples.tensors.shape[:2]
+    padded_tensors = torch.zeros((b, c, pad_h, pad_w), dtype=tensors.dtype, device=tensors.device)
+    padded_tensors[:, :, :scaled_h, :scaled_w] = tensors
+    
+    padded_mask = torch.ones((b, pad_h, pad_w), dtype=torch.bool, device=tensors.device)
+    padded_mask[:, :scaled_h, :scaled_w] = False
+    
+    return NestedTensor(padded_tensors, padded_mask)
 
 
 @torch.no_grad()
