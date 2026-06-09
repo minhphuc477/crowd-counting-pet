@@ -157,6 +157,13 @@ ARCHITECTURE_OVERRIDE_KEYS = {
     'msff_ca_attn_neg_weight',
     'msff_ca_attn_start_epoch',
     'msff_ca_attn_mid_dim',
+    'cfi_mode',
+    'cfi_num_scales',
+    'cfi_mid_dim',
+    'ifi_mode',
+    'ifi_mid_dim',
+    'ifi_pe_freq',
+    'no_ifi_encode_src',
 }
 
 
@@ -270,6 +277,12 @@ def get_args_parser():
                         help='epoch to start MSFF-CA attention loss; negative uses warmup_epochs')
     parser.add_argument('--msff_ca_attn_mid_dim', default=64, type=int,
                         help='hidden channels in the MSFF-CA semantic attention head')
+    parser.add_argument('--cfi_mode', default='none', choices=('none', 'lite', 'full'),
+                        help='continuous feature interpolation between 4x/8x after input_proj and before encoder/decoders')
+    parser.add_argument('--cfi_num_scales', default=3, type=int,
+                        help='number of learned continuous blend ratios between coarse and fine features')
+    parser.add_argument('--cfi_mid_dim', default=64, type=int,
+                        help='hidden channels inside CFI refinement blocks')
     parser.add_argument('--position_embedding', default='sine', type=str, choices=('sine', 'learned', 'fourier'),
                         help="Type of positional embedding to use on top of the image features")
     # - transformer
@@ -383,8 +396,16 @@ def get_args_parser():
                         help='point-regression coefficient inside Gaussian soft APG')
     parser.add_argument('--ifi_loss_coef', default=0.0, type=float,
                         help='Interpolated Feature Guidance auxiliary loss weight; 0 disables it')
+    parser.add_argument('--ifi_mode', default='lite', choices=('lite', 'msg'),
+                        help='lite=single-map bilinear IFI; msg=multi-scale guided implicit IFI (4x+8x/context)')
+    parser.add_argument('--ifi_mid_dim', default=128, type=int,
+                        help='hidden channels inside MSG-IFI neighbor MLPs and scale gate')
+    parser.add_argument('--ifi_pe_freq', default=4, type=int,
+                        help='positional encoding frequencies for MSG-IFI sub-pixel offsets')
+    parser.add_argument('--no_ifi_encode_src', action='store_true',
+                        help='exclude context-encoded 8x map from MSG-IFI scale guidance')
     parser.add_argument('--ifi_point_coef', default=1.0, type=float,
-                        help='zero-offset coefficient inside IFI-lite APG loss')
+                        help='zero-offset coefficient inside IFI auxiliary loss')
     parser.add_argument('--ifi_neg_k', default=4, type=int,
                         help='local negative interpolated points per GT for IFI-lite')
     parser.add_argument('--ifi_neg_radius', default=12.0, type=float,

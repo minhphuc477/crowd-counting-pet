@@ -15,6 +15,8 @@ from .backbones import *
 from .transformer import *
 from .position_encoding import build_position_encoding
 from .msff_ca import build_msff_ca_enhancer, build_point_attention_targets
+from .cfi import build_cfi_module
+from .ifi_msg import build_ifi_interpolator
 
 
 def _parse_size_pair(value, default, name):
@@ -355,6 +357,7 @@ class PET(nn.Module):
             nn.Conv2d(backbone.num_channels, hidden_dim, kernel_size=1),
             ]
         )
+        self.cfi = build_cfi_module(args, hidden_dim)
         self.msff_ca_4x = build_msff_ca_enhancer(args, hidden_dim)
         self.msff_ca_8x = build_msff_ca_enhancer(args, hidden_dim)
         self.msff_ca_attn_loss_coef = float(getattr(args, 'msff_ca_attn_loss_coef', 0.0))
@@ -393,6 +396,7 @@ class PET(nn.Module):
         self.quadtree_sparse = BasePETCount(backbone, num_classes, quadtree_layer='sparse', args=args, transformer=transformer)
         self.quadtree_dense = BasePETCount(backbone, num_classes, quadtree_layer='dense', args=args, transformer=transformer)
         self.ifi_loss_coef = float(getattr(args, 'ifi_loss_coef', 0.0))
+        self.ifi_interpolator = build_ifi_interpolator(args, hidden_dim)
         if self.ifi_loss_coef > 0:
             self.ifi_cls_embed = nn.Linear(hidden_dim, num_classes + 1)
             self.ifi_coord_embed = MLP(hidden_dim, hidden_dim, 2, 3)
@@ -796,21 +800,18 @@ class PET(nn.Module):
             loss = loss + self.apg_soft_point_coef * torch.stack(point_losses).mean()
         return loss
 
-    def _sample_ifi_features(self, encode_src, batch_idx, points_abs, img_h, img_w):
+    def _sample_ifi_features(self, outputs, batch_idx, points_abs, img_h, img_w):
+        feat_4x = outputs.get('ifi_feat_4x')
+        feat_8x = outputs.get('ifi_feat_8x')
+        encode_src = outputs.get('encode_src')
+        ref = encode_src if encode_src is not None else feat_8x
+        if ref is None:
+            raise RuntimeError('IFI requires encode_src or ifi_feat_8x in training outputs')
         if points_abs.numel() == 0:
-            return encode_src.new_zeros((0, encode_src.shape[1]))
-        grid = points_abs.to(device=encode_src.device, dtype=encode_src.dtype).clone()
-        grid_x = (grid[:, 1] + 0.5) / max(float(img_w), 1.0) * 2.0 - 1.0
-        grid_y = (grid[:, 0] + 0.5) / max(float(img_h), 1.0) * 2.0 - 1.0
-        sample_grid = torch.stack([grid_x, grid_y], dim=-1).view(1, -1, 1, 2)
-        feats = F.grid_sample(
-            encode_src[batch_idx:batch_idx + 1],
-            sample_grid,
-            mode='bilinear',
-            padding_mode='border',
-            align_corners=False,
+            return ref.new_zeros((0, ref.shape[1]))
+        return self.ifi_interpolator(
+            feat_4x, feat_8x, encode_src, batch_idx, points_abs, img_h, img_w,
         )
-        return feats.squeeze(0).squeeze(-1).transpose(0, 1)
 
     def _build_ifi_negatives(self, gt_points, img_h, img_w):
         if self.ifi_neg_k <= 0 or gt_points.numel() == 0:
@@ -830,11 +831,10 @@ class PET(nn.Module):
         return neg_points
 
     def compute_ifi_apg_loss(self, outputs, targets, samples):
-        """Interpolated Feature Guidance for APG.
+        """Multi-scale guided implicit feature interpolation (MSG-IFI) loss.
 
-        APG-lite supervises nearest fixed grid queries. IFI-lite complements it
-        by sampling PET's encoded feature map at arbitrary GT and local-negative
-        positions, matching APGCC's core idea without changing PET inference.
+        Supervises classification and zero-offset regression on features sampled
+        at arbitrary GT and local-negative positions from 4x/8x/context maps.
         """
         encode_src = outputs.get('encode_src')
         if encode_src is None:
@@ -846,7 +846,7 @@ class PET(nn.Module):
             gt_points = target['points'].to(device=encode_src.device, dtype=encode_src.dtype)
             if gt_points.numel() == 0:
                 continue
-            pos_feats = self._sample_ifi_features(encode_src, batch_idx, gt_points, img_h, img_w)
+            pos_feats = self._sample_ifi_features(outputs, batch_idx, gt_points, img_h, img_w)
             pos_logits = self.ifi_cls_embed(pos_feats)
             pos_target = torch.ones(pos_logits.shape[0], dtype=torch.long, device=encode_src.device)
             cls_losses.append(F.cross_entropy(pos_logits, pos_target, reduction='mean'))
@@ -856,7 +856,7 @@ class PET(nn.Module):
 
             neg_points = self._build_ifi_negatives(gt_points, img_h, img_w)
             if neg_points.numel() > 0:
-                neg_feats = self._sample_ifi_features(encode_src, batch_idx, neg_points, img_h, img_w)
+                neg_feats = self._sample_ifi_features(outputs, batch_idx, neg_points, img_h, img_w)
                 neg_logits = self.ifi_cls_embed(neg_feats)
                 neg_target = torch.zeros(neg_logits.shape[0], dtype=torch.long, device=encode_src.device)
                 cls_losses.append(F.cross_entropy(neg_logits, neg_target, reduction='mean'))
@@ -1045,6 +1045,11 @@ class PET(nn.Module):
             return F.smooth_l1_loss(pred_counts, target_counts)
         return F.l1_loss(torch.log1p(pred_counts), torch.log1p(target_counts))
 
+    def _apply_cfi(self, feat_4x, feat_8x):
+        if getattr(self.cfi, 'enabled', False):
+            return self.cfi(feat_4x, feat_8x)
+        return feat_4x, feat_8x
+
     def _apply_msff_ca(self, module, features, return_attn=False):
         if return_attn and getattr(module, 'enabled', False):
             return module(features, return_attn=True)
@@ -1133,10 +1138,11 @@ class PET(nn.Module):
         dense_input_embed = self.pos_embed(samples)
         kwargs['dense_input_embed'] = dense_input_embed
 
-        # feature projection + multi-scale fusion / convolutional attention
+        # feature projection -> continuous interpolation -> optional MSFF-CA
         need_msff_attn = 'train' in kwargs and self.msff_ca_attn_loss_coef > 0
         proj_4x = self.input_proj[0](features['4x'].tensors)
         proj_8x = self.input_proj[1](features['8x'].tensors)
+        proj_4x, proj_8x = self._apply_cfi(proj_4x, proj_8x)
         feat_4x, attn_logits_4x = self._apply_msff_ca(self.msff_ca_4x, proj_4x, return_attn=need_msff_attn)
         feat_8x, attn_logits_8x = self._apply_msff_ca(self.msff_ca_8x, proj_8x, return_attn=need_msff_attn)
         features['4x'] = NestedTensor(feat_4x, features['4x'].mask)
@@ -1289,6 +1295,9 @@ class PET(nn.Module):
         outputs['split_threshold'] = split_threshold.detach()
         if 'train' in kwargs:
             outputs['encode_src'] = encode_src
+            if self.ifi_loss_coef > 0:
+                outputs['ifi_feat_4x'] = features['4x'].tensors
+                outputs['ifi_feat_8x'] = features['8x'].tensors
             if 'msff_ca_attn' in kwargs:
                 outputs['msff_ca_attn'] = kwargs['msff_ca_attn']
         return outputs

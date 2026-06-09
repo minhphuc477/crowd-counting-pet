@@ -53,6 +53,9 @@ def get_args_parser():
     parser.add_argument('--msff_ca_attn_neg_weight', default=0.25, type=float)
     parser.add_argument('--msff_ca_attn_start_epoch', default=-1, type=int)
     parser.add_argument('--msff_ca_attn_mid_dim', default=64, type=int)
+    parser.add_argument('--cfi_mode', default='none', choices=('none', 'lite', 'full'))
+    parser.add_argument('--cfi_num_scales', default=3, type=int)
+    parser.add_argument('--cfi_mid_dim', default=64, type=int)
     parser.add_argument('--position_embedding', default='sine', type=str, choices=('sine', 'learned', 'fourier'),
                         help="Type of positional embedding to use on top of the image features")
     # - transformer
@@ -127,6 +130,10 @@ def get_args_parser():
     parser.add_argument('--apg_soft_sigma', default=6.0, type=float)
     parser.add_argument('--apg_soft_point_coef', default=2.0, type=float)
     parser.add_argument('--ifi_loss_coef', default=0.0, type=float)
+    parser.add_argument('--ifi_mode', default='lite', choices=('lite', 'msg'))
+    parser.add_argument('--ifi_mid_dim', default=128, type=int)
+    parser.add_argument('--ifi_pe_freq', default=4, type=int)
+    parser.add_argument('--no_ifi_encode_src', action='store_true')
     parser.add_argument('--ifi_point_coef', default=1.0, type=float)
     parser.add_argument('--ifi_neg_k', default=4, type=int)
     parser.add_argument('--ifi_neg_radius', default=12.0, type=float)

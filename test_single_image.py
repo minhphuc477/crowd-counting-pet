@@ -47,6 +47,9 @@ def get_args_parser():
     parser.add_argument('--msff_ca_attn_neg_weight', default=0.25, type=float)
     parser.add_argument('--msff_ca_attn_start_epoch', default=-1, type=int)
     parser.add_argument('--msff_ca_attn_mid_dim', default=64, type=int)
+    parser.add_argument('--cfi_mode', default='none', choices=('none', 'lite', 'full'))
+    parser.add_argument('--cfi_num_scales', default=3, type=int)
+    parser.add_argument('--cfi_mid_dim', default=64, type=int)
     parser.add_argument('--position_embedding', default='sine', type=str, choices=('sine', 'learned', 'fourier'),
                         help="Type of positional embedding to use on top of the image features")
     # - transformer
