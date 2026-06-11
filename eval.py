@@ -22,6 +22,7 @@ ARCHITECTURE_OVERRIDE_KEYS = {
     'no_pretrained_backbone',
     'allow_random_backbone_fallback',
     'timm_adapter',
+    'timm_output_norm',
     'position_embedding',
     'dec_layers',
     'dim_feedforward',
@@ -74,8 +75,10 @@ def get_args_parser():
                         help='initialize the backbone randomly instead of loading timm/ImageNet weights')
     parser.add_argument('--allow_random_backbone_fallback', action='store_true',
                         help='allow timm backbones to continue with random init if pretrained weights cannot load')
-    parser.add_argument('--timm_adapter', default='lite_fpn', choices=('lite_fpn', 'direct', 'fpn'),
+    parser.add_argument('--timm_adapter', default='lite_fpn', choices=('pet_fpn', 'lite_fpn', 'direct', 'fpn'),
                         help='adapter used to map timm features into PET 4x/8x features')
+    parser.add_argument('--timm_output_norm', default='gn', choices=('gn', 'none'),
+                        help='normalization after timm feature adapter; gn preserves old timm behavior, none is VGG-like')
     parser.add_argument('--fusion_mhf_mode', default='none', choices=('none', 'cem', 'cem_msem', 'full'))
     parser.add_argument('--fusion_mhf_heads', default=1, type=int)
     parser.add_argument('--fusion_mhf_position', default='before', choices=('before', 'post'))

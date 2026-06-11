@@ -27,6 +27,7 @@ def make_args(
     backbone,
     device,
     timm_adapter,
+    timm_output_norm,
     decoder_attention,
     decoder_memory_halo,
     decoder_global_context,
@@ -46,6 +47,7 @@ def make_args(
         device=device,
         backbone=backbone,
         timm_adapter=timm_adapter,
+        timm_output_norm=timm_output_norm,
         fusion_mhf_mode=fusion_mhf_mode,
         fusion_mhf_heads=fusion_mhf_heads,
         fusion_mhf_position=fusion_mhf_position,
@@ -110,6 +112,7 @@ def check_backbone(
     image_size,
     device,
     timm_adapter,
+    timm_output_norm,
     decoder_attention,
     decoder_memory_halo,
     decoder_global_context,
@@ -129,6 +132,7 @@ def check_backbone(
         backbone,
         device,
         timm_adapter,
+        timm_output_norm,
         decoder_attention,
         decoder_memory_halo,
         decoder_global_context,
@@ -166,7 +170,8 @@ def check_backbone(
 def parse_args():
     parser = argparse.ArgumentParser(description='Validate PET backbone compatibility')
     parser.add_argument('--backbone', default='convnextv2_base')
-    parser.add_argument('--timm_adapter', default='lite_fpn', choices=('lite_fpn', 'direct', 'fpn'))
+    parser.add_argument('--timm_adapter', default='lite_fpn', choices=('pet_fpn', 'lite_fpn', 'direct', 'fpn'))
+    parser.add_argument('--timm_output_norm', default='gn', choices=('gn', 'none'))
     parser.add_argument('--all', action='store_true', help='Check vgg16_bn and every supported timm backbone')
     parser.add_argument('--height', type=int, default=256)
     parser.add_argument('--width', type=int, default=256)
@@ -199,6 +204,7 @@ def main():
                 (args.height, args.width),
                 args.device,
                 args.timm_adapter,
+                args.timm_output_norm,
                 args.decoder_attention,
                 args.decoder_memory_halo,
                 args.decoder_global_context,

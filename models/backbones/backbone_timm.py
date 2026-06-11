@@ -171,13 +171,75 @@ class LiteFPNAdapter(nn.Module):
         return p[self.reduction_to_index[4]], p[self.reduction_to_index[8]]
 
 
+class PETFPNAdapter(nn.Module):
+    """PET/VGG-style three-level FPN for timm backbones.
+
+    Official PET's VGG path feeds C3/C4/C5 into a small FPN and consumes only
+    the 4x and 8x outputs. The generic timm FPN path is contract-compatible,
+    but it is not distribution-compatible with that VGG interface. This adapter
+    keeps the same C3/C4/C5 -> P3/P4 structure for stronger backbones.
+    """
+
+    def __init__(self, stage_channels, reduction_to_index, hidden_size=256, out_size=256, out_kernel=3):
+        super().__init__()
+        missing_reductions = [reduction for reduction in (4, 8, 16) if reduction not in reduction_to_index]
+        if missing_reductions:
+            raise ValueError(
+                'pet_fpn requires timm feature reductions 4, 8, and 16; '
+                f'missing {missing_reductions}.'
+            )
+        self.index_4x = reduction_to_index[4]
+        self.index_8x = reduction_to_index[8]
+        self.index_16x = reduction_to_index[16]
+        padding = out_kernel // 2
+        self.P5_1 = nn.Conv2d(stage_channels[self.index_16x], hidden_size, kernel_size=1)
+        self.P5_2 = nn.Conv2d(hidden_size, out_size, kernel_size=out_kernel, padding=padding)
+        self.P4_1 = nn.Conv2d(stage_channels[self.index_8x], hidden_size, kernel_size=1)
+        self.P4_2 = nn.Conv2d(hidden_size, out_size, kernel_size=out_kernel, padding=padding)
+        self.P3_1 = nn.Conv2d(stage_channels[self.index_4x], hidden_size, kernel_size=1)
+        self.P3_2 = nn.Conv2d(hidden_size, out_size, kernel_size=out_kernel, padding=padding)
+
+    def forward(self, inputs):
+        c3 = inputs[self.index_4x]
+        c4 = inputs[self.index_8x]
+        c5 = inputs[self.index_16x]
+
+        p5 = self.P5_1(c5)
+        p5_upsampled = F.interpolate(p5, size=c4.shape[-2:], mode='nearest')
+        p5 = self.P5_2(p5)
+
+        p4 = self.P4_1(c4) + p5_upsampled
+        p4_upsampled = F.interpolate(p4, size=c3.shape[-2:], mode='nearest')
+        p4 = self.P4_2(p4)
+
+        p3 = self.P3_1(c3) + p4_upsampled
+        p3 = self.P3_2(p3)
+        return p3, p4
+
+
+def _make_output_norm(num_channels, norm):
+    if norm == 'none':
+        return nn.Identity()
+    if norm == 'gn':
+        return nn.GroupNorm(32, num_channels)
+    raise ValueError(f'Unsupported timm_output_norm: {norm}. Use "gn" or "none".')
+
+
 class TimmBackboneBase(nn.Module):
-    def __init__(self, backbone: nn.Module, num_channels: int, model_name: str, adapter: str = 'fpn'):
+    def __init__(
+        self,
+        backbone: nn.Module,
+        num_channels: int,
+        model_name: str,
+        adapter: str = 'fpn',
+        output_norm: str = 'gn',
+    ):
         super().__init__()
         self.backbone = backbone
         self.num_channels = num_channels
         self.model_name = model_name
         self.adapter = adapter
+        self.output_norm_name = output_norm
 
         self.feature_info = backbone.feature_info.get_dicts()
         self.stage_channels = [info['num_chs'] for info in self.feature_info]
@@ -201,6 +263,7 @@ class TimmBackboneBase(nn.Module):
             self.fpn = BackboneFPN(self.stage_channels, hidden_size=num_channels, out_size=num_channels, out_kernel=3)
             self.lite_fpn = None
             self.direct_adapter = None
+            self.pet_fpn = None
         elif adapter == 'lite_fpn':
             self.fpn = None
             self.lite_fpn = LiteFPNAdapter(
@@ -209,18 +272,31 @@ class TimmBackboneBase(nn.Module):
                 hidden_size=num_channels,
             )
             self.direct_adapter = None
+            self.pet_fpn = None
+        elif adapter == 'pet_fpn':
+            self.fpn = None
+            self.lite_fpn = None
+            self.direct_adapter = None
+            self.pet_fpn = PETFPNAdapter(
+                self.stage_channels,
+                self.output_reduction_to_index,
+                hidden_size=num_channels,
+                out_size=num_channels,
+                out_kernel=3,
+            )
         elif adapter == 'direct':
             self.fpn = None
             self.lite_fpn = None
+            self.pet_fpn = None
             self.direct_adapter = DirectFeatureAdapter(
                 self.stage_channels,
                 self.output_reduction_to_index,
                 out_size=num_channels,
             )
         else:
-            raise ValueError(f'Unsupported timm adapter: {adapter}. Use "lite_fpn", "direct", or "fpn".')
-        self.output_norm_4x = nn.GroupNorm(32, num_channels)
-        self.output_norm_8x = nn.GroupNorm(32, num_channels)
+            raise ValueError(f'Unsupported timm adapter: {adapter}. Use "pet_fpn", "lite_fpn", "direct", or "fpn".')
+        self.output_norm_4x = _make_output_norm(num_channels, output_norm)
+        self.output_norm_8x = _make_output_norm(num_channels, output_norm)
 
     @staticmethod
     def _to_nchw(feature: torch.Tensor, expected_channels: int) -> torch.Tensor:
@@ -252,6 +328,8 @@ class TimmBackboneBase(nn.Module):
             features_8x = features_fpn[self.output_reduction_to_index[8]]
         elif self.adapter == 'lite_fpn':
             features_4x, features_8x = self.lite_fpn(feats)
+        elif self.adapter == 'pet_fpn':
+            features_4x, features_8x = self.pet_fpn(feats)
         else:
             features_4x, features_8x = self.direct_adapter(feats)
 
@@ -275,7 +353,14 @@ class TimmBackboneBase(nn.Module):
 
 
 class TimmBackbone(TimmBackboneBase):
-    def __init__(self, model_name='convnextv2_base', pretrained=True, allow_pretrained_fallback=False, adapter='fpn'):
+    def __init__(
+        self,
+        model_name='convnextv2_base',
+        pretrained=True,
+        allow_pretrained_fallback=False,
+        adapter='fpn',
+        output_norm='gn',
+    ):
         timm = importlib.import_module('timm')
         actual_model_name = resolve_timm_backbone_name(model_name)
         def _create(pretrained_flag):
@@ -312,7 +397,13 @@ class TimmBackbone(TimmBackboneBase):
                 RuntimeWarning,
             )
             backbone = _create(False)
-        super().__init__(backbone, num_channels=256, model_name=actual_model_name, adapter=adapter)
+        super().__init__(
+            backbone,
+            num_channels=256,
+            model_name=actual_model_name,
+            adapter=adapter,
+            output_norm=output_norm,
+        )
 
 
 class Joiner(nn.Module):
@@ -343,6 +434,7 @@ def build_backbone_timm(args):
         pretrained=not getattr(args, 'no_pretrained_backbone', False),
         allow_pretrained_fallback=getattr(args, 'allow_random_backbone_fallback', False),
         adapter=adapter,
+        output_norm=getattr(args, 'timm_output_norm', 'gn'),
     )
     model = Joiner(backbone, position_embedding)
     model.num_channels = backbone.num_channels
