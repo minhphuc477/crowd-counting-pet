@@ -66,15 +66,18 @@ class HungarianMatcher(nn.Module):
             # flatten to compute the cost matrices in a batch
             pred_logits = outputs["pred_logits"].detach().float()
             pred_points = outputs["pred_points"].detach().float()
-            pred_logits = torch.nan_to_num(pred_logits, nan=0.0, posinf=1e4, neginf=-1e4)
-            pred_points = torch.nan_to_num(pred_points, nan=0.0, posinf=1.0, neginf=0.0)
+            if not torch.isfinite(pred_logits).all():
+                raise ValueError('HungarianMatcher received non-finite pred_logits')
+            if not torch.isfinite(pred_points).all():
+                raise ValueError('HungarianMatcher received non-finite pred_points')
             out_prob = pred_logits.flatten(0, 1).softmax(-1)  # [batch_size * num_queries, 2]
             out_points = pred_points.flatten(0, 1)  # [batch_size * num_queries, 2]
 
             # concat target labels and points
             tgt_ids = torch.cat([v["labels"] for v in targets]).to(device=device)
             tgt_points = torch.cat([v["points"] for v in targets]).to(device=device, dtype=torch.float32)
-            tgt_points = torch.nan_to_num(tgt_points, nan=0.0, posinf=1e6, neginf=0.0)
+            if not torch.isfinite(tgt_points).all():
+                raise ValueError('HungarianMatcher received non-finite target points')
 
             # compute the classification cost, i.e., - prob[target class]
             cost_class = -out_prob[:, tgt_ids]
@@ -88,7 +91,8 @@ class HungarianMatcher(nn.Module):
 
             # final cost matrix
             C = self.cost_point * cost_point + self.cost_class * cost_class
-            C = torch.nan_to_num(C, nan=1e6, posinf=1e6, neginf=-1e6)
+            if not torch.isfinite(C).all():
+                raise ValueError('HungarianMatcher produced a non-finite cost matrix')
             C = C.view(bs, num_queries, total_targets).cpu()
 
         indices = []

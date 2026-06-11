@@ -239,8 +239,9 @@ class TimmBackboneBase(nn.Module):
     def _sanitize_feature(feature: torch.Tensor) -> torch.Tensor:
         if not torch.is_floating_point(feature):
             return feature
-        feature = torch.nan_to_num(feature, nan=0.0, posinf=1e4, neginf=-1e4)
-        return feature.clamp(min=-1e4, max=1e4)
+        if not torch.isfinite(feature).all():
+            raise ValueError('timm backbone produced non-finite feature values')
+        return feature
 
     def forward(self, tensor_list: NestedTensor):
         feats = self.backbone(tensor_list.tensors)

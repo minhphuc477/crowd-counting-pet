@@ -42,12 +42,6 @@ def _parse_size_pair_list(value, default, name):
     return [_parse_size_pair(pair, None, name) for pair in value]
 
 
-def _finite_tensor(x, nan=0.0, posinf=1e4, neginf=-1e4):
-    if not torch.is_floating_point(x):
-        return x
-    return torch.nan_to_num(x, nan=nan, posinf=posinf, neginf=neginf)
-
-
 class BasePETCount(nn.Module):
     """ 
     Base PET model
@@ -59,11 +53,6 @@ class BasePETCount(nn.Module):
         hidden_dim = args.hidden_dim
 
         self.class_embed = nn.Linear(hidden_dim, num_classes + 1)
-        prior_prob = 0.01
-        bias_value = -math.log((1 - prior_prob) / prior_prob)
-        nn.init.constant_(self.class_embed.bias, 0.0)
-        self.class_embed.bias.data[1:] = bias_value
-        
         self.coord_embed = MLP(hidden_dim, hidden_dim, 2, 3)
 
         self.pq_stride = args.sparse_stride if quadtree_layer == 'sparse' else args.dense_stride
@@ -205,10 +194,7 @@ class BasePETCount(nn.Module):
         outputs_offsets[...,1] /= (img_w / 256)
 
         outputs_points = outputs_offsets[-1] + points_queries
-        outputs_logits = _finite_tensor(outputs_class[-1], nan=0.0, posinf=1e4, neginf=-1e4)
-        outputs_points = _finite_tensor(outputs_points, nan=0.0, posinf=1.0, neginf=0.0)
-        outputs_offsets_last = _finite_tensor(outputs_offsets[-1], nan=0.0, posinf=1.0, neginf=-1.0)
-        out = {'pred_logits': outputs_logits, 'pred_points': outputs_points, 'img_shape': img_shape, 'pred_offsets': outputs_offsets_last}
+        out = {'pred_logits': outputs_class[-1], 'pred_points': outputs_points, 'img_shape': img_shape, 'pred_offsets': outputs_offsets[-1]}
     
         out['points_queries'] = points_queries
         out['pq_stride'] = self.pq_stride
@@ -1140,7 +1126,7 @@ class PET(nn.Module):
     def balanced_binary_loss(self, pred, target, pos_weight=1.0, neg_weight=1.0, eps=1e-6):
         # This receives sigmoid probabilities, not logits. Avoid
         # F.binary_cross_entropy here because PyTorch rejects it under AMP.
-        pred = _finite_tensor(pred.float(), nan=0.5, posinf=1.0, neginf=0.0).clamp(eps, 1.0 - eps)
+        pred = pred.float().clamp(eps, 1.0 - eps)
         target = target.to(device=pred.device, dtype=pred.dtype)
         raw_loss = -(target * pred.log() + (1.0 - target) * (1.0 - pred).log())
         pos_mask = target >= 0.5
@@ -1354,7 +1340,6 @@ class PET(nn.Module):
         sp_h, sp_w = src_h, src_w
         ds_h, ds_w = int(src_h * 2), int(src_w * 2)
         split_map = self.quadtree_splitter(encode_src)
-        split_map = _finite_tensor(split_map, nan=0.5, posinf=1.0, neginf=0.0).clamp(0.0, 1.0)
         split_map_raw_sparse = F.interpolate(split_map, (sp_h, sp_w)).reshape(bs, -1)
         split_map_raw_dense = F.interpolate(split_map, (ds_h, ds_w)).reshape(bs, -1)
         split_map_dense = split_map_raw_dense
