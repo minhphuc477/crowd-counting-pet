@@ -495,6 +495,9 @@ class PET(nn.Module):
         self.routed_apg_loss_coef = float(getattr(args, 'routed_apg_loss_coef', 0.0))
         self.routed_apg_point_coef = float(getattr(args, 'routed_apg_point_coef', 5.0))
         self.routed_apg_pos_k = max(1, int(getattr(args, 'routed_apg_pos_k', self.apg_pos_k)))
+        self.routed_apg_bg_coef = float(getattr(args, 'routed_apg_bg_coef', 0.0))
+        self.routed_apg_bg_k = max(0, int(getattr(args, 'routed_apg_bg_k', 0)))
+        self.routed_apg_bg_min_dist = max(0.0, float(getattr(args, 'routed_apg_bg_min_dist', 12.0)))
         self.routed_apg_start_epoch = int(getattr(args, 'routed_apg_start_epoch', 0))
         self.routed_apg_end_epoch = int(getattr(args, 'routed_apg_end_epoch', -1))
         self.routed_apg_warmup_epochs = max(0, int(getattr(args, 'routed_apg_warmup_epochs', 0)))
@@ -1210,27 +1213,60 @@ class PET(nn.Module):
 
         weighted_losses = []
         weights = []
+        bg_losses = []
         for batch_idx, target in enumerate(targets):
             gt_points = target['points'].to(device=device, dtype=dtype)
             if gt_points.numel() == 0:
                 continue
             dense_resp = self._routed_apg_dense_responsibility(gt_points, split_map, batch_idx, img_h, img_w)
             sparse_resp = 1.0 - dense_resp
+            sparse_dist = torch.cdist(gt_points.to(dtype=torch.float32), query_sparse, p=2)
+            dense_dist = torch.cdist(gt_points.to(dtype=torch.float32), query_dense, p=2)
+            sparse_positive = torch.zeros(query_sparse.shape[0], dtype=torch.bool, device=device)
+            dense_positive = torch.zeros(query_dense.shape[0], dtype=torch.bool, device=device)
             for point_idx, gt_point in enumerate(gt_points):
-                sparse_idx = self._nearest_query_indices(gt_point, query_sparse, self.routed_apg_pos_k)
-                dense_idx = self._nearest_query_indices(gt_point, query_dense, self.routed_apg_pos_k)
+                k_sparse = min(self.routed_apg_pos_k, sparse_dist.shape[1])
+                k_dense = min(self.routed_apg_pos_k, dense_dist.shape[1])
+                sparse_idx = sparse_dist[point_idx].topk(k_sparse, largest=False).indices
+                dense_idx = dense_dist[point_idx].topk(k_dense, largest=False).indices
                 if sparse_idx is not None:
+                    sparse_positive[sparse_idx] = True
                     weight = sparse_resp[point_idx].to(dtype=dtype)
                     weighted_losses.append(self._routed_positive_loss(output_sparse, batch_idx, sparse_idx, gt_point) * weight)
                     weights.append(weight)
                 if dense_idx is not None:
+                    dense_positive[dense_idx] = True
                     weight = dense_resp[point_idx].to(dtype=dtype)
                     weighted_losses.append(self._routed_positive_loss(output_dense, batch_idx, dense_idx, gt_point) * weight)
                     weights.append(weight)
+            if self.routed_apg_bg_coef > 0 and self.routed_apg_bg_k > 0:
+                bg_count = max(1, int(gt_points.shape[0]) * self.routed_apg_bg_k)
+                sparse_min_dist = sparse_dist.min(dim=0).values
+                sparse_bg_mask = (~sparse_positive) & (sparse_min_dist >= self.routed_apg_bg_min_dist)
+                sparse_bg_candidates = torch.nonzero(sparse_bg_mask, as_tuple=False).flatten()
+                if sparse_bg_candidates.numel() > 0:
+                    sparse_count = min(bg_count, sparse_bg_candidates.numel())
+                    _, sparse_order = torch.topk(sparse_min_dist[sparse_bg_candidates], k=sparse_count, largest=False)
+                    sparse_bg_idx = sparse_bg_candidates[sparse_order]
+                    sparse_bg_target = torch.zeros(sparse_bg_idx.shape[0], dtype=torch.long, device=device)
+                    bg_losses.append(self.point_classification_loss(output_sparse['pred_logits'][batch_idx, sparse_bg_idx], sparse_bg_target))
+
+                dense_min_dist = dense_dist.min(dim=0).values
+                dense_bg_mask = (~dense_positive) & (dense_min_dist >= self.routed_apg_bg_min_dist)
+                dense_bg_candidates = torch.nonzero(dense_bg_mask, as_tuple=False).flatten()
+                if dense_bg_candidates.numel() > 0:
+                    dense_count = min(bg_count, dense_bg_candidates.numel())
+                    _, dense_order = torch.topk(dense_min_dist[dense_bg_candidates], k=dense_count, largest=False)
+                    dense_bg_idx = dense_bg_candidates[dense_order]
+                    dense_bg_target = torch.zeros(dense_bg_idx.shape[0], dtype=torch.long, device=device)
+                    bg_losses.append(self.point_classification_loss(output_dense['pred_logits'][batch_idx, dense_bg_idx], dense_bg_target))
 
         if not weighted_losses:
             return split_map.sum() * 0.0
-        return torch.stack(weighted_losses).sum() / (torch.stack(weights).sum() + 1e-6)
+        loss = torch.stack(weighted_losses).sum() / (torch.stack(weights).sum() + 1e-6)
+        if bg_losses:
+            loss = loss + self.routed_apg_bg_coef * torch.stack(bg_losses).mean()
+        return loss
 
     def compute_count_loss(self, outputs, targets):
         output_sparse, output_dense = outputs['sparse'], outputs['dense']

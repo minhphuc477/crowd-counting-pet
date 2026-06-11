@@ -410,6 +410,12 @@ def get_args_parser():
                         help='point-regression coefficient inside split-responsibility APG')
     parser.add_argument('--routed_apg_pos_k', default=1, type=int,
                         help='nearest point queries per GT and branch used by split-responsibility APG')
+    parser.add_argument('--routed_apg_bg_coef', default=0.0, type=float,
+                        help='local background CE weight inside split-responsibility APG; 0 disables it')
+    parser.add_argument('--routed_apg_bg_k', default=0, type=int,
+                        help='background point queries per GT and branch used by split-responsibility APG')
+    parser.add_argument('--routed_apg_bg_min_dist', default=12.0, type=float,
+                        help='minimum pixel distance from every GT for routed APG background samples')
     parser.add_argument('--routed_apg_start_epoch', default=0, type=int,
                         help='epoch when split-responsibility APG starts')
     parser.add_argument('--routed_apg_end_epoch', default=-1, type=int,
@@ -577,6 +583,7 @@ def merge_checkpoint_args(args, checkpoint):
             'qd_apg_loss_coef', 'qd_apg_point_coef', 'qd_apg_suppress_coef',
             'qd_apg_start_epoch', 'qd_apg_end_epoch', 'qd_apg_route_source',
             'routed_apg_loss_coef', 'routed_apg_point_coef', 'routed_apg_pos_k',
+            'routed_apg_bg_coef', 'routed_apg_bg_k', 'routed_apg_bg_min_dist',
             'routed_apg_start_epoch', 'routed_apg_end_epoch', 'routed_apg_warmup_epochs',
             'routed_apg_min_weight', 'routed_apg_source', 'routed_apg_gate',
             'split_loss_variant',
