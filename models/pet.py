@@ -1290,15 +1290,16 @@ class PET(nn.Module):
         return split_map >= threshold
 
     def get_score_mask(self, scores):
-        flat = scores.detach().reshape(-1).float()
-        if flat.numel() == 0:
-            return torch.zeros_like(scores, dtype=torch.bool)
         if self.score_threshold >= 0:
             threshold = torch.as_tensor(self.score_threshold, dtype=scores.dtype, device=scores.device)
         else:
-            threshold = torch.quantile(flat, 0.95).to(dtype=scores.dtype, device=scores.device)
-            threshold = threshold.clamp(0.05, 0.95)
-        return scores > threshold
+            flat = scores.detach().reshape(-1).float()
+            if flat.numel() == 0:
+                threshold = torch.as_tensor(0.5, dtype=scores.dtype, device=scores.device)
+            else:
+                threshold = torch.quantile(flat, 0.95).to(dtype=scores.dtype, device=scores.device)
+                threshold = threshold.clamp(0.05, 0.95)
+        return scores >= threshold
 
     def apply_eval_point_nms(self, pred_logits, pred_points, pred_offsets, points_queries, scores, img_shape):
         radius = float(self.eval_nms_radius)
