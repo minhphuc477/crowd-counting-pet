@@ -293,6 +293,12 @@ def get_args_parser():
     # - loss coefficients
     parser.add_argument('--ce_loss_coef', default=1.0, type=float)
     parser.add_argument('--point_loss_coef', default=5.0, type=float)
+    parser.add_argument('--class_loss_type', default='ce', choices=('ce', 'focal'),
+                        help='classification loss for person/background point-query logits')
+    parser.add_argument('--focal_alpha', default=0.25, type=float,
+                        help='person-class alpha for focal classification loss')
+    parser.add_argument('--focal_gamma', default=2.0, type=float,
+                        help='gamma for focal classification loss')
     parser.add_argument('--class_prior_prob', default=-1.0, type=float,
                         help='optional initial person prior for classification heads; <=0 keeps default init')
     parser.add_argument('--count_loss_coef', default=0.0, type=float,
@@ -529,6 +535,7 @@ def merge_checkpoint_args(args, checkpoint):
         })
         explicit_args = set(getattr(args, '_explicit_args', set()))
         aux_resume_keys = {
+            'class_loss_type', 'focal_alpha', 'focal_gamma',
             'region_count_loss_coef', 'region_count_grid', 'region_count_gate',
             'region_count_type', 'region_count_start_epoch', 'region_count_end_epoch',
             'bayesian_loss_coef', 'bayesian_sigma', 'bayesian_bg_coef',

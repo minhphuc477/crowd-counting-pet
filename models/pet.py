@@ -1447,7 +1447,8 @@ class SetCriterion(nn.Module):
         2) supervise each pair of matched ground-truth / prediction and split map
     """
     def __init__(self, num_classes, matcher, weight_dict, eos_coef, losses,
-                 negative_loss_coef=0.1, non_div_loss_coef=0.25, pet_loss_variant='paper'):
+                 negative_loss_coef=0.1, non_div_loss_coef=0.25,
+                 pet_loss_variant='paper', args=None):
         """
         Parameters:
             num_classes: one-class in crowd counting
@@ -1462,6 +1463,11 @@ class SetCriterion(nn.Module):
         self.weight_dict = weight_dict
         self.eos_coef = eos_coef
         self.losses = losses
+        self.class_loss_type = getattr(args, 'class_loss_type', 'ce')
+        if self.class_loss_type not in ('ce', 'focal'):
+            raise ValueError('class_loss_type must be one of "ce" or "focal"')
+        self.focal_alpha = float(getattr(args, 'focal_alpha', 0.25))
+        self.focal_gamma = float(getattr(args, 'focal_gamma', 2.0))
         empty_weight = torch.ones(self.num_classes + 1)
         empty_weight[0] = self.eos_coef    # coefficient for non-object background points
         self.register_buffer('empty_weight', empty_weight)
@@ -1469,6 +1475,25 @@ class SetCriterion(nn.Module):
         self.non_div_loss_coef = non_div_loss_coef
         self.pet_loss_variant = pet_loss_variant
         self.div_thrs_dict = {8: 0.0, 4: 0.5}
+
+    def classification_loss_per_query(self, src_logits, target_classes):
+        if self.class_loss_type == 'ce':
+            return F.cross_entropy(
+                src_logits.transpose(1, 2),
+                target_classes,
+                ignore_index=-1,
+                reduction='none',
+            )
+
+        valid = target_classes != -1
+        safe_targets = target_classes.clamp_min(0)
+        log_probs = F.log_softmax(src_logits, dim=-1)
+        log_pt = log_probs.gather(-1, safe_targets.unsqueeze(-1)).squeeze(-1)
+        pt = log_pt.exp()
+        alpha = src_logits.new_tensor(self.focal_alpha).clamp(0.0, 1.0)
+        alpha_t = torch.where(safe_targets == 1, alpha, 1.0 - alpha)
+        loss = -alpha_t * (1.0 - pt).pow(self.focal_gamma) * log_pt
+        return loss * valid.to(loss.dtype)
 
     def weighted_mean_loss(self, raw_loss, weights=None, eps=1e-6):
         if weights is None:
@@ -1509,12 +1534,7 @@ class SetCriterion(nn.Module):
                 weights = target_classes.clone().float()
                 weights[weights == 0] = self.empty_weight[0]
                 weights[weights == 1] = self.empty_weight[1]
-                raw_ce_loss = F.cross_entropy(
-                    src_logits.transpose(1, 2),
-                    target_classes,
-                    ignore_index=-1,
-                    reduction='none',
-                )
+                raw_ce_loss = self.classification_loss_per_query(src_logits, target_classes)
 
                 split_map = kwargs['div'].to(src_logits.device)
                 div_thrs = self.div_thrs_dict[outputs['pq_stride']]
@@ -1526,21 +1546,22 @@ class SetCriterion(nn.Module):
                 loss_ce_nondiv = (raw_ce_loss * weights * non_div_mask).sum() / ((weights * non_div_mask).sum() + eps)
                 loss_ce = loss_ce_sp + loss_ce_ds + loss_ce_nondiv
             else:
-                loss_ce = F.cross_entropy(
-                    src_logits.transpose(1, 2),
-                    target_classes,
-                    self.empty_weight,
-                    ignore_index=-1,
-                )
+                raw_ce_loss = self.classification_loss_per_query(src_logits, target_classes)
+                if self.class_loss_type == 'ce':
+                    weights = target_classes.clone().float()
+                    weights[weights == 0] = self.empty_weight[0]
+                    weights[weights == 1] = self.empty_weight[1]
+                    loss_ce = self.weighted_mean_loss(raw_ce_loss, weights)
+                else:
+                    loss_ce = self.weighted_mean_loss(raw_ce_loss)
             return {'loss_ce': loss_ce}
 
-        raw_ce_loss = F.cross_entropy(
-            src_logits.transpose(1, 2),
-            target_classes,
-            weight=self.empty_weight,
-            ignore_index=-1,
-            reduction='none',
-        )
+        raw_ce_loss = self.classification_loss_per_query(src_logits, target_classes)
+        if self.class_loss_type == 'ce':
+            class_weight = target_classes.clone().float()
+            class_weight[class_weight == 0] = self.empty_weight[0]
+            class_weight[class_weight == 1] = self.empty_weight[1]
+            raw_ce_loss = raw_ce_loss * class_weight
         if 'div' in kwargs:
             split_weight = kwargs['div'].to(src_logits.device, dtype=raw_ce_loss.dtype).reshape_as(raw_ce_loss).clamp(0, 1)
             region_weight = split_weight + self.non_div_loss_coef * (1.0 - split_weight)
@@ -1707,6 +1728,7 @@ def build_pet(args):
                              eos_coef=args.eos_coef, losses=losses,
                              negative_loss_coef=getattr(args, 'negative_loss_coef', 0.1),
                              non_div_loss_coef=getattr(args, 'non_div_loss_coef', 0.25),
-                             pet_loss_variant=getattr(args, 'pet_loss_variant', 'paper'))
+                             pet_loss_variant=getattr(args, 'pet_loss_variant', 'paper'),
+                             args=args)
     criterion.to(device)
     return model, criterion
