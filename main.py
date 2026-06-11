@@ -341,6 +341,8 @@ def get_args_parser():
                         help='minimum pixel distance from every GT for APG background samples')
     parser.add_argument('--apg_start_epoch', default=0, type=int,
                         help='epoch when APG auxiliary supervision starts')
+    parser.add_argument('--apg_warmup_epochs', default=0, type=int,
+                        help='linearly ramp APG loss weight for this many epochs after --apg_start_epoch')
     parser.add_argument('--apg_end_epoch', default=-1, type=int,
                         help='epoch after which APG auxiliary supervision turns off; negative keeps it on')
     parser.add_argument('--apg_contrastive_coef', default=0.0, type=float,
@@ -533,7 +535,7 @@ def merge_checkpoint_args(args, checkpoint):
             'bayesian_loss_gate', 'bayesian_start_epoch', 'bayesian_end_epoch',
             'apg_loss_coef', 'apg_pos_k', 'apg_point_coef',
             'apg_bg_coef', 'apg_bg_k', 'apg_bg_min_dist',
-            'apg_start_epoch', 'apg_end_epoch',
+            'apg_start_epoch', 'apg_warmup_epochs', 'apg_end_epoch',
             'apg_contrastive_coef', 'apg_neg_k', 'apg_margin',
             'apg_consistency_coef', 'apg_consistency_k', 'apg_consistency_sigma',
             'apg_soft_loss_coef', 'apg_soft_pos_k', 'apg_soft_sigma', 'apg_soft_point_coef',

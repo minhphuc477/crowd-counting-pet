@@ -451,6 +451,7 @@ class PET(nn.Module):
         self.apg_bg_k = max(0, int(getattr(args, 'apg_bg_k', 0)))
         self.apg_bg_min_dist = max(0.0, float(getattr(args, 'apg_bg_min_dist', 12.0)))
         self.apg_start_epoch = int(getattr(args, 'apg_start_epoch', 0))
+        self.apg_warmup_epochs = max(0, int(getattr(args, 'apg_warmup_epochs', 0)))
         self.apg_end_epoch = int(getattr(args, 'apg_end_epoch', -1))
         self.apg_contrastive_coef = float(getattr(args, 'apg_contrastive_coef', 0.0))
         self.apg_neg_k = max(0, int(getattr(args, 'apg_neg_k', 4)))
@@ -593,6 +594,13 @@ class PET(nn.Module):
             apg_active = epoch >= self.apg_start_epoch and (
                 self.apg_end_epoch < 0 or epoch <= self.apg_end_epoch
             )
+            if apg_active and self.apg_warmup_epochs > 0:
+                apg_weight = self.apg_loss_coef * min(
+                    1.0,
+                    float(epoch - self.apg_start_epoch + 1) / float(self.apg_warmup_epochs),
+                )
+            else:
+                apg_weight = self.apg_loss_coef
             if apg_active:
                 loss_apg_sparse = self.compute_apg_loss(output_sparse, targets)
                 loss_apg_dense = self.compute_apg_loss(output_dense, targets)
@@ -601,9 +609,9 @@ class PET(nn.Module):
                 loss_apg_dense = output_dense['pred_logits'].sum() * 0.0
             loss_dict['loss_apg_sp'] = loss_apg_sparse
             loss_dict['loss_apg_ds'] = loss_apg_dense
-            weight_dict['loss_apg_sp'] = self.apg_loss_coef
-            weight_dict['loss_apg_ds'] = self.apg_loss_coef
-            losses += (loss_apg_sparse + loss_apg_dense) * self.apg_loss_coef
+            weight_dict['loss_apg_sp'] = apg_weight
+            weight_dict['loss_apg_ds'] = apg_weight
+            losses += (loss_apg_sparse + loss_apg_dense) * apg_weight
         if self.apg_soft_loss_coef > 0:
             apg_active = epoch >= self.apg_start_epoch and (
                 self.apg_end_epoch < 0 or epoch <= self.apg_end_epoch

@@ -112,6 +112,7 @@ def get_args_parser():
     parser.add_argument('--apg_bg_k', default=0, type=int)
     parser.add_argument('--apg_bg_min_dist', default=12.0, type=float)
     parser.add_argument('--apg_start_epoch', default=0, type=int)
+    parser.add_argument('--apg_warmup_epochs', default=0, type=int)
     parser.add_argument('--apg_end_epoch', default=-1, type=int)
     parser.add_argument('--apg_contrastive_coef', default=0.0, type=float)
     parser.add_argument('--apg_neg_k', default=4, type=int)
