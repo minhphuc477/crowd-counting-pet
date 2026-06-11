@@ -1,6 +1,7 @@
 import argparse
 import json
 import random
+import sys
 from pathlib import Path
 import os
 
@@ -14,6 +15,52 @@ from datasets import build_dataset
 import util.misc as utils
 from engine import evaluate, evaluate_crowd_no_overlap
 from models import build_model
+
+
+ARCHITECTURE_OVERRIDE_KEYS = {
+    'backbone',
+    'no_pretrained_backbone',
+    'allow_random_backbone_fallback',
+    'timm_adapter',
+    'position_embedding',
+    'dec_layers',
+    'dim_feedforward',
+    'hidden_dim',
+    'dropout',
+    'nheads',
+    'transformer_activation',
+    'transformer_norm_style',
+    'decoder_attention',
+    'decoder_memory_halo',
+    'decoder_global_context',
+    'decoder_global_context_mode',
+    'enc_win_sizes',
+    'enc_shift_mode',
+    'sparse_dec_win_size',
+    'dense_dec_win_size',
+    'context_patch_size',
+    'quad_context_mixer',
+    'quad_context_levels',
+    'quad_context_shift',
+    'quad_context_mid_dim',
+    'quad_context_activation',
+    'splitter_head',
+    'splitter_hidden_dim',
+    'splitter_activation',
+    'sparse_stride',
+    'dense_stride',
+    'fusion_mhf_mode',
+    'fusion_mhf_heads',
+    'fusion_mhf_position',
+    'fusion_mhf_strength',
+    'fusion_mhf_activation',
+    'fusion_mhf_impl',
+    'fusion_fpn_type',
+    'fusion_mhf_reduction',
+    'fusion_mhf_norm',
+    'fusion_mhf_spatial_kernel',
+    'fusion_mhf_output_activation',
+}
 
 
 def get_args_parser():
@@ -226,14 +273,39 @@ def merge_checkpoint_args(args, checkpoint):
         'eval_protocol', 'resume_allow_arch_change',
         'amp_dtype', 'strict_model_checks',
     }
+    explicit_args = set(getattr(args, '_explicit_args', set()))
     if getattr(args, 'resume_allow_arch_change', False):
-        runtime_keys.update({
-            'decoder_global_context',
-            'decoder_global_context_mode',
-        })
+        runtime_keys.update(key for key in ARCHITECTURE_OVERRIDE_KEYS if key in explicit_args)
     for key in runtime_keys:
         setattr(merged, key, getattr(args, key))
+    if hasattr(args, '_explicit_args'):
+        setattr(merged, '_explicit_args', getattr(args, '_explicit_args'))
     return merged
+
+
+def checkpoint_arg(checkpoint, key, default=None):
+    checkpoint_args = checkpoint.get('args') if checkpoint is not None else None
+    if checkpoint_args is None:
+        return default
+    if isinstance(checkpoint_args, dict):
+        return checkpoint_args.get(key, default)
+    return getattr(checkpoint_args, key, default)
+
+
+def should_skip_pretrained_backbone(args, checkpoint):
+    if checkpoint is None:
+        return bool(getattr(args, 'no_pretrained_backbone', False))
+    explicit_args = set(getattr(args, '_explicit_args', set()))
+    requested_backbone = getattr(args, 'backbone', None)
+    checkpoint_backbone = checkpoint_arg(checkpoint, 'backbone', requested_backbone)
+    changed_backbone = (
+        getattr(args, 'resume_allow_arch_change', False)
+        and 'backbone' in explicit_args
+        and checkpoint_backbone != requested_backbone
+    )
+    if changed_backbone:
+        return 'no_pretrained_backbone' in explicit_args and bool(getattr(args, 'no_pretrained_backbone', False))
+    return True
 
 
 def apply_eval_overrides(args):
@@ -300,7 +372,7 @@ def main(args):
         else:
             checkpoint = torch.load(args.resume, map_location='cpu', weights_only=False)
         args = merge_checkpoint_args(args, checkpoint)
-        args.no_pretrained_backbone = True
+        args.no_pretrained_backbone = should_skip_pretrained_backbone(args, checkpoint)
     args = apply_eval_overrides(args)
     print(args)
 
@@ -400,4 +472,9 @@ def main(args):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser('PET evaluation script', parents=[get_args_parser()])
     args = parser.parse_args()
+    args._explicit_args = {
+        token[2:].split('=', 1)[0].replace('-', '_')
+        for token in sys.argv[1:]
+        if token.startswith('--')
+    }
     main(args)
