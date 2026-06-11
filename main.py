@@ -428,6 +428,20 @@ def get_args_parser():
                         help='responsibility teacher for split-responsibility APG')
     parser.add_argument('--routed_apg_gate', default='detach', choices=('detach', 'soft'),
                         help='whether split-map responsibilities backpropagate when --routed_apg_source split_map')
+    parser.add_argument('--inheritance_loss_coef', default=0.0, type=float,
+                        help='STEERER-style sparse/dense selective inheritance loss weight; 0 disables it')
+    parser.add_argument('--inheritance_sparse_coef', default=1.0, type=float,
+                        help='sparse parent occupancy term inside selective inheritance')
+    parser.add_argument('--inheritance_dense_coef', default=1.0, type=float,
+                        help='dense 2x2 child count term inside selective inheritance')
+    parser.add_argument('--inheritance_consistency_coef', default=0.25, type=float,
+                        help='simple-cell dense-child/sparse-parent consistency term')
+    parser.add_argument('--inheritance_start_epoch', default=0, type=int,
+                        help='epoch when selective inheritance starts')
+    parser.add_argument('--inheritance_end_epoch', default=-1, type=int,
+                        help='epoch after which selective inheritance turns off; negative keeps it on')
+    parser.add_argument('--inheritance_gate', default='gt_count', choices=('gt_count', 'split_map'),
+                        help='scale-selection teacher for selective inheritance')
     parser.add_argument('--eos_coef', default=0.5, type=float,
                         help="Relative classification weight of the no-object class")
     parser.add_argument('--pet_loss_variant', default='paper', choices=('paper', 'balanced'),
@@ -586,6 +600,9 @@ def merge_checkpoint_args(args, checkpoint):
             'routed_apg_bg_coef', 'routed_apg_bg_k', 'routed_apg_bg_min_dist',
             'routed_apg_start_epoch', 'routed_apg_end_epoch', 'routed_apg_warmup_epochs',
             'routed_apg_min_weight', 'routed_apg_source', 'routed_apg_gate',
+            'inheritance_loss_coef', 'inheritance_sparse_coef', 'inheritance_dense_coef',
+            'inheritance_consistency_coef', 'inheritance_start_epoch', 'inheritance_end_epoch',
+            'inheritance_gate',
             'split_loss_variant',
         }
         runtime_keys.update(key for key in aux_resume_keys if key in explicit_args)

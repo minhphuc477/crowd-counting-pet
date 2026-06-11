@@ -203,6 +203,13 @@ def get_args_parser():
     parser.add_argument('--routed_apg_min_weight', default=0.1, type=float)
     parser.add_argument('--routed_apg_source', default='gt_count', choices=('gt_count', 'split_map'))
     parser.add_argument('--routed_apg_gate', default='detach', choices=('detach', 'soft'))
+    parser.add_argument('--inheritance_loss_coef', default=0.0, type=float)
+    parser.add_argument('--inheritance_sparse_coef', default=1.0, type=float)
+    parser.add_argument('--inheritance_dense_coef', default=1.0, type=float)
+    parser.add_argument('--inheritance_consistency_coef', default=0.25, type=float)
+    parser.add_argument('--inheritance_start_epoch', default=0, type=int)
+    parser.add_argument('--inheritance_end_epoch', default=-1, type=int)
+    parser.add_argument('--inheritance_gate', default='gt_count', choices=('gt_count', 'split_map'))
     parser.add_argument('--eos_coef', default=0.5, type=float,
                         help="Relative classification weight of the no-object class")   # cross-entropy weights
     parser.add_argument('--pet_loss_variant', default='paper', choices=('paper', 'balanced'))

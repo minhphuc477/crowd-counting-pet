@@ -508,6 +508,15 @@ class PET(nn.Module):
         self.routed_apg_gate = getattr(args, 'routed_apg_gate', 'detach')
         if self.routed_apg_gate not in ('detach', 'soft'):
             raise ValueError('routed_apg_gate must be one of "detach" or "soft"')
+        self.inheritance_loss_coef = float(getattr(args, 'inheritance_loss_coef', 0.0))
+        self.inheritance_sparse_coef = float(getattr(args, 'inheritance_sparse_coef', 1.0))
+        self.inheritance_dense_coef = float(getattr(args, 'inheritance_dense_coef', 1.0))
+        self.inheritance_consistency_coef = float(getattr(args, 'inheritance_consistency_coef', 0.25))
+        self.inheritance_start_epoch = int(getattr(args, 'inheritance_start_epoch', 0))
+        self.inheritance_end_epoch = int(getattr(args, 'inheritance_end_epoch', -1))
+        self.inheritance_gate = getattr(args, 'inheritance_gate', 'gt_count')
+        if self.inheritance_gate not in ('gt_count', 'split_map'):
+            raise ValueError('inheritance_gate must be one of "gt_count" or "split_map"')
         self.sparse_dec_win_size = _parse_size_pair(
             getattr(args, 'sparse_dec_win_size', ''),
             (16, 8),
@@ -760,6 +769,17 @@ class PET(nn.Module):
             loss_dict['loss_routed_apg'] = loss_routed_apg
             weight_dict['loss_routed_apg'] = routed_apg_weight
             losses += loss_routed_apg * routed_apg_weight
+        if self.inheritance_loss_coef > 0:
+            inheritance_active = epoch >= self.inheritance_start_epoch and (
+                self.inheritance_end_epoch < 0 or epoch <= self.inheritance_end_epoch
+            )
+            if inheritance_active:
+                loss_inheritance = self.compute_inheritance_loss(outputs, targets)
+            else:
+                loss_inheritance = output_sparse['pred_logits'].sum() * 0.0
+            loss_dict['loss_inheritance'] = loss_inheritance
+            weight_dict['loss_inheritance'] = self.inheritance_loss_coef
+            losses += loss_inheritance * self.inheritance_loss_coef
 
         if self.split_loss_variant == 'paper':
             weight_split = self.quadtree_loss_coef if epoch >= warmup_ep else 0.0
@@ -1266,6 +1286,84 @@ class PET(nn.Module):
         loss = torch.stack(weighted_losses).sum() / (torch.stack(weights).sum() + 1e-6)
         if bg_losses:
             loss = loss + self.routed_apg_bg_coef * torch.stack(bg_losses).mean()
+        return loss
+
+    def build_sparse_cell_counts(self, targets, output_sparse, sp_h, sp_w):
+        device = output_sparse['pred_logits'].device
+        dtype = output_sparse['pred_logits'].dtype
+        img_h, img_w = output_sparse['img_shape']
+        counts = torch.zeros(len(targets), sp_h, sp_w, dtype=dtype, device=device)
+        for batch_idx, target in enumerate(targets):
+            points = target['points'].to(device=device, dtype=dtype)
+            if points.numel() == 0:
+                continue
+            y = torch.clamp((points[:, 0] / max(float(img_h), 1.0) * sp_h).long(), 0, sp_h - 1)
+            x = torch.clamp((points[:, 1] / max(float(img_w), 1.0) * sp_w).long(), 0, sp_w - 1)
+            linear_idx = y * sp_w + x
+            flat = counts[batch_idx].reshape(-1)
+            flat.scatter_add_(0, linear_idx, torch.ones_like(linear_idx, dtype=dtype))
+        return counts
+
+    def compute_inheritance_loss(self, outputs, targets):
+        """Selective sparse/dense inheritance for PET's quadtree branches.
+
+        Inspired by STEERER's selective inheritance, this adapts the idea to
+        PET's fixed 8x sparse and 4x dense query grids. Sparse cells with fewer
+        people should keep the sparse parent calibrated and prevent dense child
+        over-response. Dense cells supervise the sum of the 2x2 dense children,
+        matching PET's split resolution instead of using an image-level count.
+        """
+        output_sparse, output_dense = outputs['sparse'], outputs['dense']
+        sparse_scores = F.softmax(output_sparse['pred_logits'], -1)[..., 1]
+        dense_scores = F.softmax(output_dense['pred_logits'], -1)[..., 1]
+        bs, sparse_queries = sparse_scores.shape
+        dense_queries = dense_scores.shape[1]
+        sp_h = int(round(sparse_queries ** 0.5))
+        sp_w = sparse_queries // max(sp_h, 1)
+        ds_h = sp_h * 2
+        ds_w = sp_w * 2
+        if sp_h * sp_w != sparse_queries or ds_h * ds_w != dense_queries:
+            return output_sparse['pred_logits'].sum() * 0.0
+
+        sparse_map = sparse_scores.reshape(bs, sp_h, sp_w)
+        dense_map = dense_scores.reshape(bs, ds_h, ds_w)
+        dense_child_sum = dense_map.reshape(bs, sp_h, 2, sp_w, 2).sum(dim=(2, 4))
+        target_counts = self.build_sparse_cell_counts(targets, output_sparse, sp_h, sp_w)
+        target_occupancy = target_counts.clamp(0.0, 1.0)
+        target_dense_count = target_counts.clamp(0.0, 4.0)
+
+        if self.inheritance_gate == 'split_map':
+            dense_weight = F.interpolate(outputs['split_map_raw'], (sp_h, sp_w), mode='bilinear', align_corners=False)
+            dense_weight = dense_weight.reshape(bs, sp_h, sp_w).detach().to(dtype=sparse_map.dtype)
+        else:
+            dense_weight = (target_counts >= self.split_count_threshold).to(dtype=sparse_map.dtype)
+        sparse_weight = 1.0 - dense_weight
+
+        loss = sparse_map.sum() * 0.0
+        if self.inheritance_sparse_coef > 0:
+            sparse_supervision_weight = (sparse_weight + 0.25 * dense_weight).clamp(0.0, 1.0)
+            sparse_raw = F.smooth_l1_loss(sparse_map, target_occupancy, reduction='none')
+            loss = loss + self.inheritance_sparse_coef * (
+                sparse_raw * sparse_supervision_weight
+            ).sum() / (sparse_supervision_weight.sum() + 1e-6)
+        if self.inheritance_dense_coef > 0 and dense_weight.sum() > 0:
+            dense_raw = F.smooth_l1_loss(
+                torch.log1p(dense_child_sum),
+                torch.log1p(target_dense_count),
+                reduction='none',
+            )
+            loss = loss + self.inheritance_dense_coef * (
+                dense_raw * dense_weight
+            ).sum() / (dense_weight.sum() + 1e-6)
+        if self.inheritance_consistency_coef > 0 and sparse_weight.sum() > 0:
+            consistency_raw = F.smooth_l1_loss(
+                dense_child_sum,
+                sparse_map.detach(),
+                reduction='none',
+            )
+            loss = loss + self.inheritance_consistency_coef * (
+                consistency_raw * sparse_weight
+            ).sum() / (sparse_weight.sum() + 1e-6)
         return loss
 
     def compute_count_loss(self, outputs, targets):
