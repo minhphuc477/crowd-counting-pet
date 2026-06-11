@@ -92,6 +92,7 @@ def get_args_parser():
     parser.add_argument('--focal_alpha', default=0.25, type=float)
     parser.add_argument('--focal_gamma', default=2.0, type=float)
     parser.add_argument('--class_prior_prob', default=-1.0, type=float)
+    parser.add_argument('--strict_model_checks', action='store_true')
     parser.add_argument('--count_loss_coef', default=0.0, type=float)
     parser.add_argument('--count_loss_gate', default='detach', choices=('detach', 'soft', 'hard'))
     parser.add_argument('--count_loss_type', default='log_l1', choices=('log_l1', 'l1', 'smooth_l1'))
@@ -223,7 +224,7 @@ def merge_checkpoint_args(args, checkpoint):
         'checkpoint_model_key', 'deterministic', 'tta_flip', 'tta_scales',
         'eval_nms_radius', 'eval_branch_gate', 'eval_soft_split_gate',
         'eval_protocol', 'resume_allow_arch_change',
-        'amp_dtype',
+        'amp_dtype', 'strict_model_checks',
     }
     if getattr(args, 'resume_allow_arch_change', False):
         runtime_keys.update({

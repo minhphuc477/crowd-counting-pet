@@ -106,6 +106,8 @@ BACKBONE_ABLATION_PRESETS = {
 
 ARCHITECTURE_OVERRIDE_KEYS = {
     'backbone',
+    'no_pretrained_backbone',
+    'allow_random_backbone_fallback',
     'timm_adapter',
     'position_embedding',
     'dec_layers',
@@ -301,6 +303,8 @@ def get_args_parser():
                         help='gamma for focal classification loss')
     parser.add_argument('--class_prior_prob', default=-1.0, type=float,
                         help='optional initial person prior for classification heads; <=0 keeps default init')
+    parser.add_argument('--strict_model_checks', action='store_true',
+                        help='run extra PET tensor finiteness checks during model forward')
     parser.add_argument('--count_loss_coef', default=0.0, type=float,
                         help='optional L1 loss on soft predicted count; 0 disables it')
     parser.add_argument('--count_loss_gate', default='detach', choices=('detach', 'soft', 'hard'),
@@ -520,6 +524,7 @@ def merge_checkpoint_args(args, checkpoint):
         'resume', 'device', 'output_dir', 'seed', 'start_epoch',
         'resume_model_only', 'resume_allow_arch_change', 'num_workers', 'world_size', 'dist_url',
         'list_backbones', 'syn_bn', 'deterministic', 'freeze_bn', 'amp', 'amp_dtype',
+        'strict_model_checks',
         # allow overriding schedule/eval settings at resume time
         'epochs', 'batch_size', 'accum_iter', 'eval_freq', 'eval_before_train', 'eval_protocol', 'data_path', 'eval_max_size',
         'patch_size', 'patch_size_choices', 'crop_attempts', 'min_crop_points',
@@ -577,6 +582,32 @@ def checkpoint_args_snapshot(args):
         key: value for key, value in vars(args).items()
         if not key.startswith('_')
     })
+
+
+def checkpoint_arg(checkpoint, key, default=None):
+    checkpoint_args = checkpoint.get('args') if checkpoint is not None else None
+    if checkpoint_args is None:
+        return default
+    if isinstance(checkpoint_args, dict):
+        return checkpoint_args.get(key, default)
+    return getattr(checkpoint_args, key, default)
+
+
+def should_skip_pretrained_backbone(args, checkpoint):
+    if checkpoint is None:
+        return bool(getattr(args, 'no_pretrained_backbone', False))
+    explicit_args = set(getattr(args, '_explicit_args', set()))
+    requested_backbone = getattr(args, 'backbone', None)
+    checkpoint_backbone = checkpoint_arg(checkpoint, 'backbone', requested_backbone)
+    changed_backbone = (
+        getattr(args, 'resume_model_only', False)
+        and getattr(args, 'resume_allow_arch_change', False)
+        and 'backbone' in explicit_args
+        and checkpoint_backbone != requested_backbone
+    )
+    if changed_backbone:
+        return 'no_pretrained_backbone' in explicit_args and bool(getattr(args, 'no_pretrained_backbone', False))
+    return True
 
 
 def build_optimizer_param_groups(model_without_ddp, args):
@@ -707,7 +738,7 @@ def main(args):
         else:
             checkpoint = torch.load(args.resume, map_location='cpu', weights_only=False)
         args = merge_checkpoint_args(args, checkpoint)
-        args.no_pretrained_backbone = True
+        args.no_pretrained_backbone = should_skip_pretrained_backbone(args, checkpoint)
 
     if getattr(args, 'auto_backbone_recipe', False):
         apply_backbone_recipe(args)

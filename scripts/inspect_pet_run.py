@@ -43,6 +43,8 @@ KEY_ARGS = (
     'crop_attempts',
     'min_crop_points',
     'splitter_head',
+    'class_prior_prob',
+    'strict_model_checks',
     'class_loss_type',
     'focal_alpha',
     'focal_gamma',

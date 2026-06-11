@@ -140,7 +140,15 @@ class BasePETCount(nn.Module):
         # Prune inactive windows before the decoder (matches original PET).
         div = kwargs['div']
         div_win = window_partition(div.unsqueeze(1), window_size_h=dec_win_h, window_size_w=dec_win_w)
-        valid_div = (div_win > 0.5).sum(dim=0)[:, 0]
+        div_threshold = torch.as_tensor(
+            kwargs.get('div_threshold', 0.5),
+            dtype=div_win.dtype,
+            device=div_win.device,
+        )
+        if kwargs.get('div_compare', 'gt') == 'ge':
+            valid_div = (div_win >= div_threshold).sum(dim=0)[:, 0]
+        else:
+            valid_div = (div_win > div_threshold).sum(dim=0)[:, 0]
         v_idx = valid_div > 0
         query_embed_win = query_embed_win[:, v_idx]
         query_feats_win = query_feats_win[:, v_idx]
@@ -350,6 +358,8 @@ class PET(nn.Module):
     def __init__(self, backbone, num_classes, args=None):
         super().__init__()
         self.backbone = backbone
+        self.num_classes = num_classes
+        self.strict_model_checks = bool(getattr(args, 'strict_model_checks', False))
         
         # positional embedding
         self.pos_embed = build_position_encoding(args)
@@ -426,6 +436,11 @@ class PET(nn.Module):
         if self.count_loss_type not in ('log_l1', 'l1', 'smooth_l1'):
             raise ValueError('count_loss_type must be one of "log_l1", "l1", or "smooth_l1"')
         self.count_loss_start_epoch = int(getattr(args, 'count_loss_start_epoch', -1))
+        self.class_loss_type = getattr(args, 'class_loss_type', 'ce')
+        if self.class_loss_type not in ('ce', 'focal'):
+            raise ValueError('class_loss_type must be one of "ce" or "focal"')
+        self.focal_alpha = float(getattr(args, 'focal_alpha', 0.25))
+        self.focal_gamma = float(getattr(args, 'focal_gamma', 2.0))
         self.region_count_loss_coef = float(getattr(args, 'region_count_loss_coef', 0.0))
         self.region_count_grid = max(1, int(getattr(args, 'region_count_grid', 4)))
         self.region_count_gate = getattr(args, 'region_count_gate', 'detach')
@@ -500,6 +515,68 @@ class PET(nn.Module):
             )
         else:
             raise ValueError(f'Unsupported quad_context_mixer: {quad_context}. Use "none" or "lite".')
+
+    def _check_finite(self, name, tensor):
+        if self.strict_model_checks and torch.is_floating_point(tensor):
+            if not torch.isfinite(tensor).all():
+                raise ValueError(f'{name} contains non-finite values')
+
+    def validate_branch_output(self, branch_name, output, batch_size, expected_queries=None):
+        if output is None:
+            return
+        required = ('pred_logits', 'pred_points', 'pred_offsets', 'points_queries')
+        missing = [name for name in required if name not in output]
+        if missing:
+            raise ValueError(f'{branch_name} output missing keys: {missing}')
+
+        pred_logits = output['pred_logits']
+        pred_points = output['pred_points']
+        pred_offsets = output['pred_offsets']
+        points_queries = output['points_queries']
+        if pred_logits.ndim == 3:
+            if pred_logits.shape[0] != batch_size:
+                raise ValueError(
+                    f'{branch_name} batch mismatch: logits batch={pred_logits.shape[0]} expected={batch_size}'
+                )
+            num_queries = pred_logits.shape[1]
+            expected_point_shape = (batch_size, num_queries, 2)
+        elif pred_logits.ndim == 2:
+            if batch_size != 1:
+                raise ValueError(
+                    f'{branch_name} unbatched inference output is only valid for batch_size=1, got {batch_size}'
+                )
+            num_queries = pred_logits.shape[0]
+            expected_point_shape = (num_queries, 2)
+        else:
+            raise ValueError(
+                f'{branch_name} pred_logits must be [B,Q,C] or [Q,C], got {tuple(pred_logits.shape)}'
+            )
+        if pred_logits.shape[-1] != self.num_classes + 1:
+            raise ValueError(
+                f'{branch_name} class mismatch: logits classes={pred_logits.shape[-1]} '
+                f'expected={self.num_classes + 1}'
+            )
+        if expected_queries is not None and num_queries != int(expected_queries):
+            raise ValueError(
+                f'{branch_name} query mismatch: logits queries={num_queries} expected={int(expected_queries)}'
+            )
+        if tuple(pred_points.shape) != expected_point_shape:
+            raise ValueError(
+                f'{branch_name} pred_points must be {expected_point_shape}, got {tuple(pred_points.shape)}'
+            )
+        if tuple(pred_offsets.shape) != expected_point_shape:
+            raise ValueError(
+                f'{branch_name} pred_offsets must be {expected_point_shape}, got {tuple(pred_offsets.shape)}'
+            )
+        if tuple(points_queries.shape) != (num_queries, 2):
+            raise ValueError(
+                f'{branch_name} points_queries must be {(num_queries, 2)}, got {tuple(points_queries.shape)}'
+            )
+
+        self._check_finite(f'{branch_name}.pred_logits', pred_logits)
+        self._check_finite(f'{branch_name}.pred_points', pred_points)
+        self._check_finite(f'{branch_name}.pred_offsets', pred_offsets)
+        self._check_finite(f'{branch_name}.points_queries', points_queries)
 
     def compute_loss(self, outputs, criterion, targets, epoch, samples):
         """
@@ -677,6 +754,19 @@ class PET(nn.Module):
             losses += loss_split_prior * weight_split_prior
         return {'loss_dict':loss_dict, 'weight_dict':weight_dict, 'losses':losses}
 
+    def point_classification_loss(self, logits, target):
+        if logits.numel() == 0:
+            return logits.sum() * 0.0
+        if self.class_loss_type == 'ce':
+            return F.cross_entropy(logits, target, reduction='mean')
+
+        log_probs = F.log_softmax(logits, dim=-1)
+        log_pt = log_probs.gather(-1, target.unsqueeze(-1)).squeeze(-1)
+        pt = log_pt.exp()
+        alpha = logits.new_tensor(self.focal_alpha).clamp(0.0, 1.0)
+        alpha_t = torch.where(target == 1, alpha, 1.0 - alpha)
+        return (-alpha_t * (1.0 - pt).pow(self.focal_gamma) * log_pt).mean()
+
     def compute_apg_loss(self, output, targets):
         """Auxiliary Point Guidance for PET point queries.
 
@@ -712,7 +802,7 @@ class PET(nn.Module):
             nearest = torch.unique(nearest)
 
             cls_target = torch.ones(nearest.shape[0], dtype=torch.long, device=device)
-            cls_losses.append(F.cross_entropy(logits[batch_idx, nearest], cls_target, reduction='mean'))
+            cls_losses.append(self.point_classification_loss(logits[batch_idx, nearest], cls_target))
 
             if self.apg_bg_coef > 0 and self.apg_bg_k > 0:
                 min_query_dist = query_dist.min(dim=0).values
@@ -727,7 +817,7 @@ class PET(nn.Module):
                     _, order = torch.topk(min_query_dist[bg_candidates], k=bg_count, largest=False)
                     bg_idx = bg_candidates[order]
                     bg_target = torch.zeros(bg_idx.shape[0], dtype=torch.long, device=device)
-                    bg_losses.append(F.cross_entropy(logits[batch_idx, bg_idx], bg_target, reduction='mean'))
+                    bg_losses.append(self.point_classification_loss(logits[batch_idx, bg_idx], bg_target))
 
             gt_for_queries = gt_points[torch.cdist(query_abs[nearest], gt_points, p=2).argmin(dim=1)]
             gt_norm = gt_for_queries.clone()
@@ -883,7 +973,7 @@ class PET(nn.Module):
             pos_feats = self._sample_ifi_features(encode_src, batch_idx, gt_points, img_h, img_w)
             pos_logits = self.ifi_cls_embed(pos_feats)
             pos_target = torch.ones(pos_logits.shape[0], dtype=torch.long, device=encode_src.device)
-            cls_losses.append(F.cross_entropy(pos_logits, pos_target, reduction='mean'))
+            cls_losses.append(self.point_classification_loss(pos_logits, pos_target))
 
             pos_offsets = (self.ifi_coord_embed(pos_feats).sigmoid() - 0.5) * 2.0
             point_losses.append(F.smooth_l1_loss(pos_offsets, torch.zeros_like(pos_offsets), reduction='none').sum(dim=-1).mean())
@@ -893,7 +983,7 @@ class PET(nn.Module):
                 neg_feats = self._sample_ifi_features(encode_src, batch_idx, neg_points, img_h, img_w)
                 neg_logits = self.ifi_cls_embed(neg_feats)
                 neg_target = torch.zeros(neg_logits.shape[0], dtype=torch.long, device=encode_src.device)
-                cls_losses.append(F.cross_entropy(neg_logits, neg_target, reduction='mean'))
+                cls_losses.append(self.point_classification_loss(neg_logits, neg_target))
 
         if not cls_losses:
             return outputs['split_map_raw'].sum() * 0.0
@@ -918,7 +1008,7 @@ class PET(nn.Module):
         device = logits.device
         img_h, img_w = output['img_shape']
         cls_target = torch.ones(1, dtype=torch.long, device=device)
-        loss_cls = F.cross_entropy(logits[batch_idx, query_idx].unsqueeze(0), cls_target, reduction='mean')
+        loss_cls = self.point_classification_loss(logits[batch_idx, query_idx].unsqueeze(0), cls_target)
 
         gt_norm = gt_point.to(device=device, dtype=pred_points.dtype).clone()
         gt_norm[0] /= img_h
@@ -934,7 +1024,7 @@ class PET(nn.Module):
         logits = output['pred_logits']
         device = logits.device
         cls_target = torch.zeros(1, dtype=torch.long, device=device)
-        return F.cross_entropy(logits[batch_idx, query_idx].unsqueeze(0), cls_target, reduction='mean')
+        return self.point_classification_loss(logits[batch_idx, query_idx].unsqueeze(0), cls_target)
 
     def compute_qd_apg_loss(self, outputs, targets):
         """Quadtree-Dual APG.
@@ -1326,6 +1416,8 @@ class PET(nn.Module):
         if sparse_active:
             sparse_kwargs = dict(kwargs)
             sparse_kwargs['div'] = split_map_sparse.reshape(bs, sp_h, sp_w)
+            sparse_kwargs['div_threshold'] = 1.0 - split_threshold
+            sparse_kwargs['div_compare'] = 'ge'
             sparse_kwargs['dec_win_size'] = list(self.sparse_dec_win_size)
             outputs_sparse = self.quadtree_sparse(samples, features, context_info, **sparse_kwargs)
         else:
@@ -1335,10 +1427,19 @@ class PET(nn.Module):
         if dense_active:
             dense_kwargs = dict(kwargs)
             dense_kwargs['div'] = split_map_dense.reshape(bs, ds_h, ds_w)
+            dense_kwargs['div_threshold'] = split_threshold
+            dense_kwargs['div_compare'] = 'gt'
             dense_kwargs['dec_win_size'] = list(self.dense_dec_win_size)
             outputs_dense = self.quadtree_dense(samples, features, context_info, **dense_kwargs)
         else:
             outputs_dense = None
+
+        if 'train' in kwargs:
+            self.validate_branch_output('sparse', outputs_sparse, bs, expected_queries=sp_h * sp_w)
+            self.validate_branch_output('dense', outputs_dense, bs, expected_queries=ds_h * ds_w)
+        else:
+            self.validate_branch_output('sparse', outputs_sparse, bs)
+            self.validate_branch_output('dense', outputs_dense, bs)
         
         # format outputs
         outputs = dict()
