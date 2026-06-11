@@ -88,6 +88,7 @@ def get_args_parser():
     # - loss coefficients
     parser.add_argument('--ce_loss_coef', default=1.0, type=float)       # classification loss coefficient
     parser.add_argument('--point_loss_coef', default=5.0, type=float)    # regression loss coefficient
+    parser.add_argument('--class_prior_prob', default=-1.0, type=float)
     parser.add_argument('--count_loss_coef', default=0.0, type=float)
     parser.add_argument('--count_loss_gate', default='detach', choices=('detach', 'soft', 'hard'))
     parser.add_argument('--count_loss_type', default='log_l1', choices=('log_l1', 'l1', 'smooth_l1'))

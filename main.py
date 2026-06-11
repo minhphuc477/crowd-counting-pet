@@ -293,6 +293,8 @@ def get_args_parser():
     # - loss coefficients
     parser.add_argument('--ce_loss_coef', default=1.0, type=float)
     parser.add_argument('--point_loss_coef', default=5.0, type=float)
+    parser.add_argument('--class_prior_prob', default=-1.0, type=float,
+                        help='optional initial person prior for classification heads; <=0 keeps default init')
     parser.add_argument('--count_loss_coef', default=0.0, type=float,
                         help='optional L1 loss on soft predicted count; 0 disables it')
     parser.add_argument('--count_loss_gate', default='detach', choices=('detach', 'soft', 'hard'),
