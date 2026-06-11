@@ -492,6 +492,19 @@ class PET(nn.Module):
         self.qd_apg_route_source = getattr(args, 'qd_apg_route_source', 'gt_count')
         if self.qd_apg_route_source not in ('gt_count', 'split_map'):
             raise ValueError('qd_apg_route_source must be one of "gt_count" or "split_map"')
+        self.routed_apg_loss_coef = float(getattr(args, 'routed_apg_loss_coef', 0.0))
+        self.routed_apg_point_coef = float(getattr(args, 'routed_apg_point_coef', 5.0))
+        self.routed_apg_pos_k = max(1, int(getattr(args, 'routed_apg_pos_k', self.apg_pos_k)))
+        self.routed_apg_start_epoch = int(getattr(args, 'routed_apg_start_epoch', 0))
+        self.routed_apg_end_epoch = int(getattr(args, 'routed_apg_end_epoch', -1))
+        self.routed_apg_warmup_epochs = max(0, int(getattr(args, 'routed_apg_warmup_epochs', 0)))
+        self.routed_apg_min_weight = min(0.49, max(0.0, float(getattr(args, 'routed_apg_min_weight', 0.1))))
+        self.routed_apg_source = getattr(args, 'routed_apg_source', 'gt_count')
+        if self.routed_apg_source not in ('gt_count', 'split_map'):
+            raise ValueError('routed_apg_source must be one of "gt_count" or "split_map"')
+        self.routed_apg_gate = getattr(args, 'routed_apg_gate', 'detach')
+        if self.routed_apg_gate not in ('detach', 'soft'):
+            raise ValueError('routed_apg_gate must be one of "detach" or "soft"')
         self.sparse_dec_win_size = _parse_size_pair(
             getattr(args, 'sparse_dec_win_size', ''),
             (16, 8),
@@ -726,6 +739,24 @@ class PET(nn.Module):
             loss_dict['loss_qd_apg'] = loss_qd_apg
             weight_dict['loss_qd_apg'] = self.qd_apg_loss_coef
             losses += loss_qd_apg * self.qd_apg_loss_coef
+        if self.routed_apg_loss_coef > 0:
+            routed_apg_active = epoch >= self.routed_apg_start_epoch and (
+                self.routed_apg_end_epoch < 0 or epoch <= self.routed_apg_end_epoch
+            )
+            if routed_apg_active and self.routed_apg_warmup_epochs > 0:
+                routed_apg_weight = self.routed_apg_loss_coef * min(
+                    1.0,
+                    float(epoch - self.routed_apg_start_epoch + 1) / float(self.routed_apg_warmup_epochs),
+                )
+            else:
+                routed_apg_weight = self.routed_apg_loss_coef
+            if routed_apg_active:
+                loss_routed_apg = self.compute_routed_apg_loss(outputs, targets)
+            else:
+                loss_routed_apg = output_sparse['pred_logits'].sum() * 0.0
+            loss_dict['loss_routed_apg'] = loss_routed_apg
+            weight_dict['loss_routed_apg'] = routed_apg_weight
+            losses += loss_routed_apg * routed_apg_weight
 
         if self.split_loss_variant == 'paper':
             weight_split = self.quadtree_loss_coef if epoch >= warmup_ep else 0.0
@@ -1080,6 +1111,126 @@ class PET(nn.Module):
         if suppress_losses:
             loss = loss + self.qd_apg_suppress_coef * torch.stack(suppress_losses).mean()
         return loss
+
+    def _query_abs_points(self, output, dtype=None):
+        point_queries = output.get('points_queries')
+        if point_queries is None:
+            return None
+        pred_points = output['pred_points']
+        img_h, img_w = output['img_shape']
+        query_abs = point_queries.to(device=pred_points.device, dtype=dtype or pred_points.dtype).clone()
+        query_abs[:, 0] *= img_h
+        query_abs[:, 1] *= img_w
+        return query_abs
+
+    def _nearest_query_indices(self, gt_point, query_abs, k):
+        if query_abs is None or query_abs.numel() == 0:
+            return None
+        # Compute matching distances in fp32 so AMP cannot distort nearest-query selection.
+        dist = torch.cdist(
+            gt_point.reshape(1, 2).to(dtype=torch.float32),
+            query_abs.to(dtype=torch.float32),
+            p=2,
+        ).squeeze(0)
+        k = min(max(1, int(k)), dist.shape[0])
+        return dist.topk(k, largest=False).indices
+
+    def _routed_apg_dense_responsibility(self, gt_points, split_map, batch_idx, img_h, img_w):
+        device = split_map.device
+        dtype = split_map.dtype
+        if gt_points.numel() == 0:
+            return torch.empty(0, dtype=dtype, device=device)
+
+        split_h, split_w = split_map.shape[-2:]
+        if self.routed_apg_source == 'split_map':
+            y_norm = (gt_points[:, 0] / max(float(img_h), 1.0)).clamp(0.0, 1.0)
+            x_norm = (gt_points[:, 1] / max(float(img_w), 1.0)).clamp(0.0, 1.0)
+            grid = torch.stack([x_norm * 2.0 - 1.0, y_norm * 2.0 - 1.0], dim=-1)
+            grid = grid.view(1, -1, 1, 2).to(device=device, dtype=dtype)
+            dense_resp = F.grid_sample(
+                split_map[batch_idx:batch_idx + 1].to(dtype=dtype),
+                grid,
+                mode='bilinear',
+                padding_mode='border',
+                align_corners=False,
+            ).reshape(-1).clamp(0.0, 1.0)
+            if self.routed_apg_gate == 'detach':
+                dense_resp = dense_resp.detach()
+        else:
+            y = torch.clamp((gt_points[:, 0] / max(float(img_h), 1.0) * split_h).long(), 0, split_h - 1)
+            x = torch.clamp((gt_points[:, 1] / max(float(img_w), 1.0) * split_w).long(), 0, split_w - 1)
+            linear_idx = y * split_w + x
+            counts = torch.zeros(split_h * split_w, dtype=torch.long, device=device)
+            counts.scatter_add_(0, linear_idx, torch.ones_like(linear_idx, dtype=torch.long))
+            dense_resp = (counts[linear_idx] >= self.split_count_threshold).to(dtype=dtype)
+
+        if self.routed_apg_min_weight > 0:
+            min_w = dense_resp.new_tensor(self.routed_apg_min_weight)
+            dense_resp = min_w + dense_resp * (1.0 - 2.0 * min_w)
+        return dense_resp.clamp(0.0, 1.0)
+
+    def _routed_positive_loss(self, output, batch_idx, query_idx, gt_point):
+        logits = output['pred_logits']
+        pred_points = output['pred_points']
+        device = logits.device
+        img_h, img_w = output['img_shape']
+        cls_target = torch.ones(query_idx.shape[0], dtype=torch.long, device=device)
+        loss_cls = self.point_classification_loss(logits[batch_idx, query_idx], cls_target)
+
+        gt_norm = gt_point.to(device=device, dtype=pred_points.dtype).reshape(1, 2).expand(query_idx.shape[0], 2).clone()
+        gt_norm[:, 0] /= img_h
+        gt_norm[:, 1] /= img_w
+        loss_point = F.smooth_l1_loss(
+            pred_points[batch_idx, query_idx],
+            gt_norm,
+            reduction='none',
+        ).sum(dim=-1).mean()
+        return loss_cls + self.routed_apg_point_coef * loss_point
+
+    def compute_routed_apg_loss(self, outputs, targets):
+        """Split-responsibility APG for PET's sparse/dense quadtree branches.
+
+        Plain APG gives both branches the same positive target. Hard QD-APG
+        chooses one branch and suppresses the other. This loss keeps APG on the
+        inference heads but weights each GT by PET's sparse/dense responsibility,
+        so uncertain routing still receives gradients without forcing duplicate
+        high-confidence proposals.
+        """
+        output_sparse = outputs['sparse']
+        output_dense = outputs['dense']
+        split_map = outputs['split_map_raw']
+        device = split_map.device
+        dtype = output_sparse['pred_points'].dtype
+        img_h, img_w = output_sparse['img_shape']
+
+        query_sparse = self._query_abs_points(output_sparse, dtype=torch.float32)
+        query_dense = self._query_abs_points(output_dense, dtype=torch.float32)
+        if query_sparse is None or query_dense is None:
+            return split_map.sum() * 0.0
+
+        weighted_losses = []
+        weights = []
+        for batch_idx, target in enumerate(targets):
+            gt_points = target['points'].to(device=device, dtype=dtype)
+            if gt_points.numel() == 0:
+                continue
+            dense_resp = self._routed_apg_dense_responsibility(gt_points, split_map, batch_idx, img_h, img_w)
+            sparse_resp = 1.0 - dense_resp
+            for point_idx, gt_point in enumerate(gt_points):
+                sparse_idx = self._nearest_query_indices(gt_point, query_sparse, self.routed_apg_pos_k)
+                dense_idx = self._nearest_query_indices(gt_point, query_dense, self.routed_apg_pos_k)
+                if sparse_idx is not None:
+                    weight = sparse_resp[point_idx].to(dtype=dtype)
+                    weighted_losses.append(self._routed_positive_loss(output_sparse, batch_idx, sparse_idx, gt_point) * weight)
+                    weights.append(weight)
+                if dense_idx is not None:
+                    weight = dense_resp[point_idx].to(dtype=dtype)
+                    weighted_losses.append(self._routed_positive_loss(output_dense, batch_idx, dense_idx, gt_point) * weight)
+                    weights.append(weight)
+
+        if not weighted_losses:
+            return split_map.sum() * 0.0
+        return torch.stack(weighted_losses).sum() / (torch.stack(weights).sum() + 1e-6)
 
     def compute_count_loss(self, outputs, targets):
         output_sparse, output_dense = outputs['sparse'], outputs['dense']

@@ -404,6 +404,24 @@ def get_args_parser():
                         help='epoch after which QD-APG turns off; negative keeps it on')
     parser.add_argument('--qd_apg_route_source', default='gt_count', choices=('gt_count', 'split_map'),
                         help='QD-APG branch teacher: GT local count target or live split map')
+    parser.add_argument('--routed_apg_loss_coef', default=0.0, type=float,
+                        help='split-responsibility APG loss weight for PET sparse/dense branches; 0 disables it')
+    parser.add_argument('--routed_apg_point_coef', default=5.0, type=float,
+                        help='point-regression coefficient inside split-responsibility APG')
+    parser.add_argument('--routed_apg_pos_k', default=1, type=int,
+                        help='nearest point queries per GT and branch used by split-responsibility APG')
+    parser.add_argument('--routed_apg_start_epoch', default=0, type=int,
+                        help='epoch when split-responsibility APG starts')
+    parser.add_argument('--routed_apg_end_epoch', default=-1, type=int,
+                        help='epoch after which split-responsibility APG turns off; negative keeps it on')
+    parser.add_argument('--routed_apg_warmup_epochs', default=0, type=int,
+                        help='linearly ramp split-responsibility APG weight for this many epochs')
+    parser.add_argument('--routed_apg_min_weight', default=0.1, type=float,
+                        help='minimum branch responsibility so the non-primary branch is not starved')
+    parser.add_argument('--routed_apg_source', default='gt_count', choices=('gt_count', 'split_map'),
+                        help='responsibility teacher for split-responsibility APG')
+    parser.add_argument('--routed_apg_gate', default='detach', choices=('detach', 'soft'),
+                        help='whether split-map responsibilities backpropagate when --routed_apg_source split_map')
     parser.add_argument('--eos_coef', default=0.5, type=float,
                         help="Relative classification weight of the no-object class")
     parser.add_argument('--pet_loss_variant', default='paper', choices=('paper', 'balanced'),
@@ -558,6 +576,9 @@ def merge_checkpoint_args(args, checkpoint):
             'ifi_neg_min_dist', 'ifi_start_epoch', 'ifi_end_epoch',
             'qd_apg_loss_coef', 'qd_apg_point_coef', 'qd_apg_suppress_coef',
             'qd_apg_start_epoch', 'qd_apg_end_epoch', 'qd_apg_route_source',
+            'routed_apg_loss_coef', 'routed_apg_point_coef', 'routed_apg_pos_k',
+            'routed_apg_start_epoch', 'routed_apg_end_epoch', 'routed_apg_warmup_epochs',
+            'routed_apg_min_weight', 'routed_apg_source', 'routed_apg_gate',
             'split_loss_variant',
         }
         runtime_keys.update(key for key in aux_resume_keys if key in explicit_args)

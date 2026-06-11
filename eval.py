@@ -191,6 +191,15 @@ def get_args_parser():
     parser.add_argument('--qd_apg_start_epoch', default=0, type=int)
     parser.add_argument('--qd_apg_end_epoch', default=-1, type=int)
     parser.add_argument('--qd_apg_route_source', default='gt_count', choices=('gt_count', 'split_map'))
+    parser.add_argument('--routed_apg_loss_coef', default=0.0, type=float)
+    parser.add_argument('--routed_apg_point_coef', default=5.0, type=float)
+    parser.add_argument('--routed_apg_pos_k', default=1, type=int)
+    parser.add_argument('--routed_apg_start_epoch', default=0, type=int)
+    parser.add_argument('--routed_apg_end_epoch', default=-1, type=int)
+    parser.add_argument('--routed_apg_warmup_epochs', default=0, type=int)
+    parser.add_argument('--routed_apg_min_weight', default=0.1, type=float)
+    parser.add_argument('--routed_apg_source', default='gt_count', choices=('gt_count', 'split_map'))
+    parser.add_argument('--routed_apg_gate', default='detach', choices=('detach', 'soft'))
     parser.add_argument('--eos_coef', default=0.5, type=float,
                         help="Relative classification weight of the no-object class")   # cross-entropy weights
     parser.add_argument('--pet_loss_variant', default='paper', choices=('paper', 'balanced'))
