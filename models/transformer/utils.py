@@ -5,6 +5,24 @@ Transformer window-rize tools
 import torch
 import torch.nn.functional as F
 
+
+def _sanitize_window_mask(mask_win):
+    """Avoid all-masked attention windows.
+
+    PyTorch MultiheadAttention produces NaNs when a query has no valid key. PET
+    can create fully padded windows after image padding. Those windows do not
+    carry real image content, so unmasking their dummy tokens is preferable to
+    masking NaNs after attention.
+    """
+    if mask_win.numel() == 0:
+        return mask_win
+    all_masked = mask_win.all(dim=1)
+    if all_masked.any():
+        mask_win = mask_win.clone()
+        mask_win[all_masked] = False
+    return mask_win
+
+
 def enc_win_partition(src, pos_embed, mask, enc_win_h, enc_win_w):
     """
     window-rize input for encoder
@@ -12,6 +30,7 @@ def enc_win_partition(src, pos_embed, mask, enc_win_h, enc_win_w):
     src_win = window_partition(src, window_size_h=enc_win_h, window_size_w=enc_win_w)
     pos_embed_win = window_partition(pos_embed, window_size_h=enc_win_h, window_size_w=enc_win_w)
     mask_win = window_partition(mask.unsqueeze(1), window_size_h=enc_win_h, window_size_w=enc_win_w).squeeze(-1).permute(1,0)
+    mask_win = _sanitize_window_mask(mask_win)
     return src_win, pos_embed_win, mask_win
 
 
@@ -61,6 +80,7 @@ def enc_win_partition_with_halo(src, pos_embed, mask, enc_win_h, enc_win_w, halo
     src_win = torch.stack(src_windows, dim=1)
     pos_embed_win = torch.stack(pos_windows, dim=1)
     mask_win = torch.stack(mask_windows, dim=0)
+    mask_win = _sanitize_window_mask(mask_win)
     return src_win, pos_embed_win, mask_win
 
 
