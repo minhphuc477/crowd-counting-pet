@@ -333,6 +333,12 @@ def get_args_parser():
                         help='nearest point queries per GT point supervised by APG')
     parser.add_argument('--apg_point_coef', default=5.0, type=float,
                         help='point-regression coefficient inside APG loss')
+    parser.add_argument('--apg_bg_coef', default=0.0, type=float,
+                        help='optional local background CE weight inside APG; 0 disables it')
+    parser.add_argument('--apg_bg_k', default=0, type=int,
+                        help='background point queries per GT used by APG local suppression')
+    parser.add_argument('--apg_bg_min_dist', default=12.0, type=float,
+                        help='minimum pixel distance from every GT for APG background samples')
     parser.add_argument('--apg_start_epoch', default=0, type=int,
                         help='epoch when APG auxiliary supervision starts')
     parser.add_argument('--apg_end_epoch', default=-1, type=int,
@@ -525,7 +531,9 @@ def merge_checkpoint_args(args, checkpoint):
             'region_count_type', 'region_count_start_epoch', 'region_count_end_epoch',
             'bayesian_loss_coef', 'bayesian_sigma', 'bayesian_bg_coef',
             'bayesian_loss_gate', 'bayesian_start_epoch', 'bayesian_end_epoch',
-            'apg_loss_coef', 'apg_pos_k', 'apg_point_coef', 'apg_start_epoch', 'apg_end_epoch',
+            'apg_loss_coef', 'apg_pos_k', 'apg_point_coef',
+            'apg_bg_coef', 'apg_bg_k', 'apg_bg_min_dist',
+            'apg_start_epoch', 'apg_end_epoch',
             'apg_contrastive_coef', 'apg_neg_k', 'apg_margin',
             'apg_consistency_coef', 'apg_consistency_k', 'apg_consistency_sigma',
             'apg_soft_loss_coef', 'apg_soft_pos_k', 'apg_soft_sigma', 'apg_soft_point_coef',

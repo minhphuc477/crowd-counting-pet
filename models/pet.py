@@ -447,6 +447,9 @@ class PET(nn.Module):
         self.apg_loss_coef = float(getattr(args, 'apg_loss_coef', 0.0))
         self.apg_pos_k = max(1, int(getattr(args, 'apg_pos_k', 1)))
         self.apg_point_coef = float(getattr(args, 'apg_point_coef', 5.0))
+        self.apg_bg_coef = float(getattr(args, 'apg_bg_coef', 0.0))
+        self.apg_bg_k = max(0, int(getattr(args, 'apg_bg_k', 0)))
+        self.apg_bg_min_dist = max(0.0, float(getattr(args, 'apg_bg_min_dist', 12.0)))
         self.apg_start_epoch = int(getattr(args, 'apg_start_epoch', 0))
         self.apg_end_epoch = int(getattr(args, 'apg_end_epoch', -1))
         self.apg_contrastive_coef = float(getattr(args, 'apg_contrastive_coef', 0.0))
@@ -688,6 +691,7 @@ class PET(nn.Module):
 
         cls_losses = []
         point_losses = []
+        bg_losses = []
         contrastive_losses = []
         consistency_losses = []
         for batch_idx, target in enumerate(targets):
@@ -701,6 +705,21 @@ class PET(nn.Module):
 
             cls_target = torch.ones(nearest.shape[0], dtype=torch.long, device=device)
             cls_losses.append(F.cross_entropy(logits[batch_idx, nearest], cls_target, reduction='mean'))
+
+            if self.apg_bg_coef > 0 and self.apg_bg_k > 0:
+                min_query_dist = query_dist.min(dim=0).values
+                positive_mask = torch.zeros(query_abs.shape[0], dtype=torch.bool, device=device)
+                positive_mask[nearest] = True
+                bg_mask = (~positive_mask) & (min_query_dist >= self.apg_bg_min_dist)
+                bg_candidates = torch.nonzero(bg_mask, as_tuple=False).flatten()
+                if bg_candidates.numel() > 0:
+                    bg_count = min(bg_candidates.numel(), max(1, int(gt_points.shape[0]) * self.apg_bg_k))
+                    # Use the nearest safe background queries: they are the
+                    # most useful local negatives but still outside the GT zone.
+                    _, order = torch.topk(min_query_dist[bg_candidates], k=bg_count, largest=False)
+                    bg_idx = bg_candidates[order]
+                    bg_target = torch.zeros(bg_idx.shape[0], dtype=torch.long, device=device)
+                    bg_losses.append(F.cross_entropy(logits[batch_idx, bg_idx], bg_target, reduction='mean'))
 
             gt_for_queries = gt_points[torch.cdist(query_abs[nearest], gt_points, p=2).argmin(dim=1)]
             gt_norm = gt_for_queries.clone()
@@ -743,6 +762,8 @@ class PET(nn.Module):
         loss_cls = torch.stack(cls_losses).mean()
         loss_point = torch.stack(point_losses).mean()
         loss = loss_cls + self.apg_point_coef * loss_point
+        if bg_losses:
+            loss = loss + self.apg_bg_coef * torch.stack(bg_losses).mean()
         if contrastive_losses:
             loss = loss + self.apg_contrastive_coef * torch.stack(contrastive_losses).mean()
         if consistency_losses:
