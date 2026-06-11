@@ -1,44 +1,36 @@
 #!/bin/bash
-export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
-export DATA=./data/ShanghaiTech/part_A
-export BATCH=10
-export ACCUM=4
+set -euo pipefail
 
-CUDA_VISIBLE_DEVICES=0 python main.py \
-  --backbone convnextv2_base \
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+export DATA="${DATA:-./data/ShanghaiTech/part_A}"
+
+CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0}" python main.py \
+  --backbone vgg16_bn \
   --timm_adapter lite_fpn \
   --dataset_file SHA \
   --data_path "$DATA" \
-  --output_dir outputs/SHA/convnextv2_base_gt_split_fixed \
+  --output_dir outputs/SHA/vgg16_bn_drop700_apg_lc_seed42 \
   --device cuda \
   --num_workers 2 \
-  --batch_size "$BATCH" \
-  --accum_iter "$ACCUM" \
-  --amp \
+  --batch_size 8 \
   --epochs 1500 \
   --eval_freq 5 \
-  --lr_scheduler warmup_hold_cosine \
-  --warmup_epochs 20 \
-  --hold_epochs 200 \
-  --min_lr 1e-7 \
-  --lr 0.00005 \
-  --lr_backbone 0.000005 \
-  --lr_backbone_adapter 0.0001 \
+  --lr_scheduler step \
+  --lr_drop 700 \
+  --lr_gamma 0.1 \
+  --lr 0.0001 \
+  --lr_backbone 0.00001 \
   --weight_decay 0.0001 \
   --clip_max_norm 0.1 \
-  --ema_decay 0.999 \
   --patch_size 256 \
-  --patch_size_choices 192,256 \
-  --crop_attempts 12 \
-  --min_crop_points 1 \
-  --split_loss_variant gt \
-  --quadtree_loss_coef 0.1 \
-  --split_count_threshold 1 \
-  --split_pos_weight 2.0 \
-  --apg_loss_coef 0.0 \
+  --crop_attempts 1 \
+  --min_crop_points 0 \
+  --pet_loss_variant paper \
+  --apg_loss_coef 1.0 \
+  --apg_pos_k 1 \
+  --apg_point_coef 5.0 \
   --score_threshold 0.5 \
   --split_threshold 0.5 \
   --eval_nms_radius 0 \
-  --eval_branch_gate query \
-  --eval_soft_split_gate none \
+  --eval_branch_gate none \
   --seed 42

@@ -133,22 +133,8 @@ class BasePETCount(nn.Module):
         # Prune inactive windows before the decoder (matches original PET).
         div = kwargs['div']
         div_win = window_partition(div.unsqueeze(1), window_size_h=dec_win_h, window_size_w=dec_win_w)
-        route_threshold = float(kwargs.get('div_active_threshold', 0.5))
-        route_strict = bool(kwargs.get('div_active_strict', True))
-        if route_strict:
-            pixel_active = div_win > route_threshold
-        else:
-            pixel_active = div_win >= route_threshold
-        valid_div = pixel_active.sum(dim=0)[:, 0]
+        valid_div = (div_win > 0.5).sum(dim=0)[:, 0]
         v_idx = valid_div > 0
-        # If routing is still flat, keep only the strongest windows instead of the
-        # full query grid (which causes pred_cnt ~= image_h/8 * image_w/8).
-        if not bool(v_idx.any().item()):
-            window_scores = div_win.squeeze(-1).mean(dim=0)
-            keep = max(1, int(math.ceil(0.25 * window_scores.shape[0])))
-            _, top_idx = torch.topk(window_scores, k=keep)
-            v_idx = torch.zeros(window_scores.shape[0], dtype=torch.bool, device=div.device)
-            v_idx[top_idx] = True
         query_embed_win = query_embed_win[:, v_idx]
         query_feats_win = query_feats_win[:, v_idx]
         points_queries_win = points_queries_win[:, v_idx].reshape(-1, 2)
@@ -189,9 +175,10 @@ class BasePETCount(nn.Module):
         points_queries[:, 0] /= img_h
         points_queries[:, 1] /= img_w
 
-        # Rescale offset range to maintain scale-invariant targets during multi-scale training
-        outputs_offsets[...,0] /= (img_h / 256)
-        outputs_offsets[...,1] /= (img_w / 256)
+        # rescale offset range during testing
+        if 'test' in kwargs:
+            outputs_offsets[...,0] /= (img_h / 256)
+            outputs_offsets[...,1] /= (img_w / 256)
 
         outputs_points = outputs_offsets[-1] + points_queries
         out = {'pred_logits': outputs_class[-1], 'pred_points': outputs_points, 'img_shape': img_shape, 'pred_offsets': outputs_offsets[-1]}
@@ -1176,69 +1163,16 @@ class PET(nn.Module):
         threshold = self.get_split_threshold(split_map)
         return split_map >= threshold
 
-    def _flat_score_topk_mask(self, scores, keep_ratio=0.035):
-        """Keep a small top-k slice when person scores are still near-random."""
-        flat = scores.detach().reshape(-1).float()
-        if flat.numel() == 0:
-            return torch.zeros_like(scores, dtype=torch.bool)
-        k = max(1, int(math.ceil(keep_ratio * flat.numel())))
-        _, top_idx = torch.topk(flat, k=k)
-        mask = torch.zeros(flat.numel(), dtype=torch.bool, device=scores.device)
-        mask[top_idx] = True
-        return mask.view_as(scores)
-
     def get_score_mask(self, scores):
         flat = scores.detach().reshape(-1).float()
         if flat.numel() == 0:
             return torch.zeros_like(scores, dtype=torch.bool)
-
-        score_std = float(flat.std(unbiased=False).item()) if flat.numel() > 1 else 0.0
-        score_max = float(flat.max().item())
-
         if self.score_threshold >= 0:
-            fixed_th = float(self.score_threshold)
-            threshold = torch.as_tensor(fixed_th, dtype=scores.dtype, device=scores.device)
+            threshold = torch.as_tensor(self.score_threshold, dtype=scores.dtype, device=scores.device)
         else:
-            fixed_th = None
             threshold = torch.quantile(flat, 0.95).to(dtype=scores.dtype, device=scores.device)
             threshold = threshold.clamp(0.05, 0.95)
-
-        def _topk_mask(max_fraction):
-            max_fraction = float(max(1e-4, min(max_fraction, 1.0)))
-            k = max(1, int(math.ceil(max_fraction * flat.numel())))
-            _, top_idx = torch.topk(flat, k=k)
-            keep = torch.zeros(flat.numel(), dtype=torch.bool, device=scores.device)
-            keep[top_idx] = True
-            return keep.view_as(scores)
-
-        # Early/weak classifiers can pass most queries and explode pred_cnt.
-        # Use an adaptive cap instead of a fixed keep ratio so counts still move
-        # with confidence improvements across epochs.
-        if score_std < 0.03 and score_max <= 0.75 and flat.numel() > 32:
-            dynamic_cap = 0.02 + 0.20 * max(score_max - 0.5, 0.0) + 1.5 * score_std
-            dynamic_cap = max(0.02, min(dynamic_cap, 0.20))
-            adaptive_floor = max(float(threshold.item()), 0.53)
-            adaptive_floor = max(adaptive_floor, 0.5 + 6.0 * score_std)
-            adaptive_floor = min(adaptive_floor, 0.99)
-            adaptive_threshold = torch.as_tensor(adaptive_floor, dtype=scores.dtype, device=scores.device)
-            mask = scores > adaptive_threshold
-            pass_frac = float(mask.sum().item()) / float(flat.numel())
-            if pass_frac > dynamic_cap:
-                return _topk_mask(dynamic_cap)
-            if not bool(mask.any().item()):
-                return _topk_mask(dynamic_cap)
-            return mask
-
-        mask = scores > threshold
-
-        # Partially trained head still leaking too many weak positives.
-        if fixed_th is not None and flat.numel() > 32:
-            pass_frac = mask.sum().float() / float(flat.numel())
-            if pass_frac > 0.20 and score_max <= 0.75:
-                leak_cap = 0.03 + 0.20 * max(score_max - fixed_th, 0.0)
-                leak_cap = max(0.03, min(leak_cap, 0.25))
-                mask = _topk_mask(leak_cap)
-        return mask
+        return scores > threshold
 
     def apply_eval_point_nms(self, pred_logits, pred_points, pred_offsets, points_queries, scores, img_shape):
         radius = float(self.eval_nms_radius)
@@ -1345,7 +1279,6 @@ class PET(nn.Module):
         split_map_dense = split_map_raw_dense
         split_map_sparse = 1 - split_map_raw_sparse
         split_threshold = self.get_split_threshold(split_map)
-        route_threshold = float(split_threshold.item() if torch.is_tensor(split_threshold) else split_threshold)
         split_mask_sparse = split_map_raw_sparse <= split_threshold
         split_mask_dense = split_map_raw_dense > split_threshold
         sparse_active = 'train' in kwargs or bool(split_mask_sparse.any().item())
@@ -1357,8 +1290,6 @@ class PET(nn.Module):
         if sparse_active:
             sparse_kwargs = dict(kwargs)
             sparse_kwargs['div'] = split_map_sparse.reshape(bs, sp_h, sp_w)
-            sparse_kwargs['div_active_threshold'] = 1.0 - route_threshold
-            sparse_kwargs['div_active_strict'] = False
             sparse_kwargs['dec_win_size'] = list(self.sparse_dec_win_size)
             outputs_sparse = self.quadtree_sparse(samples, features, context_info, **sparse_kwargs)
         else:
@@ -1368,8 +1299,6 @@ class PET(nn.Module):
         if dense_active:
             dense_kwargs = dict(kwargs)
             dense_kwargs['div'] = split_map_dense.reshape(bs, ds_h, ds_w)
-            dense_kwargs['div_active_threshold'] = route_threshold
-            dense_kwargs['div_active_strict'] = True
             dense_kwargs['dec_win_size'] = list(self.dense_dec_win_size)
             outputs_dense = self.quadtree_dense(samples, features, context_info, **dense_kwargs)
         else:

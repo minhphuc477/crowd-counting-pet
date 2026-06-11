@@ -1,16 +1,14 @@
-#!/bin/bash
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 export DATA=./data/ShanghaiTech/part_A
 export BATCH=4
 export ACCUM=10
 
 CUDA_VISIBLE_DEVICES=0 python main.py \
-  --backbone convnextv2_base \
-  --timm_adapter lite_fpn \
+  --backbone vgg16_bn \
   --dataset_file SHA \
   --data_path "$DATA" \
-  --output_dir outputs/SHA/convnextv2_base_SOTA_48 \
-  --resume outputs/SHA/convnextv2_base_gt_split_fixed/best_checkpoint.pth \
+  --output_dir outputs/SHA/vgg16_bayesian_48 \
+  --resume outputs/SHA/vgg16_bn_drop700_apg_lc_seed42/best_checkpoint.pth \
   --resume_model_only \
   --resume_allow_arch_change \
   --device cuda \
@@ -26,9 +24,7 @@ CUDA_VISIBLE_DEVICES=0 python main.py \
   --min_lr 1e-7 \
   --lr 0.00001 \
   --lr_backbone 0.000001 \
-  --lr_backbone_adapter 0.00002 \
   --weight_decay 0.0001 \
-  --clip_max_norm 0.1 \
   --ema_decay 0.999 \
   --patch_size 256 \
   --patch_size_choices 192,256 \
@@ -38,9 +34,9 @@ CUDA_VISIBLE_DEVICES=0 python main.py \
   --quadtree_loss_coef 0.1 \
   --split_count_threshold 1 \
   --split_pos_weight 2.0 \
-  --bayesian_loss_coef 1.0 \
+  --bayesian_loss_coef 0.05 \
   --bayesian_sigma 8.0 \
-  --bayesian_bg_coef 0.05 \
+  --bayesian_bg_coef 0.02 \
   --bayesian_loss_gate detach \
   --score_threshold 0.5 \
   --split_threshold 0.5 \
