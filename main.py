@@ -144,6 +144,29 @@ ARCHITECTURE_OVERRIDE_KEYS = {
     'fusion_mhf_spatial_kernel',
     'fusion_mhf_output_activation',
     'vgg_fpn_main_lr',
+    'msff_ca_mode',
+    'msff_ca_stacks',
+    'msff_ca_dilations',
+    'msff_ca_reduction',
+    'msff_ca_spatial_kernel',
+    'msff_ca_attn_loss_coef',
+    'msff_ca_attn_sigma',
+    'msff_ca_attn_weight_8x',
+    'msff_ca_attn_weight_4x',
+    'msff_ca_attn_pos_weight',
+    'msff_ca_attn_neg_weight',
+    'msff_ca_attn_start_epoch',
+    'msff_ca_attn_mid_dim',
+    'msff_calib_mode',
+    'msff_foreground_gate',
+    'msff_foreground_floor',
+    'cfi_mode',
+    'cfi_num_scales',
+    'cfi_mid_dim',
+    'ifi_mode',
+    'ifi_mid_dim',
+    'ifi_pe_freq',
+    'no_ifi_encode_src',
 }
 
 
@@ -232,6 +255,45 @@ def get_args_parser():
                         help='spatial kernel size for VMambaCC-style MSEM')
     parser.add_argument('--fusion_mhf_output_activation', default='none', choices=('none', 'sigmoid'),
                         help='none follows the VMambaCC paper equation; sigmoid is a bounded ablation')
+    parser.add_argument('--msff_ca_mode', default='none', choices=('none', 'msca', 'attn', 'full'),
+                        help='multi-scale feature fusion + convolutional attention after input_proj; '
+                             'msca=DCAM only, attn=channel+spatial attention, full=both')
+    parser.add_argument('--msff_ca_stacks', default=1, type=int,
+                        help='number of stacked DCAM blocks when --msff_ca_mode includes msca')
+    parser.add_argument('--msff_ca_dilations', default='2,4,6', type=str,
+                        help='comma-separated dilation rates for DCAM branches')
+    parser.add_argument('--msff_ca_reduction', default=4, type=int,
+                        help='channel reduction ratio inside convolutional attention')
+    parser.add_argument('--msff_ca_spatial_kernel', default=7, type=int,
+                        help='spatial attention kernel size for --msff_ca_mode attn/full')
+    parser.add_argument('--msff_ca_attn_loss_coef', default=0.0, type=float,
+                        help='auxiliary SAM-style BCE loss on MSFF-CA foreground maps from GT points')
+    parser.add_argument('--msff_ca_attn_sigma', default=8.0, type=float,
+                        help='Gaussian radius in image pixels for GT point attention targets')
+    parser.add_argument('--msff_ca_attn_weight_8x', default=1.0, type=float,
+                        help='scale weight for 8x MSFF-CA attention supervision')
+    parser.add_argument('--msff_ca_attn_weight_4x', default=0.5, type=float,
+                        help='scale weight for 4x MSFF-CA attention supervision')
+    parser.add_argument('--msff_ca_attn_pos_weight', default=1.0, type=float,
+                        help='positive-pixel weight for balanced MSFF-CA attention BCE')
+    parser.add_argument('--msff_ca_attn_neg_weight', default=0.25, type=float,
+                        help='negative-pixel weight for balanced MSFF-CA attention BCE')
+    parser.add_argument('--msff_ca_attn_start_epoch', default=-1, type=int,
+                        help='epoch to start MSFF-CA attention loss; negative uses warmup_epochs')
+    parser.add_argument('--msff_ca_attn_mid_dim', default=64, type=int,
+                        help='hidden channels in the MSFF-CA semantic attention head')
+    parser.add_argument('--msff_calib_mode', default='none', choices=('none', 'full'),
+                        help='full wires MSFF foreground into query scores, shared count calibration, and GT-first split loss')
+    parser.add_argument('--msff_foreground_gate', action='store_true',
+                        help='multiply query person scores by MSFF foreground maps (auto-enabled by --msff_calib_mode full)')
+    parser.add_argument('--msff_foreground_floor', default=0.1, type=float,
+                        help='minimum MSFF foreground multiplier applied to query scores')
+    parser.add_argument('--cfi_mode', default='none', choices=('none', 'lite', 'full'),
+                        help='continuous feature interpolation between 4x/8x after input_proj and before encoder/decoders')
+    parser.add_argument('--cfi_num_scales', default=3, type=int,
+                        help='number of learned continuous blend ratios between coarse and fine features')
+    parser.add_argument('--cfi_mid_dim', default=64, type=int,
+                        help='hidden channels inside CFI refinement blocks')
     parser.add_argument('--position_embedding', default='sine', type=str, choices=('sine', 'learned', 'fourier'),
                         help="Type of positional embedding to use on top of the image features")
     # - transformer
@@ -357,8 +419,16 @@ def get_args_parser():
                         help='point-regression coefficient inside Gaussian soft APG')
     parser.add_argument('--ifi_loss_coef', default=0.0, type=float,
                         help='Interpolated Feature Guidance auxiliary loss weight; 0 disables it')
+    parser.add_argument('--ifi_mode', default='lite', choices=('lite', 'msg'),
+                        help='lite=single-map bilinear IFI; msg=multi-scale guided implicit IFI (4x+8x/context)')
+    parser.add_argument('--ifi_mid_dim', default=128, type=int,
+                        help='hidden channels inside MSG-IFI neighbor MLPs and scale gate')
+    parser.add_argument('--ifi_pe_freq', default=4, type=int,
+                        help='positional encoding frequencies for MSG-IFI sub-pixel offsets')
+    parser.add_argument('--no_ifi_encode_src', action='store_true',
+                        help='exclude context-encoded 8x map from MSG-IFI scale guidance')
     parser.add_argument('--ifi_point_coef', default=1.0, type=float,
-                        help='zero-offset coefficient inside IFI-lite APG loss')
+                        help='zero-offset coefficient inside IFI auxiliary loss')
     parser.add_argument('--ifi_neg_k', default=4, type=int,
                         help='local negative interpolated points per GT for IFI-lite')
     parser.add_argument('--ifi_neg_radius', default=12.0, type=float,
@@ -471,6 +541,28 @@ def get_explicit_arg_names(argv):
         else:
             names.add(name)
     return names
+
+
+def apply_msff_calib_recipe(args):
+    """Enable the MSFF full calibrated-counting recipe with safe defaults."""
+    if getattr(args, 'msff_calib_mode', 'none') != 'full':
+        return
+
+    explicit = set(getattr(args, '_explicit_args', set()))
+    if getattr(args, 'split_loss_variant', 'auto') == 'auto':
+        args.split_loss_variant = 'gt'
+    if 'count_loss_coef' not in explicit and float(getattr(args, 'count_loss_coef', 0.0)) == 0.0:
+        args.count_loss_coef = 0.01
+    if 'count_loss_gate' not in explicit:
+        args.count_loss_gate = 'detach'
+    if 'count_loss_type' not in explicit:
+        args.count_loss_type = 'log_l1'
+    if 'count_loss_start_epoch' not in explicit and int(getattr(args, 'count_loss_start_epoch', -1)) < 0:
+        args.count_loss_start_epoch = 100
+    if 'quadtree_loss_coef' not in explicit and float(getattr(args, 'quadtree_loss_coef', 0.1)) == 0.1:
+        args.quadtree_loss_coef = 0.3
+    if 'split_pos_weight' not in explicit and float(getattr(args, 'split_pos_weight', 1.0)) == 1.0:
+        args.split_pos_weight = 2.0
 
 
 def apply_backbone_recipe(args):
@@ -692,6 +784,7 @@ def main(args):
 
     if getattr(args, 'auto_backbone_recipe', False):
         apply_backbone_recipe(args)
+    apply_msff_calib_recipe(args)
     print(args)
     device = torch.device(args.device)
 
