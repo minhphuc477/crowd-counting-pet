@@ -352,10 +352,11 @@ class QuadtreeSplitter(nn.Module):
 
 
 class GlobalCountHead(nn.Module):
-    """Small count regressor used to calibrate PET's point proposals."""
+    """Small log-count regressor used to calibrate PET's point proposals."""
 
-    def __init__(self, hidden_dim):
+    def __init__(self, hidden_dim, init_count=400.0):
         super().__init__()
+        init_log_count = math.log1p(max(float(init_count), 0.0))
         self.net = nn.Sequential(
             nn.AdaptiveAvgPool2d(1),
             nn.Flatten(),
@@ -364,9 +365,12 @@ class GlobalCountHead(nn.Module):
             nn.GELU(),
             nn.Linear(hidden_dim // 2, 1),
         )
+        nn.init.zeros_(self.net[-1].weight)
+        nn.init.constant_(self.net[-1].bias, init_log_count)
 
     def forward(self, x):
-        return F.softplus(self.net(x).squeeze(-1))
+        pred_log_count = self.net(x).squeeze(-1).clamp(min=0.0, max=10.0)
+        return torch.expm1(pred_log_count)
 
 
 class PET(nn.Module):
@@ -464,8 +468,9 @@ class PET(nn.Module):
             raise ValueError('count_head_loss_type must be one of "log_l1", "l1", or "smooth_l1"')
         self.count_head_start_epoch = int(getattr(args, 'count_head_start_epoch', 0))
         self.count_head_end_epoch = int(getattr(args, 'count_head_end_epoch', -1))
+        self.count_head_init_count = float(getattr(args, 'count_head_init_count', 433.0))
         needs_count_head = self.count_head_loss_coef > 0 or self.eval_count_mode == 'count_head_topk'
-        self.count_head = GlobalCountHead(hidden_dim) if needs_count_head else None
+        self.count_head = GlobalCountHead(hidden_dim, init_count=self.count_head_init_count) if needs_count_head else None
         self.class_loss_type = getattr(args, 'class_loss_type', 'ce')
         if self.class_loss_type not in ('ce', 'focal'):
             raise ValueError('class_loss_type must be one of "ce" or "focal"')

@@ -324,6 +324,8 @@ def get_args_parser():
                         help='epoch when the separate count-head loss starts')
     parser.add_argument('--count_head_end_epoch', default=-1, type=int,
                         help='epoch after which the separate count-head loss turns off; negative keeps it on')
+    parser.add_argument('--count_head_init_count', default=433.0, type=float,
+                        help='initial count prediction for the separate count head')
     parser.add_argument('--train_count_head_only', action='store_true',
                         help='freeze PET and train only the separate count head')
     parser.add_argument('--region_count_loss_coef', default=0.0, type=float,
@@ -598,7 +600,8 @@ def merge_checkpoint_args(args, checkpoint):
         aux_resume_keys = {
             'class_loss_type', 'focal_alpha', 'focal_gamma',
             'count_head_loss_coef', 'count_head_loss_type',
-            'count_head_start_epoch', 'count_head_end_epoch', 'train_count_head_only',
+            'count_head_start_epoch', 'count_head_end_epoch', 'count_head_init_count',
+            'train_count_head_only',
             'region_count_loss_coef', 'region_count_grid', 'region_count_gate',
             'region_count_type', 'region_count_start_epoch', 'region_count_end_epoch',
             'bayesian_loss_coef', 'bayesian_sigma', 'bayesian_bg_coef',
