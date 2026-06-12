@@ -316,6 +316,16 @@ def get_args_parser():
                         help='count-loss scale; log_l1 is safer early in training')
     parser.add_argument('--count_loss_start_epoch', default=-1, type=int,
                         help='epoch to enable count loss; negative uses warmup_epochs')
+    parser.add_argument('--count_head_loss_coef', default=0.0, type=float,
+                        help='separate global count-head loss weight; 0 disables it')
+    parser.add_argument('--count_head_loss_type', default='log_l1', choices=('log_l1', 'l1', 'smooth_l1'),
+                        help='loss scale for the separate count-head regressor')
+    parser.add_argument('--count_head_start_epoch', default=0, type=int,
+                        help='epoch when the separate count-head loss starts')
+    parser.add_argument('--count_head_end_epoch', default=-1, type=int,
+                        help='epoch after which the separate count-head loss turns off; negative keeps it on')
+    parser.add_argument('--train_count_head_only', action='store_true',
+                        help='freeze PET and train only the separate count head')
     parser.add_argument('--region_count_loss_coef', default=0.0, type=float,
                         help='local region count calibration loss weight; 0 disables it')
     parser.add_argument('--region_count_grid', default=4, type=int,
@@ -472,6 +482,10 @@ def get_args_parser():
                         help='eval-only split-aware sparse/dense ownership gate; none keeps PET concatenation')
     parser.add_argument('--eval_soft_split_gate', default='none', choices=('none', 'query', 'pred'),
                         help='eval-only soft split responsibility multiplied into person scores before thresholding')
+    parser.add_argument('--eval_count_mode', default='threshold', choices=('threshold', 'count_head_topk'),
+                        help='threshold keeps PET behavior; count_head_topk keeps top-K APG candidates using the separate count head')
+    parser.add_argument('--eval_count_head_min_score', default=0.0, type=float,
+                        help='minimum candidate score before count-head top-K selection')
     parser.add_argument('--eval_protocol', default='pet', choices=('pet', 'crowd_no_overlap'),
                         help='validation protocol used during training')
 
@@ -578,10 +592,13 @@ def merge_checkpoint_args(args, checkpoint):
             'min_lr', 'ema_decay',
             'score_threshold', 'split_threshold', 'split_threshold_quantile',
             'eval_nms_radius', 'eval_branch_gate', 'eval_soft_split_gate',
+            'eval_count_mode', 'eval_count_head_min_score',
         })
         explicit_args = set(getattr(args, '_explicit_args', set()))
         aux_resume_keys = {
             'class_loss_type', 'focal_alpha', 'focal_gamma',
+            'count_head_loss_coef', 'count_head_loss_type',
+            'count_head_start_epoch', 'count_head_end_epoch', 'train_count_head_only',
             'region_count_loss_coef', 'region_count_grid', 'region_count_gate',
             'region_count_type', 'region_count_start_epoch', 'region_count_end_epoch',
             'bayesian_loss_coef', 'bayesian_sigma', 'bayesian_bg_coef',
@@ -723,6 +740,18 @@ def set_raw_backbone_trainability(model_without_ddp, args, trainable):
     return total, changed
 
 
+def set_count_head_only_trainability(model_without_ddp):
+    trainable, frozen = 0, 0
+    for name, param in model_without_ddp.named_parameters():
+        is_count_head = name.startswith('count_head.')
+        param.requires_grad_(is_count_head)
+        if is_count_head:
+            trainable += param.numel()
+        else:
+            frozen += param.numel()
+    return trainable, frozen
+
+
 def seed_worker(worker_id):
     worker_seed = torch.initial_seed() % 2**32
     np.random.seed(worker_seed)
@@ -807,6 +836,10 @@ def main(args):
         model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
 
     model_without_ddp = model
+    if getattr(args, 'train_count_head_only', False):
+        trainable_count, frozen_count = set_count_head_only_trainability(model_without_ddp)
+        if utils.is_main_process():
+            print(f'count-head-only training: trainable_params={trainable_count} frozen_params={frozen_count}')
     if args.distributed:
         model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu], find_unused_parameters=True)
         model_without_ddp = model.module

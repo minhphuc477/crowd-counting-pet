@@ -147,6 +147,11 @@ def get_args_parser():
     parser.add_argument('--count_loss_gate', default='detach', choices=('detach', 'soft', 'hard'))
     parser.add_argument('--count_loss_type', default='log_l1', choices=('log_l1', 'l1', 'smooth_l1'))
     parser.add_argument('--count_loss_start_epoch', default=-1, type=int)
+    parser.add_argument('--count_head_loss_coef', default=0.0, type=float)
+    parser.add_argument('--count_head_loss_type', default='log_l1', choices=('log_l1', 'l1', 'smooth_l1'))
+    parser.add_argument('--count_head_start_epoch', default=0, type=int)
+    parser.add_argument('--count_head_end_epoch', default=-1, type=int)
+    parser.add_argument('--train_count_head_only', action='store_true')
     parser.add_argument('--region_count_loss_coef', default=0.0, type=float)
     parser.add_argument('--region_count_grid', default=4, type=int)
     parser.add_argument('--region_count_gate', default='detach', choices=('none', 'detach', 'soft', 'hard'))
@@ -226,6 +231,8 @@ def get_args_parser():
     parser.add_argument('--eval_nms_radius', default=0.0, type=float)
     parser.add_argument('--eval_branch_gate', default='none', choices=('none', 'query', 'pred'))
     parser.add_argument('--eval_soft_split_gate', default='none', choices=('none', 'query', 'pred'))
+    parser.add_argument('--eval_count_mode', default='threshold', choices=('threshold', 'count_head_topk'))
+    parser.add_argument('--eval_count_head_min_score', default=0.0, type=float)
 
     # dataset parameters
     parser.add_argument('--dataset_file', default="SHA")
@@ -292,6 +299,7 @@ def merge_checkpoint_args(args, checkpoint):
         'override_score_threshold', 'override_split_threshold', 'override_split_threshold_quantile',
         'checkpoint_model_key', 'deterministic', 'tta_flip', 'tta_scales',
         'eval_nms_radius', 'eval_branch_gate', 'eval_soft_split_gate',
+        'eval_count_mode', 'eval_count_head_min_score',
         'eval_protocol', 'resume_allow_arch_change',
         'amp_dtype', 'strict_model_checks',
     }

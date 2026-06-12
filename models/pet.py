@@ -351,6 +351,24 @@ class QuadtreeSplitter(nn.Module):
         return self.net(x)
 
 
+class GlobalCountHead(nn.Module):
+    """Small count regressor used to calibrate PET's point proposals."""
+
+    def __init__(self, hidden_dim):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.AdaptiveAvgPool2d(1),
+            nn.Flatten(),
+            nn.LayerNorm(hidden_dim),
+            nn.Linear(hidden_dim, hidden_dim // 2),
+            nn.GELU(),
+            nn.Linear(hidden_dim // 2, 1),
+        )
+
+    def forward(self, x):
+        return F.softplus(self.net(x).squeeze(-1))
+
+
 class PET(nn.Module):
     """ 
     Point quEry Transformer
@@ -422,6 +440,10 @@ class PET(nn.Module):
         self.eval_soft_split_gate = getattr(args, 'eval_soft_split_gate', 'none')
         if self.eval_soft_split_gate not in ('none', 'query', 'pred'):
             raise ValueError('eval_soft_split_gate must be one of "none", "query", or "pred"')
+        self.eval_count_mode = getattr(args, 'eval_count_mode', 'threshold')
+        if self.eval_count_mode not in ('threshold', 'count_head_topk'):
+            raise ValueError('eval_count_mode must be one of "threshold" or "count_head_topk"')
+        self.eval_count_head_min_score = float(getattr(args, 'eval_count_head_min_score', 0.0))
         self.pet_loss_variant = getattr(args, 'pet_loss_variant', 'paper')
         self.split_loss_variant = getattr(args, 'split_loss_variant', 'auto')
         if self.split_loss_variant == 'auto':
@@ -436,6 +458,14 @@ class PET(nn.Module):
         if self.count_loss_type not in ('log_l1', 'l1', 'smooth_l1'):
             raise ValueError('count_loss_type must be one of "log_l1", "l1", or "smooth_l1"')
         self.count_loss_start_epoch = int(getattr(args, 'count_loss_start_epoch', -1))
+        self.count_head_loss_coef = float(getattr(args, 'count_head_loss_coef', 0.0))
+        self.count_head_loss_type = getattr(args, 'count_head_loss_type', 'log_l1')
+        if self.count_head_loss_type not in ('log_l1', 'l1', 'smooth_l1'):
+            raise ValueError('count_head_loss_type must be one of "log_l1", "l1", or "smooth_l1"')
+        self.count_head_start_epoch = int(getattr(args, 'count_head_start_epoch', 0))
+        self.count_head_end_epoch = int(getattr(args, 'count_head_end_epoch', -1))
+        needs_count_head = self.count_head_loss_coef > 0 or self.eval_count_mode == 'count_head_topk'
+        self.count_head = GlobalCountHead(hidden_dim) if needs_count_head else None
         self.class_loss_type = getattr(args, 'class_loss_type', 'ce')
         if self.class_loss_type not in ('ce', 'focal'):
             raise ValueError('class_loss_type must be one of "ce" or "focal"')
@@ -680,6 +710,17 @@ class PET(nn.Module):
             loss_dict['loss_region_count'] = loss_region_count
             weight_dict['loss_region_count'] = self.region_count_loss_coef
             losses += loss_region_count * self.region_count_loss_coef
+        if self.count_head_loss_coef > 0:
+            count_head_active = epoch >= self.count_head_start_epoch and (
+                self.count_head_end_epoch < 0 or epoch <= self.count_head_end_epoch
+            )
+            if count_head_active:
+                loss_count_head = self.compute_count_head_loss(outputs, targets)
+            else:
+                loss_count_head = outputs['split_map_raw'].sum() * 0.0
+            loss_dict['loss_count_head'] = loss_count_head
+            weight_dict['loss_count_head'] = self.count_head_loss_coef
+            losses += loss_count_head * self.count_head_loss_coef
         if self.bayesian_loss_coef > 0:
             bayesian_start_epoch = warmup_ep if self.bayesian_start_epoch < 0 else self.bayesian_start_epoch
             bayesian_active = epoch >= bayesian_start_epoch and (
@@ -1457,6 +1498,21 @@ class PET(nn.Module):
             return F.smooth_l1_loss(pred_counts, target_counts)
         return F.l1_loss(torch.log1p(pred_counts), torch.log1p(target_counts))
 
+    def compute_count_head_loss(self, outputs, targets):
+        if self.count_head is None or 'count_pred' not in outputs:
+            return outputs['split_map_raw'].sum() * 0.0
+        pred_counts = outputs['count_pred'].to(dtype=outputs['split_map_raw'].dtype)
+        target_counts = torch.as_tensor(
+            [target['points'].shape[0] for target in targets],
+            dtype=pred_counts.dtype,
+            device=pred_counts.device,
+        )
+        if self.count_head_loss_type == 'l1':
+            return F.l1_loss(pred_counts, target_counts)
+        if self.count_head_loss_type == 'smooth_l1':
+            return F.smooth_l1_loss(pred_counts, target_counts)
+        return F.l1_loss(torch.log1p(pred_counts), torch.log1p(target_counts))
+
     def compute_bayesian_point_loss(self, outputs, targets):
         """Point-level expected-count loss around each GT point.
 
@@ -1737,6 +1793,8 @@ class PET(nn.Module):
         outputs['split_mask_sparse'] = split_mask_sparse
         outputs['split_mask_dense'] = split_mask_dense
         outputs['split_threshold'] = split_threshold.detach()
+        if self.count_head is not None:
+            outputs['count_pred'] = self.count_head(encode_src.float())
         if 'train' in kwargs:
             outputs['encode_src'] = encode_src
         return outputs
@@ -1757,12 +1815,16 @@ class PET(nn.Module):
         pred_offsets_parts = []
         points_queries_parts = []
         score_parts = []
+        count_topk = self.eval_count_mode == 'count_head_topk' and self.count_head is not None
         template_out = out_sparse if out_sparse is not None else out_dense
 
         if out_sparse is not None:
             out_sparse_scores = torch.nn.functional.softmax(out_sparse['pred_logits'], -1)[..., 1]
             out_sparse_eval_scores = self.apply_eval_soft_split_gate(out_sparse, outputs['split_map_raw'], 'sparse', out_sparse_scores)
-            index_sparse = self.get_score_mask(out_sparse_eval_scores).to(out_sparse['pred_logits'].device)
+            if count_topk:
+                index_sparse = out_sparse_eval_scores >= self.eval_count_head_min_score
+            else:
+                index_sparse = self.get_score_mask(out_sparse_eval_scores).to(out_sparse['pred_logits'].device)
             sparse_gate = self.get_eval_branch_gate_mask(out_sparse, outputs['split_map_raw'], 'sparse')
             if sparse_gate is not None:
                 index_sparse = index_sparse & sparse_gate.to(device=index_sparse.device)
@@ -1775,7 +1837,10 @@ class PET(nn.Module):
         if out_dense is not None:
             out_dense_scores = torch.nn.functional.softmax(out_dense['pred_logits'], -1)[..., 1]
             out_dense_eval_scores = self.apply_eval_soft_split_gate(out_dense, outputs['split_map_raw'], 'dense', out_dense_scores)
-            index_dense = self.get_score_mask(out_dense_eval_scores).to(out_dense['pred_logits'].device)
+            if count_topk:
+                index_dense = out_dense_eval_scores >= self.eval_count_head_min_score
+            else:
+                index_dense = self.get_score_mask(out_dense_eval_scores).to(out_dense['pred_logits'].device)
             dense_gate = self.get_eval_branch_gate_mask(out_dense, outputs['split_map_raw'], 'dense')
             if dense_gate is not None:
                 index_dense = index_dense & dense_gate.to(device=index_dense.device)
@@ -1798,6 +1863,18 @@ class PET(nn.Module):
             pred_offsets = torch.empty((0, 2), dtype=template_out['pred_offsets'].dtype, device=device)
             points_queries_out = torch.empty((0, 2), dtype=template_out['points_queries'].dtype, device=device)
             scores = torch.empty((0,), dtype=template_out['pred_logits'].dtype, device=device)
+
+        if count_topk and scores.numel() > 0:
+            k = int(outputs['count_pred'][0].detach().round().clamp(min=0, max=scores.numel()).item())
+            if k == 0:
+                keep = torch.empty(0, dtype=torch.long, device=scores.device)
+            else:
+                keep = scores.topk(k, largest=True).indices
+            pred_logits = pred_logits[keep]
+            pred_points = pred_points[keep]
+            pred_offsets = pred_offsets[keep]
+            points_queries_out = points_queries_out[keep]
+            scores = scores[keep]
 
         pred_logits, pred_points, pred_offsets, points_queries_out = self.apply_eval_point_nms(
             pred_logits,
@@ -1825,6 +1902,8 @@ class PET(nn.Module):
         div_out['points_queries'] = points_queries_out.unsqueeze(0)
         div_out['split_map_raw'] = outputs['split_map_raw']
         div_out['split_threshold'] = outputs['split_threshold']
+        if 'count_pred' in outputs:
+            div_out['count_pred'] = outputs['count_pred']
         return div_out
 
 
