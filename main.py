@@ -1120,6 +1120,8 @@ def main(args):
                     'improved': bool(improved),
                     'eval_time': float(t2 - t1),
                     'eval_model': eval_model_name,
+                    'eval_count_mode': getattr(args, 'eval_count_mode', 'threshold'),
+                    'eval_count_head_min_score': float(getattr(args, 'eval_count_head_min_score', 0.0)),
                 }
                 with open(run_log_name, "a", encoding="utf-8") as log_file:
                     log_file.write("epoch:{}, mae:{}, mse:{}, time{}, \n\nbest mae:{}, best epoch: {}\n".format(
