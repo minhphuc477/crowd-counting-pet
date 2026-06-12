@@ -352,25 +352,25 @@ class QuadtreeSplitter(nn.Module):
 
 
 class GlobalCountHead(nn.Module):
-    """Small log-count regressor used to calibrate PET's point proposals."""
+    """Small density-sum count head used to calibrate PET point proposals."""
 
-    def __init__(self, hidden_dim, init_count=400.0):
+    def __init__(self, hidden_dim, init_count=40.0, init_cells=1024.0):
         super().__init__()
-        init_log_count = math.log1p(max(float(init_count), 0.0))
+        init_density = max(float(init_count), 0.0) / max(float(init_cells), 1.0)
+        init_density_logit = math.log(math.expm1(max(init_density, 1e-6)))
         self.net = nn.Sequential(
-            nn.AdaptiveAvgPool2d(1),
-            nn.Flatten(),
-            nn.LayerNorm(hidden_dim),
-            nn.Linear(hidden_dim, hidden_dim // 2),
+            nn.Conv2d(hidden_dim, hidden_dim // 4, 1),
             nn.GELU(),
-            nn.Linear(hidden_dim // 2, 1),
+            nn.Conv2d(hidden_dim // 4, 1, 1),
         )
         nn.init.zeros_(self.net[-1].weight)
-        nn.init.constant_(self.net[-1].bias, init_log_count)
+        nn.init.constant_(self.net[-1].bias, init_density_logit)
 
-    def forward(self, x):
-        pred_log_count = self.net(x).squeeze(-1).clamp(min=0.0, max=10.0)
-        return torch.expm1(pred_log_count)
+    def forward(self, x, mask=None):
+        density = F.softplus(self.net(x.float()).squeeze(1))
+        if mask is not None:
+            density = density * (~mask).to(dtype=density.dtype, device=density.device)
+        return density.flatten(1).sum(dim=1)
 
 
 class PET(nn.Module):
@@ -468,9 +468,13 @@ class PET(nn.Module):
             raise ValueError('count_head_loss_type must be one of "log_l1", "l1", or "smooth_l1"')
         self.count_head_start_epoch = int(getattr(args, 'count_head_start_epoch', 0))
         self.count_head_end_epoch = int(getattr(args, 'count_head_end_epoch', -1))
-        self.count_head_init_count = float(getattr(args, 'count_head_init_count', 433.0))
+        self.count_head_init_count = float(getattr(args, 'count_head_init_count', 40.0))
+        self.count_head_init_cells = float(getattr(args, 'count_head_init_cells', 1024.0))
         needs_count_head = self.count_head_loss_coef > 0 or self.eval_count_mode == 'count_head_topk'
-        self.count_head = GlobalCountHead(hidden_dim, init_count=self.count_head_init_count) if needs_count_head else None
+        self.count_head = (
+            GlobalCountHead(hidden_dim, init_count=self.count_head_init_count, init_cells=self.count_head_init_cells)
+            if needs_count_head else None
+        )
         self.class_loss_type = getattr(args, 'class_loss_type', 'ce')
         if self.class_loss_type not in ('ce', 'focal'):
             raise ValueError('class_loss_type must be one of "ce" or "focal"')
@@ -1799,7 +1803,7 @@ class PET(nn.Module):
         outputs['split_mask_dense'] = split_mask_dense
         outputs['split_threshold'] = split_threshold.detach()
         if self.count_head is not None:
-            outputs['count_pred'] = self.count_head(encode_src.float())
+            outputs['count_pred'] = self.count_head(encode_src.float(), mask)
         if 'train' in kwargs:
             outputs['encode_src'] = encode_src
         return outputs
