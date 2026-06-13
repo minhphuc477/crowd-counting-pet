@@ -324,6 +324,10 @@ def get_args_parser():
                         help='epoch when the separate count-head loss starts')
     parser.add_argument('--count_head_end_epoch', default=-1, type=int,
                         help='epoch after which the separate count-head loss turns off; negative keeps it on')
+    parser.add_argument('--allow_count_head_from_start', action='store_true',
+                        help='allow count-head auxiliary from epoch 0 when training from scratch; risky on SHA')
+    parser.add_argument('--safe_count_head_start_epoch', default=250, type=int,
+                        help='auto-delay count-head auxiliary to this epoch for fresh training unless explicitly allowed')
     parser.add_argument('--count_head_init_count', default=40.0, type=float,
                         help='initial count prediction for a reference 256x256 crop in the separate count head')
     parser.add_argument('--count_head_init_cells', default=1024.0, type=float,
@@ -602,6 +606,22 @@ def sanitize_unstable_training_args(args):
             'Use --allow_unstable_density_map_loss only for isolated debugging runs.'
         )
         args.density_map_loss_coef = 0.0
+    count_coef = float(getattr(args, 'count_head_loss_coef', 0.0))
+    count_start = int(getattr(args, 'count_head_start_epoch', 0))
+    fresh_train = not bool(getattr(args, 'resume', ''))
+    if (
+        count_coef > 0
+        and count_start <= 0
+        and fresh_train
+        and not bool(getattr(args, 'allow_count_head_from_start', False))
+    ):
+        delayed_start = max(1, int(getattr(args, 'safe_count_head_start_epoch', 250)))
+        print(
+            'WARNING: count-head auxiliary from epoch 0 is disabled for fresh training. '
+            f'Setting count_head_start_epoch={delayed_start}. '
+            'Use --allow_count_head_from_start only for isolated debugging runs.'
+        )
+        args.count_head_start_epoch = delayed_start
     return args
 
 
@@ -667,6 +687,7 @@ def merge_checkpoint_args(args, checkpoint):
             'class_loss_type', 'focal_alpha', 'focal_gamma',
             'count_head_loss_coef', 'count_head_loss_type',
             'count_head_start_epoch', 'count_head_end_epoch', 'count_head_init_count',
+            'allow_count_head_from_start', 'safe_count_head_start_epoch',
             'count_head_init_cells', 'count_head_feature_grad_scale', 'train_count_head_only',
             'density_map_loss_coef', 'allow_unstable_density_map_loss',
             'density_map_loss_type', 'density_map_pos_weight',
