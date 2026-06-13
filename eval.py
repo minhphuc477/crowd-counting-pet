@@ -158,6 +158,7 @@ def get_args_parser():
     parser.add_argument('--density_map_loss_coef', default=0.0, type=float)
     parser.add_argument('--density_map_loss_type', default='log_l1', choices=('log_l1', 'l1', 'smooth_l1'))
     parser.add_argument('--density_map_pos_weight', default=10.0, type=float)
+    parser.add_argument('--density_map_grad_scale', default=1.0, type=float)
     parser.add_argument('--density_map_start_epoch', default=0, type=int)
     parser.add_argument('--density_map_end_epoch', default=-1, type=int)
     parser.add_argument('--region_count_loss_coef', default=0.0, type=float)

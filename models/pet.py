@@ -482,6 +482,9 @@ class PET(nn.Module):
         if self.density_map_loss_type not in ('log_l1', 'l1', 'smooth_l1'):
             raise ValueError('density_map_loss_type must be one of "log_l1", "l1", or "smooth_l1"')
         self.density_map_pos_weight = float(getattr(args, 'density_map_pos_weight', 10.0))
+        self.density_map_grad_scale = float(getattr(args, 'density_map_grad_scale', 1.0))
+        if self.density_map_grad_scale < 0.0:
+            raise ValueError('density_map_grad_scale must be non-negative')
         self.density_map_start_epoch = int(getattr(args, 'density_map_start_epoch', 0))
         self.density_map_end_epoch = int(getattr(args, 'density_map_end_epoch', -1))
         needs_count_head = (
@@ -1587,6 +1590,9 @@ class PET(nn.Module):
         if self.count_head is None or 'count_density' not in outputs:
             return outputs['split_map_raw'].sum() * 0.0
         pred_density = outputs['count_density'].to(dtype=outputs['split_map_raw'].dtype)
+        grad_scale = self.density_map_grad_scale
+        if grad_scale < 1.0:
+            pred_density = pred_density.detach() + grad_scale * (pred_density - pred_density.detach())
         target_density = self.build_density_map_targets(outputs, targets).to(dtype=pred_density.dtype)
         if self.density_map_loss_type == 'l1':
             raw_loss = F.l1_loss(pred_density, target_density, reduction='none')

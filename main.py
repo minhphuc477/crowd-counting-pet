@@ -338,6 +338,8 @@ def get_args_parser():
                         help='loss scale for density-map auxiliary')
     parser.add_argument('--density_map_pos_weight', default=10.0, type=float,
                         help='extra weight on cells containing annotated points for density-map auxiliary')
+    parser.add_argument('--density_map_grad_scale', default=1.0, type=float,
+                        help='scale gradients from density-map auxiliary; scalar count-head loss is unaffected')
     parser.add_argument('--density_map_start_epoch', default=0, type=int,
                         help='epoch when density-map auxiliary starts')
     parser.add_argument('--density_map_end_epoch', default=-1, type=int,
@@ -617,6 +619,7 @@ def merge_checkpoint_args(args, checkpoint):
             'count_head_start_epoch', 'count_head_end_epoch', 'count_head_init_count',
             'count_head_init_cells', 'count_head_feature_grad_scale', 'train_count_head_only',
             'density_map_loss_coef', 'density_map_loss_type', 'density_map_pos_weight',
+            'density_map_grad_scale',
             'density_map_start_epoch', 'density_map_end_epoch',
             'region_count_loss_coef', 'region_count_grid', 'region_count_gate',
             'region_count_type', 'region_count_start_epoch', 'region_count_end_epoch',
