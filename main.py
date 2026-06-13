@@ -334,6 +334,8 @@ def get_args_parser():
                         help='freeze PET and train only the separate count head')
     parser.add_argument('--density_map_loss_coef', default=0.0, type=float,
                         help='spatial density-map auxiliary weight for the count head; 0 disables it')
+    parser.add_argument('--allow_unstable_density_map_loss', action='store_true',
+                        help='allow density-map auxiliary to train; disabled by default because it caused severe over-counting')
     parser.add_argument('--density_map_loss_type', default='log_l1', choices=('log_l1', 'l1', 'smooth_l1'),
                         help='loss scale for density-map auxiliary')
     parser.add_argument('--density_map_pos_weight', default=10.0, type=float,
@@ -538,6 +540,14 @@ def get_args_parser():
     parser.add_argument('--eval_freq', default=5, type=int)
     parser.add_argument('--eval_before_train', action='store_true',
                         help='run validation once before the first training epoch')
+    parser.add_argument('--no_abort_on_bad_count', action='store_true',
+                        help='do not stop training when validation predicted count is catastrophically far from GT')
+    parser.add_argument('--bad_count_ratio_max', default=2.0, type=float,
+                        help='abort training if pred/gt or gt/pred exceeds this ratio and MAE is also high')
+    parser.add_argument('--bad_count_mae_min', default=200.0, type=float,
+                        help='minimum validation MAE needed before bad-count auto-abort can trigger')
+    parser.add_argument('--bad_count_start_epoch', default=20, type=int,
+                        help='first epoch where bad-count auto-abort is allowed')
     parser.add_argument('--syn_bn', default=0, type=int)
     parser.add_argument('--ema_decay', default=0.0, type=float,
                         help='exponential moving average decay for eval/checkpointing; 0 disables EMA')
@@ -582,6 +592,46 @@ def apply_backbone_recipe(args):
             setattr(args, key, tuned_value)
 
 
+def sanitize_unstable_training_args(args):
+    """Disable known-unstable experimental auxiliaries unless explicitly allowed."""
+    density_coef = float(getattr(args, 'density_map_loss_coef', 0.0))
+    if density_coef > 0 and not bool(getattr(args, 'allow_unstable_density_map_loss', False)):
+        print(
+            'WARNING: --density_map_loss_coef was requested but is disabled by default. '
+            'Recent SHA runs showed severe over-counting from this auxiliary. '
+            'Use --allow_unstable_density_map_loss only for isolated debugging runs.'
+        )
+        args.density_map_loss_coef = 0.0
+    return args
+
+
+def should_abort_for_bad_count(args, epoch, test_stats):
+    if bool(getattr(args, 'no_abort_on_bad_count', False)):
+        return False, ''
+    if epoch < int(getattr(args, 'bad_count_start_epoch', 20)):
+        return False, ''
+    pred_cnt = float(test_stats.get('pred_cnt', 0.0))
+    gt_cnt = float(test_stats.get('gt_cnt', 0.0))
+    mae = float(test_stats.get('mae', 0.0))
+    if gt_cnt <= 0 or pred_cnt < 0:
+        return False, ''
+    ratio_limit = max(float(getattr(args, 'bad_count_ratio_max', 2.0)), 1.0)
+    mae_limit = max(float(getattr(args, 'bad_count_mae_min', 200.0)), 0.0)
+    over_ratio = pred_cnt / max(gt_cnt, 1e-6)
+    under_ratio = gt_cnt / max(pred_cnt, 1e-6) if pred_cnt > 0 else float('inf')
+    bad_ratio = max(over_ratio, under_ratio)
+    if mae >= mae_limit and bad_ratio >= ratio_limit:
+        direction = 'over-count' if over_ratio >= under_ratio else 'under-count'
+        message = (
+            f'bad-count guard triggered: {direction} '
+            f'pred_cnt={pred_cnt:.4f} gt_cnt={gt_cnt:.4f} '
+            f'ratio={bad_ratio:.3f} mae={mae:.4f} '
+            f'(limits: ratio>={ratio_limit:.3f}, mae>={mae_limit:.4f})'
+        )
+        return True, message
+    return False, ''
+
+
 def merge_checkpoint_args(args, checkpoint):
     checkpoint_args = checkpoint.get('args')
     if checkpoint_args is None:
@@ -618,7 +668,8 @@ def merge_checkpoint_args(args, checkpoint):
             'count_head_loss_coef', 'count_head_loss_type',
             'count_head_start_epoch', 'count_head_end_epoch', 'count_head_init_count',
             'count_head_init_cells', 'count_head_feature_grad_scale', 'train_count_head_only',
-            'density_map_loss_coef', 'density_map_loss_type', 'density_map_pos_weight',
+            'density_map_loss_coef', 'allow_unstable_density_map_loss',
+            'density_map_loss_type', 'density_map_pos_weight',
             'density_map_grad_scale',
             'density_map_start_epoch', 'density_map_end_epoch',
             'region_count_loss_coef', 'region_count_grid', 'region_count_gate',
@@ -842,6 +893,7 @@ def main(args):
 
     if getattr(args, 'auto_backbone_recipe', False):
         apply_backbone_recipe(args)
+    args = sanitize_unstable_training_args(args)
     print(args)
     device = torch.device(args.device)
 
@@ -1046,6 +1098,7 @@ def main(args):
     # training
     print("Start training")
     start_time = time.time()
+    bad_count_abort_reason = ''
     for epoch in range(args.start_epoch, args.epochs):
         if args.distributed:
             sampler_train.set_epoch(epoch)
@@ -1167,6 +1220,29 @@ def main(args):
                     output_dir / 'best_checkpoint.pth',
                 )
 
+            abort_bad_count, abort_reason = should_abort_for_bad_count(args, epoch, test_stats)
+            if abort_bad_count:
+                bad_count_abort_reason = abort_reason
+                print(f'\nWARNING: {abort_reason}')
+                print('Stopping training early to avoid continuing a catastrophically miscalibrated run.\n')
+                if utils.is_main_process():
+                    abort_record = {
+                        'epoch': epoch,
+                        'aborted': True,
+                        'reason': abort_reason,
+                        'test_mae': float(mae),
+                        'test_mse': float(mse),
+                        'pred_cnt': float(test_stats.get('pred_cnt', 0.0)),
+                        'gt_cnt': float(test_stats.get('gt_cnt', 0.0)),
+                    }
+                    with open(run_log_name, "a", encoding="utf-8") as log_file:
+                        log_file.write(json.dumps(abort_record) + "\n")
+                    (output_dir / 'abort_reason.json').write_text(
+                        json.dumps(abort_record, indent=2) + "\n",
+                        encoding="utf-8",
+                    )
+                break
+
     if utils.is_main_process():
         final_record = {
             'epoch': best_epoch,
@@ -1178,6 +1254,9 @@ def main(args):
             'final': True,
             'eval_model': 'ema' if model_ema is not None else 'raw',
         }
+        if bad_count_abort_reason:
+            final_record['aborted'] = True
+            final_record['abort_reason'] = bad_count_abort_reason
         with open(run_log_name, "a", encoding="utf-8") as log_file:
             log_file.write(json.dumps(final_record) + "\n")
         (output_dir / 'final_results.json').write_text(
