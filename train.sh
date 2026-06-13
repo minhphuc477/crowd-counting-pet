@@ -9,7 +9,7 @@ CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0}" python main.py \
   --timm_adapter lite_fpn \
   --dataset_file SHA \
   --data_path "$DATA" \
-  --output_dir outputs/SHA/vgg16_bn_apglc_density_counthead_seed42 \
+  --output_dir outputs/SHA/vgg16_bn_apglc_density_counthead_seed42_rerun \
   --device cuda \
   --num_workers 2 \
   --batch_size 8 \
