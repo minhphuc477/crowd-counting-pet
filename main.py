@@ -336,6 +336,8 @@ def get_args_parser():
                         help='reference encoder-cell count for --count_head_init_count; 256/8 squared is 1024')
     parser.add_argument('--count_head_feature_grad_scale', default=1.0, type=float,
                         help='scale gradients from count/density auxiliaries into PET encoder; 0 trains only the head')
+    parser.add_argument('--count_head_feature_grad_start_epoch', default=0, type=int,
+                        help='epoch when count-head gradients may flow into PET features; before this, only the head is trained')
     parser.add_argument('--train_count_head_only', action='store_true',
                         help='freeze PET and train only the separate count head')
     parser.add_argument('--density_map_loss_coef', default=0.0, type=float,
@@ -705,7 +707,8 @@ def merge_checkpoint_args(args, checkpoint):
             'count_head_loss_coef', 'count_head_loss_type',
             'count_head_start_epoch', 'count_head_end_epoch', 'count_head_init_count',
             'allow_count_head_fresh_train', 'allow_count_head_from_start', 'safe_count_head_start_epoch',
-            'count_head_init_cells', 'count_head_feature_grad_scale', 'train_count_head_only',
+            'count_head_init_cells', 'count_head_feature_grad_scale',
+            'count_head_feature_grad_start_epoch', 'train_count_head_only',
             'density_map_loss_coef', 'allow_unstable_density_map_loss',
             'density_map_loss_type', 'density_map_pos_weight',
             'density_map_grad_scale',
@@ -1132,6 +1135,9 @@ def main(args):
             "eval_time:", t2 - t1,
         )
         print("==========================\n")
+        abort_bad_count, abort_reason = should_abort_for_bad_count(args, args.start_epoch, test_stats)
+        if abort_bad_count:
+            raise RuntimeError(f'eval_before_train failed sanity check: {abort_reason}')
 
     # training
     print("Start training")

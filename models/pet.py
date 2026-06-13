@@ -499,6 +499,7 @@ class PET(nn.Module):
         self.count_head_init_count = float(getattr(args, 'count_head_init_count', 40.0))
         self.count_head_init_cells = float(getattr(args, 'count_head_init_cells', 1024.0))
         self.count_head_feature_grad_scale = float(getattr(args, 'count_head_feature_grad_scale', 1.0))
+        self.count_head_feature_grad_start_epoch = int(getattr(args, 'count_head_feature_grad_start_epoch', 0))
         if self.count_head_feature_grad_scale < 0.0:
             raise ValueError('count_head_feature_grad_scale must be non-negative')
         self.density_map_loss_coef = float(getattr(args, 'density_map_loss_coef', 0.0))
@@ -687,10 +688,14 @@ class PET(nn.Module):
         self._check_finite(f'{branch_name}.pred_offsets', pred_offsets)
         self._check_finite(f'{branch_name}.points_queries', points_queries)
 
-    def count_head_features(self, encode_src):
+    def count_head_features(self, encode_src, epoch=0):
         """Return count-head features, optionally with scaled gradient into PET."""
+        if not self.training:
+            return encode_src.float()
+        if int(epoch) < self.count_head_feature_grad_start_epoch:
+            return encode_src.detach().float()
         scale = self.count_head_feature_grad_scale
-        if scale >= 1.0 or not self.training:
+        if scale >= 1.0:
             return encode_src.float()
         if scale <= 0.0:
             return encode_src.detach().float()
@@ -1940,7 +1945,8 @@ class PET(nn.Module):
         outputs['split_mask_dense'] = split_mask_dense
         outputs['split_threshold'] = split_threshold.detach()
         if self.count_head is not None:
-            count_density = self.count_head.predict_density(self.count_head_features(encode_src), mask)
+            count_epoch = int(kwargs.get('epoch', 0))
+            count_density = self.count_head.predict_density(self.count_head_features(encode_src, count_epoch), mask)
             outputs['count_density'] = count_density
             outputs['count_pred'] = count_density.flatten(1).sum(dim=1)
         if 'train' in kwargs:
