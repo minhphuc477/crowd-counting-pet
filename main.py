@@ -327,7 +327,9 @@ def get_args_parser():
     parser.add_argument('--allow_count_head_fresh_train', action='store_true',
                         help='allow count-head auxiliary during fresh training; disabled by default after severe SHA over-counting')
     parser.add_argument('--allow_count_head_from_start', action='store_true',
-                        help='allow count-head auxiliary from epoch 0 when training from scratch; risky on SHA')
+                        help='deprecated: fresh count-head from epoch 0 is delayed unless --force_unsafe_count_head_from_start is also set')
+    parser.add_argument('--force_unsafe_count_head_from_start', action='store_true',
+                        help='dangerous ablation only: allow count-head auxiliary from epoch 0 during fresh training')
     parser.add_argument('--safe_count_head_start_epoch', default=250, type=int,
                         help='auto-delay count-head auxiliary to this epoch for fresh training unless explicitly allowed')
     parser.add_argument('--count_head_init_count', default=40.0, type=float,
@@ -630,13 +632,13 @@ def sanitize_unstable_training_args(args):
         count_coef > 0
         and count_start <= 0
         and fresh_train
-        and not bool(getattr(args, 'allow_count_head_from_start', False))
+        and not bool(getattr(args, 'force_unsafe_count_head_from_start', False))
     ):
         delayed_start = max(1, int(getattr(args, 'safe_count_head_start_epoch', 250)))
         print(
             'WARNING: count-head auxiliary from epoch 0 is disabled for fresh training. '
             f'Setting count_head_start_epoch={delayed_start}. '
-            'Use --allow_count_head_from_start only for isolated debugging runs.'
+            'Use --force_unsafe_count_head_from_start only for isolated debugging runs.'
         )
         args.count_head_start_epoch = delayed_start
     if (
@@ -717,7 +719,8 @@ def merge_checkpoint_args(args, checkpoint):
             'class_loss_type', 'focal_alpha', 'focal_gamma',
             'count_head_loss_coef', 'count_head_loss_type',
             'count_head_start_epoch', 'count_head_end_epoch', 'count_head_init_count',
-            'allow_count_head_fresh_train', 'allow_count_head_from_start', 'safe_count_head_start_epoch',
+            'allow_count_head_fresh_train', 'allow_count_head_from_start',
+            'force_unsafe_count_head_from_start', 'safe_count_head_start_epoch',
             'count_head_init_cells', 'count_head_feature_grad_scale',
             'count_head_feature_grad_start_epoch', 'train_count_head_only',
             'density_map_loss_coef', 'allow_unstable_density_map_loss',
