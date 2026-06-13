@@ -324,6 +324,8 @@ def get_args_parser():
                         help='epoch when the separate count-head loss starts')
     parser.add_argument('--count_head_end_epoch', default=-1, type=int,
                         help='epoch after which the separate count-head loss turns off; negative keeps it on')
+    parser.add_argument('--allow_count_head_fresh_train', action='store_true',
+                        help='allow count-head auxiliary during fresh training; disabled by default after severe SHA over-counting')
     parser.add_argument('--allow_count_head_from_start', action='store_true',
                         help='allow count-head auxiliary from epoch 0 when training from scratch; risky on SHA')
     parser.add_argument('--safe_count_head_start_epoch', default=250, type=int,
@@ -611,7 +613,14 @@ def sanitize_unstable_training_args(args):
     count_coef = float(getattr(args, 'count_head_loss_coef', 0.0))
     count_start = int(getattr(args, 'count_head_start_epoch', 0))
     fresh_train = not bool(getattr(args, 'resume', ''))
-    if (
+    if count_coef > 0 and fresh_train and not bool(getattr(args, 'allow_count_head_fresh_train', False)):
+        print(
+            'WARNING: --count_head_loss_coef was requested for fresh training but is disabled by default. '
+            'Recent SHA runs showed severe over-counting from count-head training before PET is calibrated. '
+            'Use --allow_count_head_fresh_train only for isolated ablations.'
+        )
+        args.count_head_loss_coef = 0.0
+    elif (
         count_coef > 0
         and count_start <= 0
         and fresh_train
@@ -690,7 +699,7 @@ def merge_checkpoint_args(args, checkpoint):
             'class_loss_type', 'focal_alpha', 'focal_gamma',
             'count_head_loss_coef', 'count_head_loss_type',
             'count_head_start_epoch', 'count_head_end_epoch', 'count_head_init_count',
-            'allow_count_head_from_start', 'safe_count_head_start_epoch',
+            'allow_count_head_fresh_train', 'allow_count_head_from_start', 'safe_count_head_start_epoch',
             'count_head_init_cells', 'count_head_feature_grad_scale', 'train_count_head_only',
             'density_map_loss_coef', 'allow_unstable_density_map_loss',
             'density_map_loss_type', 'density_map_pos_weight',

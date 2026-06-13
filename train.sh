@@ -9,13 +9,13 @@ CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0}" python main.py \
   --timm_adapter lite_fpn \
   --dataset_file SHA \
   --data_path "$DATA" \
-  --output_dir outputs/SHA/vgg16_bn_apglc_counthead_delayed_seed42 \
+  --output_dir outputs/SHA/vgg16_bn_drop700_apg_lc_seed42_clean \
   --device cuda \
   --num_workers 2 \
   --batch_size 8 \
   --epochs 1500 \
   --eval_freq 5 \
-  --eval_start_epoch 250 \
+  --eval_start_epoch 0 \
   --lr_scheduler step \
   --lr_drop 700 \
   --lr_gamma 0.1 \
@@ -30,14 +30,11 @@ CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0}" python main.py \
   --apg_loss_coef 1.0 \
   --apg_pos_k 1 \
   --apg_point_coef 5.0 \
-  --count_head_loss_coef 0.05 \
-  --count_head_loss_type log_l1 \
-  --count_head_start_epoch 250 \
-  --count_head_feature_grad_scale 0.1 \
+  --count_head_loss_coef 0 \
   --density_map_loss_coef 0 \
   --score_threshold 0.5 \
   --split_threshold 0.5 \
   --eval_nms_radius 0 \
   --eval_branch_gate none \
-  --bad_count_start_epoch 350 \
+  --bad_count_start_epoch 300 \
   --seed 42

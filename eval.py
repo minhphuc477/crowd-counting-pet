@@ -151,6 +151,7 @@ def get_args_parser():
     parser.add_argument('--count_head_loss_type', default='log_l1', choices=('log_l1', 'l1', 'smooth_l1'))
     parser.add_argument('--count_head_start_epoch', default=0, type=int)
     parser.add_argument('--count_head_end_epoch', default=-1, type=int)
+    parser.add_argument('--allow_count_head_fresh_train', action='store_true')
     parser.add_argument('--allow_count_head_from_start', action='store_true')
     parser.add_argument('--safe_count_head_start_epoch', default=250, type=int)
     parser.add_argument('--count_head_init_count', default=40.0, type=float)
