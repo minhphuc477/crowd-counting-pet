@@ -328,6 +328,8 @@ def get_args_parser():
                         help='initial count prediction for a reference 256x256 crop in the separate count head')
     parser.add_argument('--count_head_init_cells', default=1024.0, type=float,
                         help='reference encoder-cell count for --count_head_init_count; 256/8 squared is 1024')
+    parser.add_argument('--count_head_feature_grad_scale', default=1.0, type=float,
+                        help='scale gradients from count/density auxiliaries into PET encoder; 0 trains only the head')
     parser.add_argument('--train_count_head_only', action='store_true',
                         help='freeze PET and train only the separate count head')
     parser.add_argument('--density_map_loss_coef', default=0.0, type=float,
@@ -613,7 +615,7 @@ def merge_checkpoint_args(args, checkpoint):
             'class_loss_type', 'focal_alpha', 'focal_gamma',
             'count_head_loss_coef', 'count_head_loss_type',
             'count_head_start_epoch', 'count_head_end_epoch', 'count_head_init_count',
-            'count_head_init_cells', 'train_count_head_only',
+            'count_head_init_cells', 'count_head_feature_grad_scale', 'train_count_head_only',
             'density_map_loss_coef', 'density_map_loss_type', 'density_map_pos_weight',
             'density_map_start_epoch', 'density_map_end_epoch',
             'region_count_loss_coef', 'region_count_grid', 'region_count_gate',

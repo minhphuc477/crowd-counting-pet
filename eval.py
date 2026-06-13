@@ -153,6 +153,7 @@ def get_args_parser():
     parser.add_argument('--count_head_end_epoch', default=-1, type=int)
     parser.add_argument('--count_head_init_count', default=40.0, type=float)
     parser.add_argument('--count_head_init_cells', default=1024.0, type=float)
+    parser.add_argument('--count_head_feature_grad_scale', default=1.0, type=float)
     parser.add_argument('--train_count_head_only', action='store_true')
     parser.add_argument('--density_map_loss_coef', default=0.0, type=float)
     parser.add_argument('--density_map_loss_type', default='log_l1', choices=('log_l1', 'l1', 'smooth_l1'))
