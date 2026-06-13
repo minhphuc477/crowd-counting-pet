@@ -13,6 +13,7 @@ if str(REPO_ROOT) not in sys.path:
 import util.misc as utils
 from datasets import build_dataset
 from engine import evaluate
+from main import get_args_parser as get_train_args_parser
 from main import merge_checkpoint_args, seed_worker, set_reproducibility
 from models import build_model
 
@@ -47,7 +48,9 @@ def main():
         raise FileNotFoundError(f"checkpoint not found: {checkpoint_path}")
 
     checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
-    cli_args = argparse.Namespace(**vars(args))
+    cli_args = get_train_args_parser().parse_args([])
+    for key, value in vars(args).items():
+        setattr(cli_args, key, value)
     cli_args.resume_model_only = True
     cli_args._explicit_args = set(vars(args).keys())
     merged_args = merge_checkpoint_args(cli_args, checkpoint)
