@@ -42,6 +42,29 @@ def _parse_size_pair_list(value, default, name):
     return [_parse_size_pair(pair, None, name) for pair in value]
 
 
+def _valid_image_shape(samples, device=None):
+    """Return [H, W] of the non-padded image area.
+
+    PET evaluation pads full images for window compatibility. Counting must use
+    the real image area, otherwise point queries in padded pixels can survive
+    thresholding and inflate MAE.
+    """
+    tensor_shape = samples.tensors.shape[-2:]
+    if samples.mask is None:
+        return torch.as_tensor(tensor_shape, device=device or samples.tensors.device)
+    mask = samples.mask
+    valid_rows = (~mask).any(dim=2).sum(dim=1)
+    valid_cols = (~mask).any(dim=1).sum(dim=1)
+    valid_h = valid_rows.max().clamp(min=1)
+    valid_w = valid_cols.max().clamp(min=1)
+    return torch.stack([valid_h, valid_w]).to(device=device or samples.tensors.device)
+
+
+def _query_shape_for_image(image_shape, stride):
+    stride = int(stride)
+    return (image_shape + stride // 2 - 1) // stride
+
+
 class BasePETCount(nn.Module):
     """ 
     Base PET model
@@ -74,9 +97,8 @@ class BasePETCount(nn.Module):
         bs, c = dense_input_embed.shape[:2]
 
         # get image shape
-        input = samples.tensors
-        image_shape = torch.tensor(input.shape[2:], device=src.device)
-        shape = (image_shape + stride//2 -1) // stride
+        image_shape = torch.as_tensor(samples.tensors.shape[2:], device=src.device)
+        shape = _query_shape_for_image(image_shape, stride)
         shape_h, shape_w = int(shape[0].item()), int(shape[1].item())
 
         # generate point queries
@@ -106,10 +128,10 @@ class BasePETCount(nn.Module):
         dense_input_embed = kwargs['dense_input_embed']
         bs, c = dense_input_embed.shape[:2]
 
-        # get image shape
-        input = samples.tensors
-        image_shape = torch.tensor(input.shape[2:], device=src.device)
-        shape = (image_shape + stride//2 -1) // stride
+        # Keep padded shape for window partition compatibility; padding
+        # queries are filtered out in test_forward before counting.
+        image_shape = torch.as_tensor(samples.tensors.shape[2:], device=src.device)
+        shape = _query_shape_for_image(image_shape, stride)
         shape_h, shape_w = int(shape[0].item()), int(shape[1].item())
 
         # generate points queries
@@ -1819,6 +1841,19 @@ class PET(nn.Module):
             raise ValueError(f'Unsupported branch: {branch}')
         return scores * responsibility.clamp(0.0, 1.0)
 
+    def get_valid_query_area_mask(self, output, samples):
+        """Mask out point queries whose centers are in padded image area."""
+        if samples.mask is None:
+            return None
+        points_queries = output['points_queries']
+        if points_queries.numel() == 0:
+            return torch.zeros(points_queries.shape[0], dtype=torch.bool, device=points_queries.device)
+        valid_shape = _valid_image_shape(samples, device=points_queries.device).to(dtype=points_queries.dtype)
+        img_h, img_w = output['img_shape']
+        valid_y = (valid_shape[0] / max(float(img_h), 1.0)).clamp(max=1.0)
+        valid_x = (valid_shape[1] / max(float(img_w), 1.0)).clamp(max=1.0)
+        return (points_queries[:, 0] < valid_y) & (points_queries[:, 1] < valid_x)
+
     def pet_forward(self, samples, features, pos, **kwargs):
         # context encoding
         src, mask = features[self.encode_feats].decompose()
@@ -1918,6 +1953,9 @@ class PET(nn.Module):
                 index_sparse = out_sparse_eval_scores >= self.eval_count_head_min_score
             else:
                 index_sparse = self.get_score_mask(out_sparse_eval_scores).to(out_sparse['pred_logits'].device)
+            valid_area = self.get_valid_query_area_mask(out_sparse, samples)
+            if valid_area is not None:
+                index_sparse = index_sparse & valid_area.to(device=index_sparse.device)
             sparse_gate = self.get_eval_branch_gate_mask(out_sparse, outputs['split_map_raw'], 'sparse')
             if sparse_gate is not None:
                 index_sparse = index_sparse & sparse_gate.to(device=index_sparse.device)
@@ -1934,6 +1972,9 @@ class PET(nn.Module):
                 index_dense = out_dense_eval_scores >= self.eval_count_head_min_score
             else:
                 index_dense = self.get_score_mask(out_dense_eval_scores).to(out_dense['pred_logits'].device)
+            valid_area = self.get_valid_query_area_mask(out_dense, samples)
+            if valid_area is not None:
+                index_dense = index_dense & valid_area.to(device=index_dense.device)
             dense_gate = self.get_eval_branch_gate_mask(out_dense, outputs['split_map_raw'], 'dense')
             if dense_gate is not None:
                 index_dense = index_dense & dense_gate.to(device=index_dense.device)

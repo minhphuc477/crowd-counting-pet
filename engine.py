@@ -173,6 +173,14 @@ def _predict_count(model, samples, targets):
     return outputs, float(len(outputs_scores))
 
 
+def _valid_hw(samples):
+    if samples.mask is None:
+        return samples.tensors.shape[-2:]
+    valid_h = int((~samples.mask[0]).any(dim=1).sum().item())
+    valid_w = int((~samples.mask[0]).any(dim=0).sum().item())
+    return max(valid_h, 1), max(valid_w, 1)
+
+
 def _ceil_to_multiple(value, multiple=256):
     return max(multiple, int(math.ceil(float(value) / multiple)) * multiple)
 
@@ -239,7 +247,7 @@ def evaluate(model, data_loader, device, epoch=0, vis_dir=None, tta_flip=False, 
         samples = samples.to(device)
         if len(targets) != 1 or samples.tensors.shape[0] != 1:
             raise ValueError('PET evaluation expects batch_size=1; counting metrics are image-level.')
-        img_h, img_w = samples.tensors.shape[-2:]
+        img_h, img_w = _valid_hw(samples)
 
         # inference
         outputs, predict_cnt = _predict_count(model, samples, targets)
