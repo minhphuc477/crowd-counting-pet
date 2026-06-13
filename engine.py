@@ -284,6 +284,11 @@ def evaluate(model, data_loader, device, epoch=0, vis_dir=None, tta_flip=False, 
         results_reduced = utils.reduce_dict(results)
         metric_logger.update(mae=results_reduced['mae'], mse_sq=results_reduced['mse_sq'])
         metric_logger.update(pred_cnt=results_reduced['pred_cnt'], gt_cnt=results_reduced['gt_cnt'])
+        if 'eval_count_debug' in outputs:
+            metric_logger.update(**{
+                f'dbg_{key}': float(value)
+                for key, value in outputs['eval_count_debug'].items()
+            })
 
         # visualize predictions
         if vis_dir: 

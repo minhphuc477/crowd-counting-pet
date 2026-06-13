@@ -470,6 +470,8 @@ class PET(nn.Module):
         self.eval_soft_split_gate = getattr(args, 'eval_soft_split_gate', 'none')
         if self.eval_soft_split_gate not in ('none', 'query', 'pred'):
             raise ValueError('eval_soft_split_gate must be one of "none", "query", or "pred"')
+        self.eval_filter_invalid_points = not bool(getattr(args, 'no_eval_filter_invalid_points', False))
+        self.eval_debug_counting = bool(getattr(args, 'eval_debug_counting', False))
         self.eval_count_mode = getattr(args, 'eval_count_mode', 'threshold')
         if self.eval_count_mode not in ('threshold', 'count_head_topk'):
             raise ValueError('eval_count_mode must be one of "threshold" or "count_head_topk"')
@@ -1854,6 +1856,24 @@ class PET(nn.Module):
         valid_x = (valid_shape[1] / max(float(img_w), 1.0)).clamp(max=1.0)
         return (points_queries[:, 0] < valid_y) & (points_queries[:, 1] < valid_x)
 
+    def get_valid_pred_area_mask(self, output, samples):
+        """Mask out predicted points outside the real non-padded image area."""
+        if not self.eval_filter_invalid_points or samples.mask is None:
+            return None
+        pred_points = output['pred_points']
+        if pred_points.numel() == 0:
+            return torch.zeros(pred_points.shape[0], dtype=torch.bool, device=pred_points.device)
+        valid_shape = _valid_image_shape(samples, device=pred_points.device).to(dtype=pred_points.dtype)
+        img_h, img_w = output['img_shape']
+        valid_y = (valid_shape[0] / max(float(img_h), 1.0)).clamp(max=1.0)
+        valid_x = (valid_shape[1] / max(float(img_w), 1.0)).clamp(max=1.0)
+        return (
+            (pred_points[:, 0] >= 0.0)
+            & (pred_points[:, 1] >= 0.0)
+            & (pred_points[:, 0] < valid_y)
+            & (pred_points[:, 1] < valid_x)
+        )
+
     def pet_forward(self, samples, features, pos, **kwargs):
         # context encoding
         src, mask = features[self.encode_feats].decompose()
@@ -1945,6 +1965,7 @@ class PET(nn.Module):
         score_parts = []
         count_topk = self.eval_count_mode == 'count_head_topk' and self.count_head is not None
         template_out = out_sparse if out_sparse is not None else out_dense
+        count_debug = {}
 
         if out_sparse is not None:
             out_sparse_scores = torch.nn.functional.softmax(out_sparse['pred_logits'], -1)[..., 1]
@@ -1953,12 +1974,20 @@ class PET(nn.Module):
                 index_sparse = out_sparse_eval_scores >= self.eval_count_head_min_score
             else:
                 index_sparse = self.get_score_mask(out_sparse_eval_scores).to(out_sparse['pred_logits'].device)
+            count_debug['sparse_raw'] = int(out_sparse_scores.numel())
+            count_debug['sparse_score'] = int(index_sparse.sum().detach().item())
             valid_area = self.get_valid_query_area_mask(out_sparse, samples)
             if valid_area is not None:
                 index_sparse = index_sparse & valid_area.to(device=index_sparse.device)
+            count_debug['sparse_valid_query'] = int(index_sparse.sum().detach().item())
+            valid_pred = self.get_valid_pred_area_mask(out_sparse, samples)
+            if valid_pred is not None:
+                index_sparse = index_sparse & valid_pred.to(device=index_sparse.device)
+            count_debug['sparse_valid_pred'] = int(index_sparse.sum().detach().item())
             sparse_gate = self.get_eval_branch_gate_mask(out_sparse, outputs['split_map_raw'], 'sparse')
             if sparse_gate is not None:
                 index_sparse = index_sparse & sparse_gate.to(device=index_sparse.device)
+            count_debug['sparse_final'] = int(index_sparse.sum().detach().item())
             pred_logits_parts.append(out_sparse['pred_logits'][index_sparse])
             pred_points_parts.append(out_sparse['pred_points'][index_sparse])
             pred_offsets_parts.append(out_sparse['pred_offsets'][index_sparse])
@@ -1972,12 +2001,20 @@ class PET(nn.Module):
                 index_dense = out_dense_eval_scores >= self.eval_count_head_min_score
             else:
                 index_dense = self.get_score_mask(out_dense_eval_scores).to(out_dense['pred_logits'].device)
+            count_debug['dense_raw'] = int(out_dense_scores.numel())
+            count_debug['dense_score'] = int(index_dense.sum().detach().item())
             valid_area = self.get_valid_query_area_mask(out_dense, samples)
             if valid_area is not None:
                 index_dense = index_dense & valid_area.to(device=index_dense.device)
+            count_debug['dense_valid_query'] = int(index_dense.sum().detach().item())
+            valid_pred = self.get_valid_pred_area_mask(out_dense, samples)
+            if valid_pred is not None:
+                index_dense = index_dense & valid_pred.to(device=index_dense.device)
+            count_debug['dense_valid_pred'] = int(index_dense.sum().detach().item())
             dense_gate = self.get_eval_branch_gate_mask(out_dense, outputs['split_map_raw'], 'dense')
             if dense_gate is not None:
                 index_dense = index_dense & dense_gate.to(device=index_dense.device)
+            count_debug['dense_final'] = int(index_dense.sum().detach().item())
             pred_logits_parts.append(out_dense['pred_logits'][index_dense])
             pred_points_parts.append(out_dense['pred_points'][index_dense])
             pred_offsets_parts.append(out_dense['pred_offsets'][index_dense])
@@ -2018,6 +2055,7 @@ class PET(nn.Module):
             scores,
             template_out['img_shape'],
         )
+        count_debug['final_after_nms'] = int(pred_logits.shape[0])
 
         div_out = dict()
         for name in list(template_out.keys()):
@@ -2034,6 +2072,8 @@ class PET(nn.Module):
             else:
                 div_out[name] = template_out[name]
         div_out['points_queries'] = points_queries_out.unsqueeze(0)
+        if self.eval_debug_counting:
+            div_out['eval_count_debug'] = count_debug
         div_out['split_map_raw'] = outputs['split_map_raw']
         div_out['split_threshold'] = outputs['split_threshold']
         if 'count_pred' in outputs:

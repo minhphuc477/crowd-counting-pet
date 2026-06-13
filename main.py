@@ -512,6 +512,10 @@ def get_args_parser():
                         help='threshold keeps PET behavior; count_head_topk keeps top-K APG candidates using the separate count head')
     parser.add_argument('--eval_count_head_min_score', default=0.0, type=float,
                         help='minimum candidate score before count-head top-K selection')
+    parser.add_argument('--no_eval_filter_invalid_points', action='store_true',
+                        help='disable eval filtering of predicted points outside the real non-padded image area')
+    parser.add_argument('--eval_debug_counting', action='store_true',
+                        help='log sparse/dense query counts after each eval counting filter')
     parser.add_argument('--eval_protocol', default='pet', choices=('pet', 'crowd_no_overlap'),
                         help='validation protocol used during training')
 
@@ -693,6 +697,7 @@ def merge_checkpoint_args(args, checkpoint):
             'score_threshold', 'split_threshold', 'split_threshold_quantile',
             'eval_nms_radius', 'eval_branch_gate', 'eval_soft_split_gate',
             'eval_count_mode', 'eval_count_head_min_score',
+            'no_eval_filter_invalid_points', 'eval_debug_counting',
         })
         explicit_args = set(getattr(args, '_explicit_args', set()))
         aux_resume_keys = {
@@ -1225,6 +1230,7 @@ def main(args):
                     'eval_model': eval_model_name,
                     'eval_count_mode': getattr(args, 'eval_count_mode', 'threshold'),
                     'eval_count_head_min_score': float(getattr(args, 'eval_count_head_min_score', 0.0)),
+                    'eval_filter_invalid_points': not bool(getattr(args, 'no_eval_filter_invalid_points', False)),
                 }
                 with open(run_log_name, "a", encoding="utf-8") as log_file:
                     log_file.write("epoch:{}, mae:{}, mse:{}, time{}, \n\nbest mae:{}, best epoch: {}\n".format(
