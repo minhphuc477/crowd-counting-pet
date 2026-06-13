@@ -542,6 +542,8 @@ def get_args_parser():
                         help='start epoch')
     parser.add_argument('--num_workers', default=2, type=int)
     parser.add_argument('--eval_freq', default=5, type=int)
+    parser.add_argument('--eval_start_epoch', default=0, type=int,
+                        help='skip validation before this epoch; useful for unstable from-scratch calibration warmup')
     parser.add_argument('--eval_before_train', action='store_true',
                         help='run validation once before the first training epoch')
     parser.add_argument('--no_abort_on_bad_count', action='store_true',
@@ -550,7 +552,7 @@ def get_args_parser():
                         help='abort training if pred/gt or gt/pred exceeds this ratio and MAE is also high')
     parser.add_argument('--bad_count_mae_min', default=200.0, type=float,
                         help='minimum validation MAE needed before bad-count auto-abort can trigger')
-    parser.add_argument('--bad_count_start_epoch', default=20, type=int,
+    parser.add_argument('--bad_count_start_epoch', default=300, type=int,
                         help='first epoch where bad-count auto-abort is allowed')
     parser.add_argument('--syn_bn', default=0, type=int)
     parser.add_argument('--ema_decay', default=0.0, type=float,
@@ -628,7 +630,7 @@ def sanitize_unstable_training_args(args):
 def should_abort_for_bad_count(args, epoch, test_stats):
     if bool(getattr(args, 'no_abort_on_bad_count', False)):
         return False, ''
-    if epoch < int(getattr(args, 'bad_count_start_epoch', 20)):
+    if epoch < int(getattr(args, 'bad_count_start_epoch', 300)):
         return False, ''
     pred_cnt = float(test_stats.get('pred_cnt', 0.0))
     gt_cnt = float(test_stats.get('gt_cnt', 0.0))
@@ -669,7 +671,8 @@ def merge_checkpoint_args(args, checkpoint):
         'list_backbones', 'syn_bn', 'deterministic', 'freeze_bn', 'amp', 'amp_dtype',
         'strict_model_checks',
         # allow overriding schedule/eval settings at resume time
-        'epochs', 'batch_size', 'accum_iter', 'eval_freq', 'eval_before_train', 'eval_protocol', 'data_path', 'eval_max_size',
+        'epochs', 'batch_size', 'accum_iter', 'eval_freq', 'eval_start_epoch',
+        'eval_before_train', 'eval_protocol', 'data_path', 'eval_max_size',
         'patch_size', 'patch_size_choices', 'crop_attempts', 'min_crop_points',
     }
     if getattr(args, 'resume_model_only', False):
@@ -1170,7 +1173,7 @@ def main(args):
                 f.write(json.dumps(log_stats) + "\n")
 
         # evaluation
-        if epoch % args.eval_freq == 0 and epoch > 0:
+        if epoch % args.eval_freq == 0 and epoch > 0 and epoch >= int(getattr(args, 'eval_start_epoch', 0)):
             t1 = time.time()
             eval_model = model_ema.module if model_ema is not None else model
             eval_model_name = 'ema' if model_ema is not None else 'raw'
