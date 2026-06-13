@@ -40,7 +40,7 @@ CUDA_VISIBLE_DEVICES=0 python main.py \
   --bayesian_loss_gate detach \
   --score_threshold 0.5 \
   --split_threshold 0.5 \
-  --eval_nms_radius 0 \
+  --eval_nms_radius 4 \
   --eval_branch_gate query \
-  --eval_soft_split_gate none \
+  --eval_soft_split_gate pred \
   --seed 42

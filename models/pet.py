@@ -461,13 +461,13 @@ class PET(nn.Module):
         self.split_pos_weight = float(getattr(args, 'split_pos_weight', 1.0))
         self.negative_loss_coef = float(getattr(args, 'negative_loss_coef', 0.1))
         self.split_threshold = float(getattr(args, 'split_threshold', -1.0))
-        self.split_threshold_quantile = float(getattr(args, 'split_threshold_quantile', 0.55))
+        self.split_threshold_quantile = float(getattr(args, 'split_threshold_quantile', 0.5))
         self.score_threshold = float(getattr(args, 'score_threshold', 0.5))
-        self.eval_nms_radius = float(getattr(args, 'eval_nms_radius', 0.0))
-        self.eval_branch_gate = getattr(args, 'eval_branch_gate', 'none')
+        self.eval_nms_radius = float(getattr(args, 'eval_nms_radius', 4.0))
+        self.eval_branch_gate = getattr(args, 'eval_branch_gate', 'pred')
         if self.eval_branch_gate not in ('none', 'query', 'pred'):
             raise ValueError('eval_branch_gate must be one of "none", "query", or "pred"')
-        self.eval_soft_split_gate = getattr(args, 'eval_soft_split_gate', 'none')
+        self.eval_soft_split_gate = getattr(args, 'eval_soft_split_gate', 'pred')
         if self.eval_soft_split_gate not in ('none', 'query', 'pred'):
             raise ValueError('eval_soft_split_gate must be one of "none", "query", or "pred"')
         self.eval_filter_invalid_points = not bool(getattr(args, 'no_eval_filter_invalid_points', False))
@@ -475,7 +475,7 @@ class PET(nn.Module):
         self.eval_count_mode = getattr(args, 'eval_count_mode', 'threshold')
         if self.eval_count_mode not in ('threshold', 'count_head_topk'):
             raise ValueError('eval_count_mode must be one of "threshold" or "count_head_topk"')
-        self.eval_count_head_min_score = float(getattr(args, 'eval_count_head_min_score', 0.0))
+        self.eval_count_head_min_score = float(getattr(args, 'eval_count_head_min_score', 0.5))
         self.pet_loss_variant = getattr(args, 'pet_loss_variant', 'paper')
         self.split_loss_variant = getattr(args, 'split_loss_variant', 'auto')
         if self.split_loss_variant == 'auto':
@@ -1759,7 +1759,7 @@ class PET(nn.Module):
                 threshold = torch.as_tensor(0.5, dtype=scores.dtype, device=scores.device)
             else:
                 threshold = torch.quantile(flat, 0.95).to(dtype=scores.dtype, device=scores.device)
-                threshold = threshold.clamp(0.05, 0.95)
+                threshold = threshold.clamp(0.30, 0.95)
         return scores >= threshold
 
     def apply_eval_point_nms(self, pred_logits, pred_points, pred_offsets, points_queries, scores, img_shape):

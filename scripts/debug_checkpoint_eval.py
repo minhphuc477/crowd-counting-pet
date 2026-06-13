@@ -31,10 +31,11 @@ def get_args():
     parser.add_argument("--timm_adapter", default="lite_fpn")
     parser.add_argument("--score_threshold", default=0.575, type=float)
     parser.add_argument("--split_threshold", default=0.47, type=float)
-    parser.add_argument("--eval_nms_radius", default=0.0, type=float)
-    parser.add_argument("--eval_branch_gate", default="none", choices=("none", "query", "pred"))
-    parser.add_argument("--eval_soft_split_gate", default="none", choices=("none", "query", "pred"))
+    parser.add_argument("--eval_nms_radius", default=4.0, type=float)
+    parser.add_argument("--eval_branch_gate", default="pred", choices=("none", "query", "pred"))
+    parser.add_argument("--eval_soft_split_gate", default="pred", choices=("none", "query", "pred"))
     parser.add_argument("--eval_count_mode", default="threshold", choices=("threshold", "count_head_topk"))
+    parser.add_argument("--eval_count_head_min_score", default=0.5, type=float)
     parser.add_argument("--eval_debug_counting", action="store_true")
     parser.add_argument("--seed", default=42, type=int)
     parser.add_argument("--output_json", default="")
@@ -67,6 +68,7 @@ def main():
     merged_args.eval_branch_gate = args.eval_branch_gate
     merged_args.eval_soft_split_gate = args.eval_soft_split_gate
     merged_args.eval_count_mode = args.eval_count_mode
+    merged_args.eval_count_head_min_score = args.eval_count_head_min_score
     merged_args.eval_debug_counting = bool(args.eval_debug_counting)
 
     set_reproducibility(args.seed, deterministic=True)

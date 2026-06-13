@@ -102,7 +102,7 @@ def make_args(
         split_count_threshold=2,
         split_pos_weight=1.0,
         split_threshold=0.5,
-        split_threshold_quantile=0.55,
+        split_threshold_quantile=0.5,
         score_threshold=0.5,
     )
 
@@ -170,7 +170,7 @@ def check_backbone(
 def parse_args():
     parser = argparse.ArgumentParser(description='Validate PET backbone compatibility')
     parser.add_argument('--backbone', default='convnextv2_base')
-    parser.add_argument('--timm_adapter', default='lite_fpn', choices=('pet_fpn', 'lite_fpn', 'direct', 'fpn'))
+    parser.add_argument('--timm_adapter', default='lite_fpn', choices=('pet_fpn', 'lite_fpn', 'rcc_fpn', 'direct', 'fpn'))
     parser.add_argument('--timm_output_norm', default='gn', choices=('gn', 'none'))
     parser.add_argument('--all', action='store_true', help='Check vgg16_bn and every supported timm backbone')
     parser.add_argument('--height', type=int, default=256)

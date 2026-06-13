@@ -211,7 +211,7 @@ def get_args_parser():
                         help='initialize the backbone randomly instead of loading timm/ImageNet weights')
     parser.add_argument('--allow_random_backbone_fallback', action='store_true',
                         help='allow timm backbones to continue with random init if pretrained weights cannot load')
-    parser.add_argument('--timm_adapter', default='lite_fpn', choices=('pet_fpn', 'lite_fpn', 'direct', 'fpn'),
+    parser.add_argument('--timm_adapter', default='lite_fpn', choices=('pet_fpn', 'lite_fpn', 'rcc_fpn', 'direct', 'fpn'),
                         help='adapter used to map timm features into PET 4x/8x features')
     parser.add_argument('--timm_output_norm', default='gn', choices=('gn', 'none'),
                         help='normalization after timm feature adapter; gn preserves old timm behavior, none is VGG-like')
@@ -502,19 +502,19 @@ def get_args_parser():
                         help='positive cell weight for quadtree quality loss')
     parser.add_argument('--split_threshold', default=0.5, type=float,
                         help='split-map threshold used to route sparse vs dense inference windows')
-    parser.add_argument('--split_threshold_quantile', default=0.55, type=float,
+    parser.add_argument('--split_threshold_quantile', default=0.5, type=float,
                         help='legacy adaptive split-map quantile (unused when split_threshold is set)')
     parser.add_argument('--score_threshold', default=0.5, type=float,
                         help='point classification threshold; negative enables adaptive score thresholding')
-    parser.add_argument('--eval_nms_radius', default=0.0, type=float,
+    parser.add_argument('--eval_nms_radius', default=4.0, type=float,
                         help='optional eval-only point NMS radius in pixels; 0 disables duplicate suppression')
-    parser.add_argument('--eval_branch_gate', default='none', choices=('none', 'query', 'pred'),
+    parser.add_argument('--eval_branch_gate', default='pred', choices=('none', 'query', 'pred'),
                         help='eval-only split-aware sparse/dense ownership gate; none keeps PET concatenation')
-    parser.add_argument('--eval_soft_split_gate', default='none', choices=('none', 'query', 'pred'),
+    parser.add_argument('--eval_soft_split_gate', default='pred', choices=('none', 'query', 'pred'),
                         help='eval-only soft split responsibility multiplied into person scores before thresholding')
     parser.add_argument('--eval_count_mode', default='threshold', choices=('threshold', 'count_head_topk'),
                         help='threshold keeps PET behavior; count_head_topk keeps top-K APG candidates using the separate count head')
-    parser.add_argument('--eval_count_head_min_score', default=0.0, type=float,
+    parser.add_argument('--eval_count_head_min_score', default=0.5, type=float,
                         help='minimum candidate score before count-head top-K selection')
     parser.add_argument('--no_eval_filter_invalid_points', action='store_true',
                         help='disable eval filtering of predicted points outside the real non-padded image area')
@@ -810,6 +810,7 @@ def build_optimizer_param_groups(model_without_ddp, args):
     adapter_prefixes = [
         'backbone.backbone.fpn.',  # timm Joiner -> TimmBackbone -> BackboneFPN
         'backbone.backbone.lite_fpn.',  # timm Joiner -> TimmBackbone -> LiteFPNAdapter
+        'backbone.backbone.rcc_fpn.',  # timm Joiner -> TimmBackbone -> RCCFPNAdapter
         'backbone.backbone.pet_fpn.',  # timm Joiner -> TimmBackbone -> PETFPNAdapter
         'backbone.backbone.direct_adapter.',  # timm Joiner -> TimmBackbone -> DirectFeatureAdapter
         'backbone.0.fpn.mhf_c4.',
@@ -1249,7 +1250,7 @@ def main(args):
                     'eval_time': float(t2 - t1),
                     'eval_model': eval_model_name,
                     'eval_count_mode': getattr(args, 'eval_count_mode', 'threshold'),
-                    'eval_count_head_min_score': float(getattr(args, 'eval_count_head_min_score', 0.0)),
+                    'eval_count_head_min_score': float(getattr(args, 'eval_count_head_min_score', 0.5)),
                     'eval_filter_invalid_points': not bool(getattr(args, 'no_eval_filter_invalid_points', False)),
                 }
                 with open(run_log_name, "a", encoding="utf-8") as log_file:

@@ -75,7 +75,7 @@ def get_args_parser():
                         help='initialize the backbone randomly instead of loading timm/ImageNet weights')
     parser.add_argument('--allow_random_backbone_fallback', action='store_true',
                         help='allow timm backbones to continue with random init if pretrained weights cannot load')
-    parser.add_argument('--timm_adapter', default='lite_fpn', choices=('pet_fpn', 'lite_fpn', 'direct', 'fpn'),
+    parser.add_argument('--timm_adapter', default='lite_fpn', choices=('pet_fpn', 'lite_fpn', 'rcc_fpn', 'direct', 'fpn'),
                         help='adapter used to map timm features into PET 4x/8x features')
     parser.add_argument('--timm_output_norm', default='gn', choices=('gn', 'none'),
                         help='normalization after timm feature adapter; gn preserves old timm behavior, none is VGG-like')
@@ -239,13 +239,13 @@ def get_args_parser():
     parser.add_argument('--split_count_threshold', default=2, type=int)
     parser.add_argument('--split_pos_weight', default=1.0, type=float)
     parser.add_argument('--split_threshold', default=0.5, type=float)
-    parser.add_argument('--split_threshold_quantile', default=0.55, type=float)
+    parser.add_argument('--split_threshold_quantile', default=0.5, type=float)
     parser.add_argument('--score_threshold', default=0.5, type=float)
-    parser.add_argument('--eval_nms_radius', default=0.0, type=float)
-    parser.add_argument('--eval_branch_gate', default='none', choices=('none', 'query', 'pred'))
-    parser.add_argument('--eval_soft_split_gate', default='none', choices=('none', 'query', 'pred'))
+    parser.add_argument('--eval_nms_radius', default=4.0, type=float)
+    parser.add_argument('--eval_branch_gate', default='pred', choices=('none', 'query', 'pred'))
+    parser.add_argument('--eval_soft_split_gate', default='pred', choices=('none', 'query', 'pred'))
     parser.add_argument('--eval_count_mode', default='threshold', choices=('threshold', 'count_head_topk'))
-    parser.add_argument('--eval_count_head_min_score', default=0.0, type=float)
+    parser.add_argument('--eval_count_head_min_score', default=0.5, type=float)
     parser.add_argument('--no_eval_filter_invalid_points', action='store_true')
     parser.add_argument('--eval_debug_counting', action='store_true')
 
@@ -508,9 +508,9 @@ def main(args):
             'eval_protocol': args.eval_protocol,
             'tta_flip': bool(args.tta_flip),
             'tta_scales': list(tta_scales),
-            'eval_nms_radius': float(getattr(args, 'eval_nms_radius', 0.0)),
-            'eval_branch_gate': getattr(args, 'eval_branch_gate', 'none'),
-            'eval_soft_split_gate': getattr(args, 'eval_soft_split_gate', 'none'),
+            'eval_nms_radius': float(getattr(args, 'eval_nms_radius', 4.0)),
+            'eval_branch_gate': getattr(args, 'eval_branch_gate', 'pred'),
+            'eval_soft_split_gate': getattr(args, 'eval_soft_split_gate', 'pred'),
             'eval_count_mode': getattr(args, 'eval_count_mode', 'threshold'),
             'eval_filter_invalid_points': not bool(getattr(args, 'no_eval_filter_invalid_points', False)),
         }, indent=2) + "\n", encoding="utf-8")

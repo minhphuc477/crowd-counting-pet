@@ -223,21 +223,21 @@ def get_args() -> argparse.Namespace:
         "--eval_nms_radii",
         nargs="+",
         type=float,
-        default=[0.0],
+        default=[4.0],
         help="eval-only point NMS radii in pixels; 0 disables",
     )
     parser.add_argument(
         "--eval_branch_gates",
         nargs="+",
         choices=("none", "query", "pred"),
-        default=["none"],
+        default=["pred"],
         help="eval-only sparse/dense split-ownership gates",
     )
     parser.add_argument(
         "--eval_soft_split_gates",
         nargs="+",
         choices=("none", "query", "pred"),
-        default=["none"],
+        default=["pred"],
         help="eval-only soft split responsibility gates multiplied into scores",
     )
     parser.add_argument(
@@ -251,7 +251,7 @@ def get_args() -> argparse.Namespace:
         "--eval_count_head_min_scores",
         nargs="+",
         type=float,
-        default=[0.0],
+        default=[0.5],
         help="candidate score floors for count_head_topk",
     )
     parser.add_argument(

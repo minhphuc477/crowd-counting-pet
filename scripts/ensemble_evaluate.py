@@ -306,7 +306,7 @@ def main():
             split_count_threshold=2,
             split_pos_weight=1.0,
             split_threshold=0.5,
-            split_threshold_quantile=0.55,
+            split_threshold_quantile=0.5,
             score_threshold=0.5,
             # Matcher parameters
             set_cost_class=1.0,

@@ -171,6 +171,77 @@ class LiteFPNAdapter(nn.Module):
         return p[self.reduction_to_index[4]], p[self.reduction_to_index[8]]
 
 
+class RCCFPNAdapter(nn.Module):
+    """RCCFormer-style multi-level feature fusion for PET timm backbones.
+
+    This keeps LiteFPN's stable top-down path, then adds an identity-initialized
+    residual MFFM branch at PET's required 4x and 8x resolutions. All backbone
+    stages contribute to each output after resizing, matching RCCFormer's
+    multi-level fusion idea without changing PET's downstream tensor contract.
+    """
+
+    def __init__(self, stage_channels, reduction_to_index, hidden_size=256):
+        super().__init__()
+        self.reduction_to_index = reduction_to_index
+        self.lateral_convs = nn.ModuleList(
+            nn.Conv2d(ch, hidden_size, kernel_size=1, stride=1, padding=0)
+            for ch in stage_channels
+        )
+        num_levels = len(stage_channels)
+        self.fuse_4x = self._make_fuse_block(hidden_size, num_levels)
+        self.fuse_8x = self._make_fuse_block(hidden_size, num_levels)
+        self.gate_4x = self._make_gate(hidden_size)
+        self.gate_8x = self._make_gate(hidden_size)
+        self._init_residual_identity()
+
+    @staticmethod
+    def _make_fuse_block(hidden_size, num_levels):
+        return nn.Sequential(
+            nn.Conv2d(hidden_size * num_levels, hidden_size, kernel_size=1, bias=False),
+            nn.GELU(),
+            nn.Conv2d(hidden_size, hidden_size, kernel_size=3, padding=1, groups=hidden_size, bias=False),
+            nn.GELU(),
+            nn.Conv2d(hidden_size, hidden_size, kernel_size=1),
+        )
+
+    @staticmethod
+    def _make_gate(hidden_size):
+        mid = max(16, hidden_size // 4)
+        return nn.Sequential(
+            nn.AdaptiveAvgPool2d(1),
+            nn.Conv2d(hidden_size, mid, kernel_size=1),
+            nn.GELU(),
+            nn.Conv2d(mid, hidden_size, kernel_size=1),
+            nn.Sigmoid(),
+        )
+
+    def _init_residual_identity(self):
+        for block in (self.fuse_4x, self.fuse_8x):
+            nn.init.zeros_(block[-1].weight)
+            nn.init.zeros_(block[-1].bias)
+
+    @staticmethod
+    def _resize_all(features, size):
+        return [
+            feat if feat.shape[-2:] == size else F.interpolate(feat, size=size, mode='bilinear', align_corners=False)
+            for feat in features
+        ]
+
+    def _fuse_at(self, pyramid, index, fuse_block, gate_block):
+        base = pyramid[index]
+        multilevel = torch.cat(self._resize_all(pyramid, base.shape[-2:]), dim=1)
+        residual = fuse_block(multilevel)
+        return base + residual * gate_block(base)
+
+    def forward(self, inputs):
+        p = [conv(feat) for conv, feat in zip(self.lateral_convs, inputs)]
+        for idx in range(len(p) - 2, -1, -1):
+            p[idx] = p[idx] + F.interpolate(p[idx + 1], size=p[idx].shape[-2:], mode='nearest')
+        out_4x = self._fuse_at(p, self.reduction_to_index[4], self.fuse_4x, self.gate_4x)
+        out_8x = self._fuse_at(p, self.reduction_to_index[8], self.fuse_8x, self.gate_8x)
+        return out_4x, out_8x
+
+
 class PETFPNAdapter(nn.Module):
     """PET/VGG-style three-level FPN for timm backbones.
 
@@ -262,6 +333,7 @@ class TimmBackboneBase(nn.Module):
         if adapter == 'fpn':
             self.fpn = BackboneFPN(self.stage_channels, hidden_size=num_channels, out_size=num_channels, out_kernel=3)
             self.lite_fpn = None
+            self.rcc_fpn = None
             self.direct_adapter = None
             self.pet_fpn = None
         elif adapter == 'lite_fpn':
@@ -271,11 +343,23 @@ class TimmBackboneBase(nn.Module):
                 self.output_reduction_to_index,
                 hidden_size=num_channels,
             )
+            self.rcc_fpn = None
+            self.direct_adapter = None
+            self.pet_fpn = None
+        elif adapter == 'rcc_fpn':
+            self.fpn = None
+            self.lite_fpn = None
+            self.rcc_fpn = RCCFPNAdapter(
+                self.stage_channels,
+                self.output_reduction_to_index,
+                hidden_size=num_channels,
+            )
             self.direct_adapter = None
             self.pet_fpn = None
         elif adapter == 'pet_fpn':
             self.fpn = None
             self.lite_fpn = None
+            self.rcc_fpn = None
             self.direct_adapter = None
             self.pet_fpn = PETFPNAdapter(
                 self.stage_channels,
@@ -287,6 +371,7 @@ class TimmBackboneBase(nn.Module):
         elif adapter == 'direct':
             self.fpn = None
             self.lite_fpn = None
+            self.rcc_fpn = None
             self.pet_fpn = None
             self.direct_adapter = DirectFeatureAdapter(
                 self.stage_channels,
@@ -294,7 +379,7 @@ class TimmBackboneBase(nn.Module):
                 out_size=num_channels,
             )
         else:
-            raise ValueError(f'Unsupported timm adapter: {adapter}. Use "pet_fpn", "lite_fpn", "direct", or "fpn".')
+            raise ValueError(f'Unsupported timm adapter: {adapter}. Use "pet_fpn", "lite_fpn", "rcc_fpn", "direct", or "fpn".')
         self.output_norm_4x = _make_output_norm(num_channels, output_norm)
         self.output_norm_8x = _make_output_norm(num_channels, output_norm)
 
@@ -328,6 +413,8 @@ class TimmBackboneBase(nn.Module):
             features_8x = features_fpn[self.output_reduction_to_index[8]]
         elif self.adapter == 'lite_fpn':
             features_4x, features_8x = self.lite_fpn(feats)
+        elif self.adapter == 'rcc_fpn':
+            features_4x, features_8x = self.rcc_fpn(feats)
         elif self.adapter == 'pet_fpn':
             features_4x, features_8x = self.pet_fpn(feats)
         else:
