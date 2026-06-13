@@ -330,6 +330,16 @@ def get_args_parser():
                         help='reference encoder-cell count for --count_head_init_count; 256/8 squared is 1024')
     parser.add_argument('--train_count_head_only', action='store_true',
                         help='freeze PET and train only the separate count head')
+    parser.add_argument('--density_map_loss_coef', default=0.0, type=float,
+                        help='spatial density-map auxiliary weight for the count head; 0 disables it')
+    parser.add_argument('--density_map_loss_type', default='log_l1', choices=('log_l1', 'l1', 'smooth_l1'),
+                        help='loss scale for density-map auxiliary')
+    parser.add_argument('--density_map_pos_weight', default=10.0, type=float,
+                        help='extra weight on cells containing annotated points for density-map auxiliary')
+    parser.add_argument('--density_map_start_epoch', default=0, type=int,
+                        help='epoch when density-map auxiliary starts')
+    parser.add_argument('--density_map_end_epoch', default=-1, type=int,
+                        help='epoch after which density-map auxiliary turns off; negative keeps it on')
     parser.add_argument('--region_count_loss_coef', default=0.0, type=float,
                         help='local region count calibration loss weight; 0 disables it')
     parser.add_argument('--region_count_grid', default=4, type=int,
@@ -604,6 +614,8 @@ def merge_checkpoint_args(args, checkpoint):
             'count_head_loss_coef', 'count_head_loss_type',
             'count_head_start_epoch', 'count_head_end_epoch', 'count_head_init_count',
             'count_head_init_cells', 'train_count_head_only',
+            'density_map_loss_coef', 'density_map_loss_type', 'density_map_pos_weight',
+            'density_map_start_epoch', 'density_map_end_epoch',
             'region_count_loss_coef', 'region_count_grid', 'region_count_gate',
             'region_count_type', 'region_count_start_epoch', 'region_count_end_epoch',
             'bayesian_loss_coef', 'bayesian_sigma', 'bayesian_bg_coef',

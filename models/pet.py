@@ -366,10 +366,14 @@ class GlobalCountHead(nn.Module):
         nn.init.zeros_(self.net[-1].weight)
         nn.init.constant_(self.net[-1].bias, init_density_logit)
 
-    def forward(self, x, mask=None):
+    def predict_density(self, x, mask=None):
         density = F.softplus(self.net(x.float()).squeeze(1))
         if mask is not None:
             density = density * (~mask).to(dtype=density.dtype, device=density.device)
+        return density
+
+    def forward(self, x, mask=None):
+        density = self.predict_density(x, mask)
         return density.flatten(1).sum(dim=1)
 
 
@@ -470,7 +474,18 @@ class PET(nn.Module):
         self.count_head_end_epoch = int(getattr(args, 'count_head_end_epoch', -1))
         self.count_head_init_count = float(getattr(args, 'count_head_init_count', 40.0))
         self.count_head_init_cells = float(getattr(args, 'count_head_init_cells', 1024.0))
-        needs_count_head = self.count_head_loss_coef > 0 or self.eval_count_mode == 'count_head_topk'
+        self.density_map_loss_coef = float(getattr(args, 'density_map_loss_coef', 0.0))
+        self.density_map_loss_type = getattr(args, 'density_map_loss_type', 'log_l1')
+        if self.density_map_loss_type not in ('log_l1', 'l1', 'smooth_l1'):
+            raise ValueError('density_map_loss_type must be one of "log_l1", "l1", or "smooth_l1"')
+        self.density_map_pos_weight = float(getattr(args, 'density_map_pos_weight', 10.0))
+        self.density_map_start_epoch = int(getattr(args, 'density_map_start_epoch', 0))
+        self.density_map_end_epoch = int(getattr(args, 'density_map_end_epoch', -1))
+        needs_count_head = (
+            self.count_head_loss_coef > 0
+            or self.density_map_loss_coef > 0
+            or self.eval_count_mode == 'count_head_topk'
+        )
         self.count_head = (
             GlobalCountHead(hidden_dim, init_count=self.count_head_init_count, init_cells=self.count_head_init_cells)
             if needs_count_head else None
@@ -730,6 +745,17 @@ class PET(nn.Module):
             loss_dict['loss_count_head'] = loss_count_head
             weight_dict['loss_count_head'] = self.count_head_loss_coef
             losses += loss_count_head * self.count_head_loss_coef
+        if self.density_map_loss_coef > 0:
+            density_map_active = epoch >= self.density_map_start_epoch and (
+                self.density_map_end_epoch < 0 or epoch <= self.density_map_end_epoch
+            )
+            if density_map_active:
+                loss_density_map = self.compute_density_map_loss(outputs, targets)
+            else:
+                loss_density_map = outputs['split_map_raw'].sum() * 0.0
+            loss_dict['loss_density_map'] = loss_density_map
+            weight_dict['loss_density_map'] = self.density_map_loss_coef
+            losses += loss_density_map * self.density_map_loss_coef
         if self.bayesian_loss_coef > 0:
             bayesian_start_epoch = warmup_ep if self.bayesian_start_epoch < 0 else self.bayesian_start_epoch
             bayesian_active = epoch >= bayesian_start_epoch and (
@@ -1522,6 +1548,44 @@ class PET(nn.Module):
             return F.smooth_l1_loss(pred_counts, target_counts)
         return F.l1_loss(torch.log1p(pred_counts), torch.log1p(target_counts))
 
+    def build_density_map_targets(self, outputs, targets):
+        if 'count_density' not in outputs:
+            raise KeyError('count_density is required for density-map supervision')
+        density = outputs['count_density']
+        device = density.device
+        dtype = density.dtype
+        batch_size, map_h, map_w = density.shape
+        target_density = torch.zeros(batch_size, map_h, map_w, dtype=dtype, device=device)
+        img_h, img_w = outputs['sparse']['img_shape']
+        img_h = max(float(img_h), 1.0)
+        img_w = max(float(img_w), 1.0)
+
+        for batch_idx, target in enumerate(targets):
+            points = target['points'].to(device=device, dtype=torch.float32)
+            if points.numel() == 0:
+                continue
+            y = torch.clamp((points[:, 0] / img_h * map_h).long(), 0, map_h - 1)
+            x = torch.clamp((points[:, 1] / img_w * map_w).long(), 0, map_w - 1)
+            linear_idx = y * map_w + x
+            flat_target = target_density[batch_idx].flatten()
+            flat_target.scatter_add_(0, linear_idx, torch.ones_like(linear_idx, dtype=dtype))
+        return target_density
+
+    def compute_density_map_loss(self, outputs, targets):
+        if self.count_head is None or 'count_density' not in outputs:
+            return outputs['split_map_raw'].sum() * 0.0
+        pred_density = outputs['count_density'].to(dtype=outputs['split_map_raw'].dtype)
+        target_density = self.build_density_map_targets(outputs, targets).to(dtype=pred_density.dtype)
+        if self.density_map_loss_type == 'l1':
+            raw_loss = F.l1_loss(pred_density, target_density, reduction='none')
+        elif self.density_map_loss_type == 'smooth_l1':
+            raw_loss = F.smooth_l1_loss(pred_density, target_density, reduction='none')
+        else:
+            raw_loss = F.smooth_l1_loss(torch.log1p(pred_density), torch.log1p(target_density), reduction='none')
+        pos_weight = max(float(self.density_map_pos_weight), 0.0)
+        weights = 1.0 + pos_weight * (target_density > 0).to(dtype=raw_loss.dtype)
+        return (raw_loss * weights).sum() / weights.sum().clamp_min(1.0)
+
     def compute_bayesian_point_loss(self, outputs, targets):
         """Point-level expected-count loss around each GT point.
 
@@ -1803,7 +1867,9 @@ class PET(nn.Module):
         outputs['split_mask_dense'] = split_mask_dense
         outputs['split_threshold'] = split_threshold.detach()
         if self.count_head is not None:
-            outputs['count_pred'] = self.count_head(encode_src.float(), mask)
+            count_density = self.count_head.predict_density(encode_src.float(), mask)
+            outputs['count_density'] = count_density
+            outputs['count_pred'] = count_density.flatten(1).sum(dim=1)
         if 'train' in kwargs:
             outputs['encode_src'] = encode_src
         return outputs
