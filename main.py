@@ -639,6 +639,17 @@ def sanitize_unstable_training_args(args):
             'Use --allow_count_head_from_start only for isolated debugging runs.'
         )
         args.count_head_start_epoch = delayed_start
+    if (
+        count_coef > 0
+        and bool(getattr(args, 'resume_model_only', False))
+        and bool(getattr(args, 'resume', ''))
+        and not bool(getattr(args, 'freeze_bn', False))
+    ):
+        print(
+            'WARNING: enabling --freeze_bn for count-head fine-tuning from a checkpoint. '
+            'Leaving BatchNorm in train mode can destroy PET score calibration in a few epochs.'
+        )
+        args.freeze_bn = True
     return args
 
 
