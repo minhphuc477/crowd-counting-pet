@@ -10,10 +10,10 @@ CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0}" python main.py \
   --timm_output_norm gn \
   --dataset_file SHA \
   --data_path "$DATA" \
-  --output_dir outputs/SHA/convnextv2_base_rccfpn_calibrated_apg_seed42 \
+  --output_dir outputs/SHA/convnextv2_base_rccfpn_focal075_raw_seed42 \
   --device cuda \
   --num_workers 2 \
-  --batch_size 1 \
+  --batch_size 8 \
   --accum_iter 4 \
   --amp \
   --epochs 1500 \
@@ -28,7 +28,8 @@ CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0}" python main.py \
   --lr_backbone_adapter 0.00005 \
   --weight_decay 0.0001 \
   --clip_max_norm 0.1 \
-  --ema_decay 0.9999 \
+  --ema_decay 0 \
+  --eval_model raw \
   --patch_size 256 \
   --patch_size_choices 192,256 \
   --crop_attempts 12 \
@@ -39,19 +40,18 @@ CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0}" python main.py \
   --split_count_threshold 2 \
   --split_pos_weight 2.0 \
   --class_loss_type focal \
-  --focal_alpha 0.35 \
+  --focal_alpha 0.75 \
   --focal_gamma 2.0 \
   --class_prior_prob 0.01 \
-  --eos_coef 1.0 \
-  --apg_loss_coef 0.25 \
+  --eos_coef 0.5 \
+  --apg_loss_coef 0.5 \
   --apg_pos_k 1 \
   --apg_point_coef 5.0 \
   --apg_bg_coef 0.5 \
   --apg_bg_k 8 \
   --apg_bg_min_dist 12 \
-  --apg_start_epoch 80 \
+  --apg_start_epoch 40 \
   --apg_warmup_epochs 120 \
-  --bayesian_loss_coef 0.03 \
   --bayesian_sigma 8.0 \
   --bayesian_bg_coef 0.02 \
   --bayesian_loss_gate detach \
@@ -59,7 +59,7 @@ CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0}" python main.py \
   --count_head_loss_coef 0 \
   --density_map_loss_coef 0 \
   --eval_count_mode threshold \
-  --score_threshold 0.5 \
+  --score_threshold 0.10 \
   --split_threshold 0.5 \
   --split_threshold_quantile 0.5 \
   --eval_nms_radius 4 \

@@ -1762,6 +1762,18 @@ class PET(nn.Module):
                 threshold = threshold.clamp(0.30, 0.95)
         return scores >= threshold
 
+    @staticmethod
+    def update_eval_score_debug(count_debug, prefix, scores):
+        if scores.numel() == 0:
+            for name in ('mean', 'max', 'q90', 'q95', 'q99'):
+                count_debug[f'{prefix}_score_{name}'] = 0.0
+            return
+        flat = scores.detach().reshape(-1).float()
+        count_debug[f'{prefix}_score_mean'] = float(flat.mean().item())
+        count_debug[f'{prefix}_score_max'] = float(flat.max().item())
+        for quantile, name in ((0.90, 'q90'), (0.95, 'q95'), (0.99, 'q99')):
+            count_debug[f'{prefix}_score_{name}'] = float(torch.quantile(flat, quantile).item())
+
     def apply_eval_point_nms(self, pred_logits, pred_points, pred_offsets, points_queries, scores, img_shape):
         radius = float(self.eval_nms_radius)
         if radius <= 0 or pred_points.shape[0] <= 1:
@@ -1975,6 +1987,7 @@ class PET(nn.Module):
 
         if out_sparse is not None:
             out_sparse_scores = torch.nn.functional.softmax(out_sparse['pred_logits'], -1)[..., 1]
+            self.update_eval_score_debug(count_debug, 'sparse', out_sparse_scores)
             out_sparse_eval_scores = self.apply_eval_soft_split_gate(out_sparse, outputs['split_map_raw'], 'sparse', out_sparse_scores)
             if count_topk:
                 index_sparse = out_sparse_eval_scores >= self.eval_count_head_min_score
@@ -2002,6 +2015,7 @@ class PET(nn.Module):
 
         if out_dense is not None:
             out_dense_scores = torch.nn.functional.softmax(out_dense['pred_logits'], -1)[..., 1]
+            self.update_eval_score_debug(count_debug, 'dense', out_dense_scores)
             out_dense_eval_scores = self.apply_eval_soft_split_gate(out_dense, outputs['split_map_raw'], 'dense', out_dense_scores)
             if count_topk:
                 index_dense = out_dense_eval_scores >= self.eval_count_head_min_score

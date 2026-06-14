@@ -554,6 +554,8 @@ def get_args_parser():
     parser.add_argument('--eval_freq', default=5, type=int)
     parser.add_argument('--eval_start_epoch', default=0, type=int,
                         help='skip validation before this epoch; useful for unstable from-scratch calibration warmup')
+    parser.add_argument('--eval_model', default='auto', choices=('auto', 'raw', 'ema'),
+                        help='model weights used for validation/checkpoint selection; auto uses EMA when enabled')
     parser.add_argument('--eval_before_train', action='store_true',
                         help='run validation once before the first training epoch')
     parser.add_argument('--no_abort_on_bad_count', action='store_true',
@@ -671,7 +673,7 @@ def sanitize_unstable_training_args(args):
             )
             args.class_loss_type = 'focal'
             if 'focal_alpha' not in explicit_args:
-                args.focal_alpha = 0.35
+                args.focal_alpha = 0.75
             if 'focal_gamma' not in explicit_args:
                 args.focal_gamma = 2.0
         apg_coef = float(getattr(args, 'apg_loss_coef', 0.0))
@@ -734,6 +736,27 @@ def should_abort_for_bad_count(args, epoch, test_stats):
     return False, ''
 
 
+def select_eval_model(model, model_without_ddp, model_ema, args):
+    """Return the module used for validation and its label."""
+    mode = getattr(args, 'eval_model', 'auto')
+    if mode == 'raw':
+        return model, 'raw'
+    if mode == 'ema':
+        if model_ema is None:
+            print('WARNING: --eval_model ema requested but EMA is disabled; falling back to raw model.')
+            return model, 'raw'
+        return model_ema.module, 'ema'
+    if model_ema is not None:
+        return model_ema.module, 'ema'
+    return model, 'raw'
+
+
+def best_state_for_eval_model(model_without_ddp, model_ema, eval_model_name):
+    if eval_model_name == 'ema' and model_ema is not None:
+        return model_ema.state_dict(), True
+    return model_without_ddp.state_dict(), model_ema is not None
+
+
 def merge_checkpoint_args(args, checkpoint):
     checkpoint_args = checkpoint.get('args')
     if checkpoint_args is None:
@@ -751,7 +774,7 @@ def merge_checkpoint_args(args, checkpoint):
         'list_backbones', 'syn_bn', 'deterministic', 'freeze_bn', 'amp', 'amp_dtype',
         'strict_model_checks',
         # allow overriding schedule/eval settings at resume time
-        'epochs', 'batch_size', 'accum_iter', 'eval_freq', 'eval_start_epoch',
+        'epochs', 'batch_size', 'accum_iter', 'eval_freq', 'eval_start_epoch', 'eval_model',
         'eval_before_train', 'eval_protocol', 'data_path', 'eval_max_size',
         'bad_count_direction', 'bad_count_ratio_max', 'bad_count_mae_min', 'bad_count_start_epoch',
         'patch_size', 'patch_size_choices', 'crop_attempts', 'min_crop_points',
@@ -1187,7 +1210,7 @@ def main(args):
 
     if getattr(args, 'eval_before_train', False):
         t1 = time.time()
-        eval_model = model_ema.module if model_ema is not None else model
+        eval_model, eval_model_name = select_eval_model(model, model_without_ddp, model_ema, args)
         if args.eval_protocol == 'crowd_no_overlap':
             test_stats = evaluate_crowd_no_overlap(eval_model, data_loader_val, device, vis_dir=None)
         else:
@@ -1200,6 +1223,7 @@ def main(args):
             "mse:", test_stats['mse'],
             "pred_cnt:", test_stats.get('pred_cnt', 0.0),
             "gt_cnt:", test_stats.get('gt_cnt', 0.0),
+            "eval_model:", eval_model_name,
             "eval_time:", t2 - t1,
         )
         print("==========================\n")
@@ -1263,8 +1287,7 @@ def main(args):
         # evaluation
         if epoch % args.eval_freq == 0 and epoch > 0 and epoch >= int(getattr(args, 'eval_start_epoch', 0)):
             t1 = time.time()
-            eval_model = model_ema.module if model_ema is not None else model
-            eval_model_name = 'ema' if model_ema is not None else 'raw'
+            eval_model, eval_model_name = select_eval_model(model, model_without_ddp, model_ema, args)
             if args.eval_protocol == 'crowd_no_overlap':
                 test_stats = evaluate_crowd_no_overlap(eval_model, data_loader_val, device, vis_dir=None)
             else:
@@ -1323,12 +1346,12 @@ def main(args):
                     json.dumps(eval_record, indent=2) + "\n",
                     encoding="utf-8",
                 )
-                best_model_state = model_ema.state_dict() if model_ema is not None else model_without_ddp.state_dict()
+                best_model_state, include_raw = best_state_for_eval_model(model_without_ddp, model_ema, eval_model_name)
                 utils.save_on_master(
                     checkpoint_payload(
                         epoch,
                         model_state=best_model_state,
-                        include_raw_model=model_ema is not None,
+                        include_raw_model=include_raw,
                     ),
                     output_dir / 'best_checkpoint.pth',
                 )
@@ -1365,7 +1388,7 @@ def main(args):
             'best_test_mae': float(best_mae),
             'best_test_mse': float(best_mse),
             'final': True,
-            'eval_model': 'ema' if model_ema is not None else 'raw',
+            'eval_model': getattr(args, 'eval_model', 'auto'),
         }
         if bad_count_abort_reason:
             final_record['aborted'] = True
