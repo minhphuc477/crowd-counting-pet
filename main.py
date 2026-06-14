@@ -666,16 +666,15 @@ def sanitize_unstable_training_args(args):
                 'Setting class_prior_prob=0.01. Pass --class_prior_prob explicitly to override.'
             )
             args.class_prior_prob = 0.01
-        if getattr(args, 'class_loss_type', 'ce') == 'ce' and 'class_loss_type' not in explicit_args:
-            print(
-                'WARNING: fresh timm/PET training is using focal classification loss by default '
-                'to stabilize dense foreground/background imbalance. Pass --class_loss_type ce to override.'
-            )
-            args.class_loss_type = 'focal'
-            if 'focal_alpha' not in explicit_args:
-                args.focal_alpha = 0.75
-            if 'focal_gamma' not in explicit_args:
-                args.focal_gamma = 2.0
+        if getattr(args, 'class_loss_type', 'ce') == 'focal':
+            focal_alpha = float(getattr(args, 'focal_alpha', 0.25))
+            if focal_alpha > 0.5 and 'focal_alpha' not in explicit_args:
+                print(
+                    'WARNING: fresh timm/PET focal loss with focal_alpha>0.5 can over-amplify '
+                    'foreground queries on SHA. Keeping the explicit focal mode, but setting '
+                    'focal_alpha=0.25 unless you pass --focal_alpha explicitly.'
+                )
+                args.focal_alpha = 0.25
         apg_coef = float(getattr(args, 'apg_loss_coef', 0.0))
         apg_bg_coef = float(getattr(args, 'apg_bg_coef', 0.0))
         apg_bg_k = int(getattr(args, 'apg_bg_k', 0))
