@@ -37,10 +37,10 @@ CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0}" python main.py \
   --pet_loss_variant paper \
   --split_loss_variant gt \
   --quadtree_loss_coef 0.25 \
-  --split_count_threshold 2 \
+  --split_count_threshold 5 \
   --split_pos_weight 2.0 \
   --class_loss_type ce \
-  --class_prior_prob 0.01 \
+  --class_prior_prob 0.0023 \
   --eos_coef 0.5 \
   --apg_loss_coef 0.1 \
   --apg_pos_k 1 \
@@ -57,12 +57,12 @@ CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0}" python main.py \
   --count_head_loss_coef 0 \
   --density_map_loss_coef 0 \
   --eval_count_mode threshold \
-  --score_threshold 0.5 \
+  --score_threshold 0.55 \
   --split_threshold 0.5 \
   --split_threshold_quantile 0.5 \
   --eval_nms_radius 8 \
   --eval_branch_gate pred \
-  --eval_soft_split_gate pred \
+  --eval_soft_split_gate none \
   --bad_count_start_epoch 100 \
   --bad_count_direction over \
   --eval_debug_counting \

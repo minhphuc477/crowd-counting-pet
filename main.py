@@ -660,12 +660,41 @@ def sanitize_unstable_training_args(args):
 
     fresh_timm_train = fresh_train and is_timm_backbone(getattr(args, 'backbone', ''))
     if fresh_timm_train:
-        if float(getattr(args, 'class_prior_prob', -1.0)) <= 0 and 'class_prior_prob' not in explicit_args:
+        class_prior_prob = float(getattr(args, 'class_prior_prob', -1.0))
+        if class_prior_prob <= 0 and 'class_prior_prob' not in explicit_args:
             print(
                 'WARNING: fresh timm/PET training without a foreground prior is prone to query explosion. '
-                'Setting class_prior_prob=0.01. Pass --class_prior_prob explicitly to override.'
+                'Setting class_prior_prob=0.0023. Pass --class_prior_prob explicitly to override.'
             )
-            args.class_prior_prob = 0.01
+            args.class_prior_prob = 0.0023
+        elif class_prior_prob > 0.02:
+            print(
+                'WARNING: class_prior_prob is high for PET full-image query counts on SHA. '
+                'Values around 0.0023 are safer for fresh timm backbones.'
+            )
+        if (
+            getattr(args, 'split_loss_variant', 'paper') in ('gt', 'paper_gt')
+            and int(getattr(args, 'split_count_threshold', 2)) < 4
+        ):
+            if 'split_count_threshold' in explicit_args:
+                print(
+                    'WARNING: split_count_threshold<4 with GT split supervision can mark most SHA '
+                    'split cells as dense and cause dense-branch over-counting.'
+                )
+            else:
+                print(
+                    'WARNING: fresh timm/PET GT split supervision with split_count_threshold=2 is '
+                    'dense-biased on SHA. Setting split_count_threshold=5.'
+                )
+                args.split_count_threshold = 5
+        if (
+            float(getattr(args, 'score_threshold', 0.5)) < 0.3
+            and 'score_threshold' in explicit_args
+        ):
+            print(
+                'WARNING: score_threshold<0.3 is diagnostic-only for PET full-image evaluation and '
+                'can turn mild dense-score drift into catastrophic over-counting.'
+            )
         if getattr(args, 'class_loss_type', 'ce') == 'focal':
             focal_alpha = float(getattr(args, 'focal_alpha', 0.25))
             if focal_alpha > 0.5 and 'focal_alpha' not in explicit_args:
