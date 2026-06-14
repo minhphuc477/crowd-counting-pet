@@ -564,6 +564,8 @@ def get_args_parser():
                         help='minimum validation MAE needed before bad-count auto-abort can trigger')
     parser.add_argument('--bad_count_start_epoch', default=300, type=int,
                         help='first epoch where bad-count auto-abort is allowed')
+    parser.add_argument('--bad_count_direction', default='all', choices=('all', 'over', 'under'),
+                        help='which catastrophic count direction can trigger auto-abort')
     parser.add_argument('--syn_bn', default=0, type=int)
     parser.add_argument('--ema_decay', default=0.0, type=float,
                         help='exponential moving average decay for eval/checkpointing; 0 disables EMA')
@@ -610,6 +612,7 @@ def apply_backbone_recipe(args):
 
 def sanitize_unstable_training_args(args):
     """Disable known-unstable experimental auxiliaries unless explicitly allowed."""
+    explicit_args = set(getattr(args, '_explicit_args', set()))
     density_coef = float(getattr(args, 'density_map_loss_coef', 0.0))
     if density_coef > 0 and not bool(getattr(args, 'allow_unstable_density_map_loss', False)):
         print(
@@ -652,6 +655,42 @@ def sanitize_unstable_training_args(args):
             'Leaving BatchNorm in train mode can destroy PET score calibration in a few epochs.'
         )
         args.freeze_bn = True
+
+    fresh_timm_train = fresh_train and is_timm_backbone(getattr(args, 'backbone', ''))
+    if fresh_timm_train:
+        if float(getattr(args, 'class_prior_prob', -1.0)) <= 0 and 'class_prior_prob' not in explicit_args:
+            print(
+                'WARNING: fresh timm/PET training without a foreground prior is prone to query explosion. '
+                'Setting class_prior_prob=0.01. Pass --class_prior_prob explicitly to override.'
+            )
+            args.class_prior_prob = 0.01
+        if getattr(args, 'class_loss_type', 'ce') == 'ce' and 'class_loss_type' not in explicit_args:
+            print(
+                'WARNING: fresh timm/PET training is using focal classification loss by default '
+                'to stabilize dense foreground/background imbalance. Pass --class_loss_type ce to override.'
+            )
+            args.class_loss_type = 'focal'
+            if 'focal_alpha' not in explicit_args:
+                args.focal_alpha = 0.35
+            if 'focal_gamma' not in explicit_args:
+                args.focal_gamma = 2.0
+        apg_coef = float(getattr(args, 'apg_loss_coef', 0.0))
+        apg_bg_coef = float(getattr(args, 'apg_bg_coef', 0.0))
+        apg_bg_k = int(getattr(args, 'apg_bg_k', 0))
+        if (
+            apg_coef > 0
+            and apg_bg_coef <= 0
+            and apg_bg_k <= 0
+            and 'apg_bg_coef' not in explicit_args
+            and 'apg_bg_k' not in explicit_args
+        ):
+            print(
+                'WARNING: positive-only APG on a fresh timm backbone caused severe SHA over-counting. '
+                'Enabling APG local background negatives: apg_bg_coef=0.5, apg_bg_k=8. '
+                'Pass --apg_bg_coef/--apg_bg_k explicitly to override.'
+            )
+            args.apg_bg_coef = 0.5
+            args.apg_bg_k = 8
     return args
 
 
@@ -669,9 +708,22 @@ def should_abort_for_bad_count(args, epoch, test_stats):
     mae_limit = max(float(getattr(args, 'bad_count_mae_min', 200.0)), 0.0)
     over_ratio = pred_cnt / max(gt_cnt, 1e-6)
     under_ratio = gt_cnt / max(pred_cnt, 1e-6) if pred_cnt > 0 else float('inf')
-    bad_ratio = max(over_ratio, under_ratio)
-    if mae >= mae_limit and bad_ratio >= ratio_limit:
+    direction_mode = getattr(args, 'bad_count_direction', 'all')
+    over_bad = mae >= mae_limit and over_ratio >= ratio_limit
+    under_bad = mae >= mae_limit and under_ratio >= ratio_limit
+    if direction_mode == 'over':
+        should_abort = over_bad
+        direction = 'over-count'
+        bad_ratio = over_ratio
+    elif direction_mode == 'under':
+        should_abort = under_bad
+        direction = 'under-count'
+        bad_ratio = under_ratio
+    else:
+        should_abort = over_bad or under_bad
         direction = 'over-count' if over_ratio >= under_ratio else 'under-count'
+        bad_ratio = max(over_ratio, under_ratio)
+    if should_abort:
         message = (
             f'bad-count guard triggered: {direction} '
             f'pred_cnt={pred_cnt:.4f} gt_cnt={gt_cnt:.4f} '
@@ -701,6 +753,7 @@ def merge_checkpoint_args(args, checkpoint):
         # allow overriding schedule/eval settings at resume time
         'epochs', 'batch_size', 'accum_iter', 'eval_freq', 'eval_start_epoch',
         'eval_before_train', 'eval_protocol', 'data_path', 'eval_max_size',
+        'bad_count_direction', 'bad_count_ratio_max', 'bad_count_mae_min', 'bad_count_start_epoch',
         'patch_size', 'patch_size_choices', 'crop_attempts', 'min_crop_points',
     }
     if getattr(args, 'resume_model_only', False):
