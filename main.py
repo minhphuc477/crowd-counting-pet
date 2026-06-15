@@ -73,6 +73,10 @@ MODEL_RECIPES = {
         'apg_loss_coef': 1.0,
         'apg_start_epoch': 0,
         'apg_warmup_epochs': 100,
+        'apg_sparse_coef': 1.0,
+        'apg_dense_coef': 0.25,
+        'apg_dense_start_epoch': 300,
+        'apg_dense_warmup_epochs': 400,
         'apg_pos_k': 1,
         'apg_point_coef': 5.0,
         'apg_bg_coef': 0.05,
@@ -456,6 +460,14 @@ def get_args_parser():
                         help='epoch when APG auxiliary supervision starts')
     parser.add_argument('--apg_warmup_epochs', default=0, type=int,
                         help='linearly ramp APG loss weight for this many epochs after --apg_start_epoch')
+    parser.add_argument('--apg_sparse_coef', default=1.0, type=float,
+                        help='branch multiplier for sparse APG inside --apg_loss_coef')
+    parser.add_argument('--apg_dense_coef', default=1.0, type=float,
+                        help='branch multiplier for dense APG inside --apg_loss_coef')
+    parser.add_argument('--apg_dense_start_epoch', default=-1, type=int,
+                        help='dense-branch APG start epoch; negative follows --apg_start_epoch')
+    parser.add_argument('--apg_dense_warmup_epochs', default=-1, type=int,
+                        help='dense-branch APG warmup epochs; negative follows --apg_warmup_epochs')
     parser.add_argument('--apg_end_epoch', default=-1, type=int,
                         help='epoch after which APG auxiliary supervision turns off; negative keeps it on')
     parser.add_argument('--apg_count_calibration', default='none', choices=('none', 'threshold', 'soft'),
@@ -951,7 +963,10 @@ def merge_checkpoint_args(args, checkpoint):
             'bayesian_loss_gate', 'bayesian_start_epoch', 'bayesian_end_epoch',
             'apg_loss_coef', 'apg_pos_k', 'apg_point_coef',
             'apg_bg_coef', 'apg_bg_k', 'apg_bg_min_dist',
-            'apg_start_epoch', 'apg_warmup_epochs', 'apg_end_epoch',
+            'apg_start_epoch', 'apg_warmup_epochs',
+            'apg_sparse_coef', 'apg_dense_coef',
+            'apg_dense_start_epoch', 'apg_dense_warmup_epochs',
+            'apg_end_epoch',
             'apg_count_calibration', 'apg_count_calibration_gate',
             'apg_count_calibration_min', 'apg_count_calibration_max',
             'apg_count_calibration_eps',

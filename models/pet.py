@@ -567,6 +567,15 @@ class PET(nn.Module):
         self.apg_bg_min_dist = max(0.0, float(getattr(args, 'apg_bg_min_dist', 12.0)))
         self.apg_start_epoch = int(getattr(args, 'apg_start_epoch', 0))
         self.apg_warmup_epochs = max(0, int(getattr(args, 'apg_warmup_epochs', 0)))
+        self.apg_sparse_coef = max(0.0, float(getattr(args, 'apg_sparse_coef', 1.0)))
+        self.apg_dense_coef = max(0.0, float(getattr(args, 'apg_dense_coef', 1.0)))
+        self.apg_dense_start_epoch = int(getattr(args, 'apg_dense_start_epoch', -1))
+        if self.apg_dense_start_epoch < 0:
+            self.apg_dense_start_epoch = self.apg_start_epoch
+        self.apg_dense_warmup_epochs = int(getattr(args, 'apg_dense_warmup_epochs', -1))
+        if self.apg_dense_warmup_epochs < 0:
+            self.apg_dense_warmup_epochs = self.apg_warmup_epochs
+        self.apg_dense_warmup_epochs = max(0, self.apg_dense_warmup_epochs)
         self.apg_end_epoch = int(getattr(args, 'apg_end_epoch', -1))
         self.apg_count_calibration = getattr(args, 'apg_count_calibration', 'none')
         if self.apg_count_calibration not in ('none', 'threshold', 'soft'):
@@ -852,30 +861,44 @@ class PET(nn.Module):
             weight_dict['loss_bayesian'] = self.bayesian_loss_coef
             losses += loss_bayesian * self.bayesian_loss_coef
         if self.apg_loss_coef > 0:
-            apg_active = epoch >= self.apg_start_epoch and (
+            apg_sparse_active = epoch >= self.apg_start_epoch and (
                 self.apg_end_epoch < 0 or epoch <= self.apg_end_epoch
             )
-            if apg_active and self.apg_warmup_epochs > 0:
-                apg_weight = self.apg_loss_coef * min(
+            apg_dense_active = epoch >= self.apg_dense_start_epoch and (
+                self.apg_end_epoch < 0 or epoch <= self.apg_end_epoch
+            )
+            if apg_sparse_active and self.apg_warmup_epochs > 0:
+                apg_sparse_weight = self.apg_loss_coef * self.apg_sparse_coef * min(
                     1.0,
                     float(epoch - self.apg_start_epoch + 1) / float(self.apg_warmup_epochs),
                 )
             else:
-                apg_weight = self.apg_loss_coef
+                apg_sparse_weight = self.apg_loss_coef * self.apg_sparse_coef if apg_sparse_active else 0.0
+            if apg_dense_active and self.apg_dense_warmup_epochs > 0:
+                apg_dense_weight = self.apg_loss_coef * self.apg_dense_coef * min(
+                    1.0,
+                    float(epoch - self.apg_dense_start_epoch + 1) / float(self.apg_dense_warmup_epochs),
+                )
+            else:
+                apg_dense_weight = self.apg_loss_coef * self.apg_dense_coef if apg_dense_active else 0.0
+            apg_active = apg_sparse_active or apg_dense_active
             apg_count_scale = self.compute_apg_count_scale(outputs, targets) if apg_active else output_sparse['pred_logits'].new_tensor(1.0)
-            if apg_active:
+            if apg_sparse_active:
                 loss_apg_sparse = self.compute_apg_loss(output_sparse, targets, positive_scale=apg_count_scale)
-                loss_apg_dense = self.compute_apg_loss(output_dense, targets, positive_scale=apg_count_scale)
             else:
                 loss_apg_sparse = output_sparse['pred_logits'].sum() * 0.0
+            if apg_dense_active:
+                loss_apg_dense = self.compute_apg_loss(output_dense, targets, positive_scale=apg_count_scale)
+            else:
                 loss_apg_dense = output_dense['pred_logits'].sum() * 0.0
             loss_dict['loss_apg_sp'] = loss_apg_sparse
             loss_dict['loss_apg_ds'] = loss_apg_dense
             loss_dict['loss_apg_count_scale'] = apg_count_scale
-            weight_dict['loss_apg_sp'] = apg_weight
-            weight_dict['loss_apg_ds'] = apg_weight
+            weight_dict['loss_apg_sp'] = apg_sparse_weight
+            weight_dict['loss_apg_ds'] = apg_dense_weight
             weight_dict['loss_apg_count_scale'] = 0.0
-            losses += (loss_apg_sparse + loss_apg_dense) * apg_weight
+            losses += loss_apg_sparse * apg_sparse_weight
+            losses += loss_apg_dense * apg_dense_weight
         if self.apg_soft_loss_coef > 0:
             apg_active = epoch >= self.apg_start_epoch and (
                 self.apg_end_epoch < 0 or epoch <= self.apg_end_epoch
