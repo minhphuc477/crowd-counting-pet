@@ -476,6 +476,14 @@ class PET(nn.Module):
         if self.eval_count_mode not in ('threshold', 'count_head_topk'):
             raise ValueError('eval_count_mode must be one of "threshold" or "count_head_topk"')
         self.eval_count_head_min_score = float(getattr(args, 'eval_count_head_min_score', 0.5))
+        self.eval_score_calibration = getattr(args, 'eval_score_calibration', 'none')
+        if self.eval_score_calibration not in ('none', 'count_head_bias'):
+            raise ValueError('eval_score_calibration must be one of "none" or "count_head_bias"')
+        self.eval_score_calibration_strength = float(getattr(args, 'eval_score_calibration_strength', 1.0))
+        self.eval_score_calibration_max_bias = max(
+            0.0,
+            float(getattr(args, 'eval_score_calibration_max_bias', 8.0)),
+        )
         self.pet_loss_variant = getattr(args, 'pet_loss_variant', 'paper')
         self.split_loss_variant = getattr(args, 'split_loss_variant', 'auto')
         if self.split_loss_variant == 'auto':
@@ -521,6 +529,7 @@ class PET(nn.Module):
             self.count_head_loss_coef > 0
             or self.density_map_loss_coef > 0
             or self.eval_count_mode == 'count_head_topk'
+            or self.eval_score_calibration == 'count_head_bias'
         )
         self.count_head = (
             GlobalCountHead(hidden_dim, init_count=self.count_head_init_count, init_cells=self.count_head_init_cells)
@@ -1844,6 +1853,17 @@ class PET(nn.Module):
         return scores >= threshold
 
     @staticmethod
+    def person_logit_margin(output):
+        logits = output['pred_logits']
+        return logits[..., 1] - logits[..., 0]
+
+    def eval_person_scores(self, output, score_bias=None):
+        if score_bias is None:
+            return torch.nn.functional.softmax(output['pred_logits'], -1)[..., 1]
+        bias = score_bias.to(device=output['pred_logits'].device, dtype=output['pred_logits'].dtype)
+        return torch.sigmoid(self.person_logit_margin(output) + bias)
+
+    @staticmethod
     def update_eval_score_debug(count_debug, prefix, scores):
         if scores.numel() == 0:
             for name in ('mean', 'max', 'q90', 'q95', 'q99'):
@@ -1913,14 +1933,16 @@ class PET(nn.Module):
             return split_values > threshold
         raise ValueError(f'Unsupported branch: {branch}')
 
-    def apply_eval_soft_split_gate(self, output, split_map, branch, scores):
+    def get_eval_soft_split_responsibility(self, output, split_map, branch):
         mode = self.eval_soft_split_gate
-        if mode == 'none' or output is None or scores.numel() == 0:
-            return scores
+        if mode == 'none' or output is None:
+            return None
         if mode == 'query':
             points = output['points_queries']
         else:
             points = output['pred_points']
+        if points.numel() == 0:
+            return torch.zeros(points.shape[0], dtype=split_map.dtype, device=split_map.device)
         points = points.to(device=split_map.device, dtype=split_map.dtype).clamp(0.0, 1.0)
         grid = torch.stack(
             [points[:, 1] * 2.0 - 1.0, points[:, 0] * 2.0 - 1.0],
@@ -1932,14 +1954,21 @@ class PET(nn.Module):
             mode='bilinear',
             padding_mode='border',
             align_corners=False,
-        ).view_as(scores).to(device=scores.device, dtype=scores.dtype)
+        ).view(-1)
         if branch == 'sparse':
             responsibility = 1.0 - split_values
         elif branch == 'dense':
             responsibility = split_values
         else:
             raise ValueError(f'Unsupported branch: {branch}')
-        return scores * responsibility.clamp(0.0, 1.0)
+        return responsibility.clamp(0.0, 1.0)
+
+    def apply_eval_soft_split_gate(self, output, split_map, branch, scores):
+        responsibility = self.get_eval_soft_split_responsibility(output, split_map, branch)
+        if responsibility is None or scores.numel() == 0:
+            return scores
+        responsibility = responsibility.to(device=scores.device, dtype=scores.dtype).view_as(scores)
+        return scores * responsibility
 
     def get_valid_query_area_mask(self, output, samples):
         """Mask out point queries whose centers are in padded image area."""
@@ -1971,6 +2000,83 @@ class PET(nn.Module):
             & (pred_points[:, 0] < valid_y)
             & (pred_points[:, 1] < valid_x)
         )
+
+    def eval_count_weight(self, output, split_map, branch, samples):
+        """Return per-query weights for eval-time count calibration.
+
+        The score bias is solved on the same candidate set that PET will count:
+        real image area only, optional hard branch gate, and optional soft split
+        responsibility. This avoids count-head calibration fighting later
+        filters in test_forward().
+        """
+        scores_shape = output['pred_logits'].shape[:-1]
+        weight = torch.ones(scores_shape, dtype=torch.float32, device=output['pred_logits'].device)
+
+        valid_area = self.get_valid_query_area_mask(output, samples)
+        if valid_area is not None:
+            weight = weight * valid_area.to(device=weight.device, dtype=weight.dtype).view_as(weight)
+        valid_pred = self.get_valid_pred_area_mask(output, samples)
+        if valid_pred is not None:
+            weight = weight * valid_pred.to(device=weight.device, dtype=weight.dtype).view_as(weight)
+        branch_gate = self.get_eval_branch_gate_mask(output, split_map, branch)
+        if branch_gate is not None:
+            weight = weight * branch_gate.to(device=weight.device, dtype=weight.dtype).view_as(weight)
+        soft_resp = self.get_eval_soft_split_responsibility(output, split_map, branch)
+        if soft_resp is not None:
+            weight = weight * soft_resp.to(device=weight.device, dtype=weight.dtype).view_as(weight)
+        return weight
+
+    def compute_eval_score_bias(self, outputs, samples):
+        """Solve a scalar person-logit bias from the count head.
+
+        Top-K count-head inference was too brittle in this codebase: a bad K
+        directly selects too few or too many points. A scalar logit bias is
+        softer. It preserves PET's thresholded point output while making the
+        expected foreground mass agree with the separate density-sum count
+        estimate.
+        """
+        if self.eval_score_calibration != 'count_head_bias':
+            return None
+        if self.count_head is None or 'count_pred' not in outputs:
+            return None
+
+        split_map = outputs['split_map_raw']
+        margins = []
+        weights = []
+        for branch, output in (('sparse', outputs.get('sparse')), ('dense', outputs.get('dense'))):
+            if output is None:
+                continue
+            margins.append(self.person_logit_margin(output).detach().reshape(-1).float())
+            weights.append(self.eval_count_weight(output, split_map, branch, samples).detach().reshape(-1).float())
+        if not margins:
+            return None
+
+        margin = torch.cat(margins, dim=0)
+        weight = torch.cat(weights, dim=0)
+        valid_weight = weight.sum()
+        if valid_weight <= 0:
+            return None
+
+        target_count = outputs['count_pred'][0].detach().float()
+        if not torch.isfinite(target_count):
+            return None
+        target_count = target_count.clamp(min=0.0, max=float(valid_weight.item()))
+
+        max_bias = float(self.eval_score_calibration_max_bias)
+        if max_bias <= 0.0:
+            return None
+        low = margin.new_tensor(-max_bias)
+        high = margin.new_tensor(max_bias)
+        for _ in range(32):
+            mid = (low + high) * 0.5
+            expected_count = (torch.sigmoid(margin + mid) * weight).sum()
+            if expected_count < target_count:
+                low = mid
+            else:
+                high = mid
+        bias = (low + high) * 0.5
+        bias = bias * float(self.eval_score_calibration_strength)
+        return bias.to(device=split_map.device, dtype=split_map.dtype)
 
     def pet_forward(self, samples, features, pos, **kwargs):
         # context encoding
@@ -2065,9 +2171,12 @@ class PET(nn.Module):
         count_topk = self.eval_count_mode == 'count_head_topk' and self.count_head is not None
         template_out = out_sparse if out_sparse is not None else out_dense
         count_debug = {}
+        eval_score_bias = self.compute_eval_score_bias(outputs, samples)
+        if eval_score_bias is not None:
+            count_debug['score_bias'] = float(eval_score_bias.detach().float().item())
 
         if out_sparse is not None:
-            out_sparse_scores = torch.nn.functional.softmax(out_sparse['pred_logits'], -1)[..., 1]
+            out_sparse_scores = self.eval_person_scores(out_sparse, eval_score_bias)
             self.update_eval_score_debug(count_debug, 'sparse', out_sparse_scores)
             out_sparse_eval_scores = self.apply_eval_soft_split_gate(out_sparse, outputs['split_map_raw'], 'sparse', out_sparse_scores)
             if count_topk:
@@ -2095,7 +2204,7 @@ class PET(nn.Module):
             score_parts.append(out_sparse_eval_scores[index_sparse])
 
         if out_dense is not None:
-            out_dense_scores = torch.nn.functional.softmax(out_dense['pred_logits'], -1)[..., 1]
+            out_dense_scores = self.eval_person_scores(out_dense, eval_score_bias)
             self.update_eval_score_debug(count_debug, 'dense', out_dense_scores)
             out_dense_eval_scores = self.apply_eval_soft_split_gate(out_dense, outputs['split_map_raw'], 'dense', out_dense_scores)
             if count_topk:

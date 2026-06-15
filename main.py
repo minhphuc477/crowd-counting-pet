@@ -56,6 +56,57 @@ BACKBONE_RECIPES = {
     },
 }
 
+MODEL_RECIPES = {
+    # PET-compatible APG plus a scalar density-sum calibration head.
+    #
+    # This recipe is intentionally conservative. The count head is trained from
+    # detached encoder features, so it learns global count calibration without
+    # pushing PET's query logits into the severe over-counting failure mode seen
+    # with density-map and top-k variants. APG is kept on PET's real inference
+    # heads, but its positive pressure is damped when the current query field
+    # already over-counts.
+    'vgg_apglc_countcal': {
+        'backbone': 'vgg16_bn',
+        'timm_adapter': 'lite_fpn',
+        'pet_loss_variant': 'paper',
+        'split_loss_variant': 'paper',
+        'apg_loss_coef': 1.0,
+        'apg_start_epoch': 0,
+        'apg_warmup_epochs': 100,
+        'apg_pos_k': 1,
+        'apg_point_coef': 5.0,
+        'apg_bg_coef': 0.05,
+        'apg_bg_k': 1,
+        'apg_bg_min_dist': 12.0,
+        'apg_count_calibration': 'threshold',
+        'apg_count_calibration_gate': 'detach',
+        'apg_count_calibration_min': 0.05,
+        'apg_count_calibration_max': 1.0,
+        'count_head_loss_coef': 0.2,
+        'count_head_loss_type': 'log_l1',
+        'count_head_start_epoch': 0,
+        'count_head_end_epoch': -1,
+        'count_head_warmup_epochs': 100,
+        'count_head_feature_grad_scale': 0.0,
+        'count_head_feature_grad_start_epoch': 0,
+        'count_head_feature_grad_warmup_epochs': 0,
+        'allow_count_head_fresh_train': True,
+        'density_map_loss_coef': 0.0,
+        'eval_count_mode': 'threshold',
+        'eval_score_calibration': 'count_head_bias',
+        'eval_score_calibration_strength': 1.0,
+        'eval_score_calibration_max_bias': 8.0,
+        'score_threshold': 0.5,
+        'split_threshold': 0.5,
+        'split_threshold_quantile': 0.5,
+        'eval_nms_radius': 0.0,
+        'eval_branch_gate': 'none',
+        'eval_soft_split_gate': 'none',
+        'bad_count_start_epoch': 100,
+        'bad_count_direction': 'over',
+    },
+}
+
 HEAVY_BACKBONE_PREFIXES = (
     'convnext_base',
     'convnextv2_base',
@@ -192,6 +243,9 @@ def get_args_parser():
                         help='multiplicative LR decay factor for StepLR')
     parser.add_argument('--auto_backbone_recipe', action='store_true',
                         help='opt into backbone-specific lr/batch/warmup defaults')
+    parser.add_argument('--model_recipe', default='none',
+                        choices=('none',) + tuple(MODEL_RECIPES.keys()),
+                        help='apply a vetted model/loss recipe before safety checks')
     parser.add_argument('--warmup_epochs', default=5, type=int,
                         help='number of warmup epochs')
     parser.add_argument('--hold_epochs', default=-1, type=int,
@@ -530,6 +584,12 @@ def get_args_parser():
                         help='threshold keeps PET behavior; count_head_topk keeps top-K APG candidates using the separate count head')
     parser.add_argument('--eval_count_head_min_score', default=0.5, type=float,
                         help='minimum candidate score before count-head top-K selection')
+    parser.add_argument('--eval_score_calibration', default='none', choices=('none', 'count_head_bias'),
+                        help='eval-only score calibration; count_head_bias shifts person logits to match the scalar count head')
+    parser.add_argument('--eval_score_calibration_strength', default=1.0, type=float,
+                        help='fraction of the count-head logit bias applied during eval score calibration')
+    parser.add_argument('--eval_score_calibration_max_bias', default=8.0, type=float,
+                        help='maximum absolute person-logit bias used by eval score calibration')
     parser.add_argument('--no_eval_filter_invalid_points', action='store_true',
                         help='disable eval filtering of predicted points outside the real non-padded image area')
     parser.add_argument('--eval_debug_counting', action='store_true',
@@ -626,6 +686,29 @@ def apply_backbone_recipe(args):
             setattr(args, key, tuned_value)
 
 
+def apply_model_recipe(args):
+    recipe_name = getattr(args, 'model_recipe', 'none')
+    if recipe_name == 'none':
+        return
+    recipe = MODEL_RECIPES[recipe_name]
+    explicit_args = set(getattr(args, '_explicit_args', set()))
+    for key, value in recipe.items():
+        if key in explicit_args:
+            continue
+        setattr(args, key, value)
+
+
+def is_safe_fresh_count_head(args):
+    """Count head can start at epoch 0 only when it cannot corrupt PET logits."""
+    return (
+        float(getattr(args, 'count_head_loss_coef', 0.0)) <= 0.25
+        and float(getattr(args, 'count_head_feature_grad_scale', 1.0)) == 0.0
+        and int(getattr(args, 'count_head_warmup_epochs', 0)) >= 50
+        and float(getattr(args, 'density_map_loss_coef', 0.0)) == 0.0
+        and getattr(args, 'eval_count_mode', 'threshold') == 'threshold'
+    )
+
+
 def sanitize_unstable_training_args(args):
     """Disable known-unstable experimental auxiliaries unless explicitly allowed."""
     explicit_args = set(getattr(args, '_explicit_args', set()))
@@ -653,13 +736,19 @@ def sanitize_unstable_training_args(args):
         and fresh_train
         and not bool(getattr(args, 'force_unsafe_count_head_from_start', False))
     ):
-        delayed_start = max(1, int(getattr(args, 'safe_count_head_start_epoch', 250)))
-        print(
-            'WARNING: count-head auxiliary from epoch 0 is disabled for fresh training. '
-            f'Setting count_head_start_epoch={delayed_start}. '
-            'Use --force_unsafe_count_head_from_start only for isolated debugging runs.'
-        )
-        args.count_head_start_epoch = delayed_start
+        if is_safe_fresh_count_head(args):
+            print(
+                'Using detached warm-start count head: feature gradients are disabled, '
+                'loss is warmed up, and density-map supervision is off.'
+            )
+        else:
+            delayed_start = max(1, int(getattr(args, 'safe_count_head_start_epoch', 250)))
+            print(
+                'WARNING: count-head auxiliary from epoch 0 is disabled for fresh training. '
+                f'Setting count_head_start_epoch={delayed_start}. '
+                'Use --force_unsafe_count_head_from_start only for isolated debugging runs.'
+            )
+            args.count_head_start_epoch = delayed_start
     if (
         count_coef > 0
         and bool(getattr(args, 'resume_model_only', False))
@@ -830,6 +919,8 @@ def merge_checkpoint_args(args, checkpoint):
             'score_threshold', 'split_threshold', 'split_threshold_quantile',
             'eval_nms_radius', 'eval_branch_gate', 'eval_soft_split_gate',
             'eval_count_mode', 'eval_count_head_min_score',
+            'eval_score_calibration', 'eval_score_calibration_strength',
+            'eval_score_calibration_max_bias',
             'no_eval_filter_invalid_points', 'eval_debug_counting',
         })
         explicit_args = set(getattr(args, '_explicit_args', set()))
@@ -1073,6 +1164,7 @@ def main(args):
 
     if getattr(args, 'auto_backbone_recipe', False):
         apply_backbone_recipe(args)
+    apply_model_recipe(args)
     args = sanitize_unstable_training_args(args)
     print(args)
     device = torch.device(args.device)
@@ -1375,6 +1467,9 @@ def main(args):
                     'eval_model': eval_model_name,
                     'eval_count_mode': getattr(args, 'eval_count_mode', 'threshold'),
                     'eval_count_head_min_score': float(getattr(args, 'eval_count_head_min_score', 0.5)),
+                    'eval_score_calibration': getattr(args, 'eval_score_calibration', 'none'),
+                    'eval_score_calibration_strength': float(getattr(args, 'eval_score_calibration_strength', 1.0)),
+                    'eval_score_calibration_max_bias': float(getattr(args, 'eval_score_calibration_max_bias', 8.0)),
                     'eval_filter_invalid_points': not bool(getattr(args, 'no_eval_filter_invalid_points', False)),
                 }
                 with open(run_log_name, "a", encoding="utf-8") as log_file:

@@ -72,12 +72,15 @@ def run_eval(
     eval_soft_split_gate: str,
     eval_count_mode: str,
     eval_count_head_min_score: float,
+    eval_score_calibration: str,
+    eval_score_calibration_strength: float,
+    eval_score_calibration_max_bias: float,
     run_dir: Path,
 ) -> dict:
     tag = (
         f"score_{score_threshold:.6g}_split_{split_threshold:.6g}_"
         f"nms_{eval_nms_radius:.6g}_gate_{eval_branch_gate}_soft_{eval_soft_split_gate}_"
-        f"count_{eval_count_mode}_min_{eval_count_head_min_score:.6g}"
+        f"count_{eval_count_mode}_min_{eval_count_head_min_score:.6g}_cal_{eval_score_calibration}"
     ).replace(".", "p")
     results_file = run_dir / f"{tag}.json"
     log_file = run_dir / f"{tag}.log"
@@ -111,6 +114,12 @@ def run_eval(
         eval_count_mode,
         "--eval_count_head_min_score",
         str(eval_count_head_min_score),
+        "--eval_score_calibration",
+        eval_score_calibration,
+        "--eval_score_calibration_strength",
+        str(eval_score_calibration_strength),
+        "--eval_score_calibration_max_bias",
+        str(eval_score_calibration_max_bias),
         "--eval_protocol",
         args.eval_protocol,
     ]
@@ -145,6 +154,9 @@ def run_eval(
         "eval_soft_split_gate": eval_soft_split_gate,
         "eval_count_mode": eval_count_mode,
         "eval_count_head_min_score": float(eval_count_head_min_score),
+        "eval_score_calibration": eval_score_calibration,
+        "eval_score_calibration_strength": float(eval_score_calibration_strength),
+        "eval_score_calibration_max_bias": float(eval_score_calibration_max_bias),
         "eval_protocol": args.eval_protocol,
         "tta_flip": bool(args.tta_flip),
         "tta_scales": args.tta_scales,
@@ -179,6 +191,9 @@ def write_outputs(records: list[dict], output_dir: Path) -> None:
         "eval_soft_split_gate",
         "eval_count_mode",
         "eval_count_head_min_score",
+        "eval_score_calibration",
+        "eval_score_calibration_strength",
+        "eval_score_calibration_max_bias",
         "eval_protocol",
         "tta_flip",
         "tta_scales",
@@ -255,6 +270,15 @@ def get_args() -> argparse.Namespace:
         help="candidate score floors for count_head_topk",
     )
     parser.add_argument(
+        "--eval_score_calibrations",
+        nargs="+",
+        choices=("none", "count_head_bias"),
+        default=["none"],
+        help="eval-only score calibration modes passed to eval.py",
+    )
+    parser.add_argument("--eval_score_calibration_strength", default=1.0, type=float)
+    parser.add_argument("--eval_score_calibration_max_bias", default=8.0, type=float)
+    parser.add_argument(
         "--eval_protocol",
         default="pet",
         choices=("pet", "crowd_no_overlap"),
@@ -287,42 +311,51 @@ def main() -> int:
     soft_gates = list(dict.fromkeys(args.eval_soft_split_gates))
     count_modes = list(dict.fromkeys(args.eval_count_modes))
     count_min_scores = _unique_sorted(args.eval_count_head_min_scores)
+    score_calibrations = list(dict.fromkeys(args.eval_score_calibrations))
     records = []
-    total = len(scores) * len(splits) * len(radii) * len(gates) * len(soft_gates) * len(count_modes) * len(count_min_scores)
+    total = (
+        len(scores) * len(splits) * len(radii) * len(gates) * len(soft_gates)
+        * len(count_modes) * len(count_min_scores) * len(score_calibrations)
+    )
     index = 0
     for split_threshold in splits:
         for eval_branch_gate in gates:
             for eval_soft_split_gate in soft_gates:
                 for eval_count_mode in count_modes:
                     for eval_count_head_min_score in count_min_scores:
-                        for eval_nms_radius in radii:
-                            for score_threshold in scores:
-                                index += 1
-                                print(
-                                    f"[{index}/{total}] score_threshold={score_threshold} "
-                                    f"split_threshold={split_threshold} eval_nms_radius={eval_nms_radius} "
-                                    f"eval_branch_gate={eval_branch_gate} "
-                                    f"eval_soft_split_gate={eval_soft_split_gate} "
-                                    f"eval_count_mode={eval_count_mode} "
-                                    f"eval_count_head_min_score={eval_count_head_min_score}"
-                                )
-                                record = run_eval(
-                                    args,
-                                    score_threshold,
-                                    split_threshold,
-                                    eval_nms_radius,
-                                    eval_branch_gate,
-                                    eval_soft_split_gate,
-                                    eval_count_mode,
-                                    eval_count_head_min_score,
-                                    output_dir,
-                                )
-                                records.append(record)
-                                if record.get("ok"):
-                                    print(f"  mae={record['eval_mae']:.4f} mse={record['eval_mse']:.4f}")
-                                else:
-                                    print(f"  failed; see {record['log_file']}")
-                                write_outputs(records, output_dir)
+                        for eval_score_calibration in score_calibrations:
+                            for eval_nms_radius in radii:
+                                for score_threshold in scores:
+                                    index += 1
+                                    print(
+                                        f"[{index}/{total}] score_threshold={score_threshold} "
+                                        f"split_threshold={split_threshold} eval_nms_radius={eval_nms_radius} "
+                                        f"eval_branch_gate={eval_branch_gate} "
+                                        f"eval_soft_split_gate={eval_soft_split_gate} "
+                                        f"eval_count_mode={eval_count_mode} "
+                                        f"eval_count_head_min_score={eval_count_head_min_score} "
+                                        f"eval_score_calibration={eval_score_calibration}"
+                                    )
+                                    record = run_eval(
+                                        args,
+                                        score_threshold,
+                                        split_threshold,
+                                        eval_nms_radius,
+                                        eval_branch_gate,
+                                        eval_soft_split_gate,
+                                        eval_count_mode,
+                                        eval_count_head_min_score,
+                                        eval_score_calibration,
+                                        args.eval_score_calibration_strength,
+                                        args.eval_score_calibration_max_bias,
+                                        output_dir,
+                                    )
+                                    records.append(record)
+                                    if record.get("ok"):
+                                        print(f"  mae={record['eval_mae']:.4f} mse={record['eval_mse']:.4f}")
+                                    else:
+                                        print(f"  failed; see {record['log_file']}")
+                                    write_outputs(records, output_dir)
 
     ok_records = [record for record in records if record.get("ok") and "eval_mae" in record]
     if not ok_records:
@@ -337,7 +370,8 @@ def main() -> int:
         f"split_threshold={best['split_threshold']} "
         f"eval_nms_radius={best['eval_nms_radius']} "
         f"eval_branch_gate={best['eval_branch_gate']} "
-        f"eval_soft_split_gate={best['eval_soft_split_gate']}"
+        f"eval_soft_split_gate={best['eval_soft_split_gate']} "
+        f"eval_score_calibration={best.get('eval_score_calibration', 'none')}"
     )
     print(f"Results saved to: {output_dir}")
     return 0

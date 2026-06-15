@@ -36,6 +36,9 @@ def get_args():
     parser.add_argument("--eval_soft_split_gate", default="pred", choices=("none", "query", "pred"))
     parser.add_argument("--eval_count_mode", default="threshold", choices=("threshold", "count_head_topk"))
     parser.add_argument("--eval_count_head_min_score", default=0.5, type=float)
+    parser.add_argument("--eval_score_calibration", default="none", choices=("none", "count_head_bias"))
+    parser.add_argument("--eval_score_calibration_strength", default=1.0, type=float)
+    parser.add_argument("--eval_score_calibration_max_bias", default=8.0, type=float)
     parser.add_argument("--eval_debug_counting", action="store_true")
     parser.add_argument("--seed", default=42, type=int)
     parser.add_argument("--output_json", default="")
@@ -69,6 +72,9 @@ def main():
     merged_args.eval_soft_split_gate = args.eval_soft_split_gate
     merged_args.eval_count_mode = args.eval_count_mode
     merged_args.eval_count_head_min_score = args.eval_count_head_min_score
+    merged_args.eval_score_calibration = args.eval_score_calibration
+    merged_args.eval_score_calibration_strength = args.eval_score_calibration_strength
+    merged_args.eval_score_calibration_max_bias = args.eval_score_calibration_max_bias
     merged_args.eval_debug_counting = bool(args.eval_debug_counting)
 
     set_reproducibility(args.seed, deterministic=True)
@@ -111,6 +117,7 @@ def main():
             "score_threshold": float(getattr(merged_args, "score_threshold", -1)),
             "split_threshold": float(getattr(merged_args, "split_threshold", -1)),
             "eval_count_mode": getattr(merged_args, "eval_count_mode", None),
+            "eval_score_calibration": getattr(merged_args, "eval_score_calibration", None),
         },
     }
     print(json.dumps(record, indent=2))
