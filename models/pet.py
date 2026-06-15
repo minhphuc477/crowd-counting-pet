@@ -910,7 +910,7 @@ class PET(nn.Module):
             else:
                 apg_dense_weight = self.apg_loss_coef * self.apg_dense_coef if apg_dense_active else 0.0
             apg_active = apg_sparse_active or apg_dense_active
-            apg_count_scale = self.compute_apg_count_scale(outputs, targets) if apg_active else output_sparse['pred_logits'].new_tensor(1.0)
+            apg_count_scale = self.compute_apg_count_scale(outputs, targets, epoch) if apg_active else output_sparse['pred_logits'].new_tensor(1.0)
             if apg_sparse_active:
                 loss_apg_sparse = self.compute_apg_loss(output_sparse, targets, positive_scale=apg_count_scale)
             else:
@@ -1641,7 +1641,7 @@ class PET(nn.Module):
     def _region_count_gates(self, outputs, branch_name, scores):
         return self._split_gates_for_scores(outputs, branch_name, scores, self.region_count_gate)
 
-    def compute_apg_count_scale(self, outputs, targets):
+    def compute_apg_count_scale(self, outputs, targets, epoch=0):
         """Return a detached multiplier that weakens positive APG during over-count.
 
         APG is useful because it clarifies proposal supervision, but PET has two
@@ -1666,6 +1666,8 @@ class PET(nn.Module):
         threshold = torch.as_tensor(threshold, dtype=dtype, device=device)
 
         for branch_name, output in (('sparse', output_sparse), ('dense', output_dense)):
+            if branch_name == 'dense' and int(epoch) < self.pq_dense_start_epoch:
+                continue
             scores = F.softmax(output['pred_logits'], -1)[..., 1]
             gates = self._split_gates_for_scores(
                 outputs,
