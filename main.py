@@ -731,11 +731,11 @@ def get_args_parser():
     parser.add_argument('--eval_soft_split_gate', default='none', choices=('none', 'query', 'pred'),
                         help='eval-only soft split responsibility multiplied into person scores before thresholding')
     parser.add_argument('--eval_foreground_gate', default='none', choices=('none', 'query', 'pred'),
-                        help='sample the foreground head at query/pred points and add it as a local person-logit prior')
+                        help='sample the foreground head at query/pred points during evaluation')
     parser.add_argument('--eval_foreground_gate_mode', default='suppress', choices=('suppress', 'logit_add'),
                         help='suppress only reduces point scores; logit_add is the older experimental additive prior')
     parser.add_argument('--eval_foreground_gate_strength', default=0.75, type=float,
-                        help='strength of the foreground local person-logit prior during evaluation')
+                        help='foreground gate strength during evaluation')
     parser.add_argument('--eval_count_mode', default='threshold', choices=('threshold', 'count_head_topk'),
                         help='threshold keeps PET behavior; count_head_topk keeps top-K APG candidates using the separate count head')
     parser.add_argument('--eval_count_head_min_score', default=0.5, type=float,
