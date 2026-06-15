@@ -4,3 +4,6 @@ Best: mae=71.3516 mse=103.1025 score_threshold=0.5 split_threshold=0.45 eval_nms
 Results saved to: eval_results/SHA/vgg16_bn_scratch_apglc_countcal_sweep
 
 e8203857468720a3e6502042d224e94eb5f410d7 commit result:
+
+
+78f2b43788dd5a81edebb1b3bdfee63b56ddfbfc commit result:
