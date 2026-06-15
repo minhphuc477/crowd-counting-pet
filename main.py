@@ -77,6 +77,10 @@ MODEL_RECIPES = {
         'apg_dense_coef': 0.25,
         'apg_dense_start_epoch': 300,
         'apg_dense_warmup_epochs': 400,
+        'pq_sparse_coef': 1.0,
+        'pq_dense_coef': 1.0,
+        'pq_dense_start_epoch': 300,
+        'pq_dense_warmup_epochs': 400,
         'apg_pos_k': 1,
         'apg_point_coef': 5.0,
         'apg_bg_coef': 0.05,
@@ -102,6 +106,7 @@ MODEL_RECIPES = {
         'eval_score_calibration_start_epoch': 700,
         'eval_score_calibration_min_bias': 0.0,
         'eval_score_calibration_max_bias': 8.0,
+        'eval_dense_start_epoch': 700,
         'score_threshold': 0.5,
         'split_threshold': 0.5,
         'split_threshold_quantile': 0.5,
@@ -358,6 +363,14 @@ def get_args_parser():
     # - loss coefficients
     parser.add_argument('--ce_loss_coef', default=1.0, type=float)
     parser.add_argument('--point_loss_coef', default=5.0, type=float)
+    parser.add_argument('--pq_sparse_coef', default=1.0, type=float,
+                        help='branch multiplier for sparse base point-query CE/point losses')
+    parser.add_argument('--pq_dense_coef', default=1.0, type=float,
+                        help='branch multiplier for dense base point-query CE/point losses')
+    parser.add_argument('--pq_dense_start_epoch', default=0, type=int,
+                        help='epoch when dense base point-query loss starts')
+    parser.add_argument('--pq_dense_warmup_epochs', default=0, type=int,
+                        help='linearly ramp dense base point-query loss after --pq_dense_start_epoch')
     parser.add_argument('--class_loss_type', default='ce', choices=('ce', 'focal'),
                         help='classification loss for person/background point-query logits')
     parser.add_argument('--focal_alpha', default=0.25, type=float,
@@ -598,6 +611,8 @@ def get_args_parser():
                         help='threshold keeps PET behavior; count_head_topk keeps top-K APG candidates using the separate count head')
     parser.add_argument('--eval_count_head_min_score', default=0.5, type=float,
                         help='minimum candidate score before count-head top-K selection')
+    parser.add_argument('--eval_dense_start_epoch', default=0, type=int,
+                        help='skip dense branch predictions during eval before this epoch')
     parser.add_argument('--eval_score_calibration', default='none', choices=('none', 'count_head_bias'),
                         help='eval-only score calibration; count_head_bias shifts person logits to match the scalar count head')
     parser.add_argument('--eval_score_calibration_strength', default=1.0, type=float,
@@ -943,8 +958,12 @@ def merge_checkpoint_args(args, checkpoint):
             'no_eval_filter_invalid_points', 'eval_debug_counting',
         })
         explicit_args = set(getattr(args, '_explicit_args', set()))
+        if 'eval_dense_start_epoch' in explicit_args:
+            runtime_keys.add('eval_dense_start_epoch')
         aux_resume_keys = {
             'class_loss_type', 'focal_alpha', 'focal_gamma',
+            'pq_sparse_coef', 'pq_dense_coef',
+            'pq_dense_start_epoch', 'pq_dense_warmup_epochs',
             'count_head_loss_coef', 'count_head_loss_type',
             'count_head_start_epoch', 'count_head_end_epoch', 'count_head_init_count',
             'count_head_warmup_epochs',

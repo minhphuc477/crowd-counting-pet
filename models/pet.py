@@ -455,6 +455,10 @@ class PET(nn.Module):
             self.ifi_cls_embed = None
             self.ifi_coord_embed = None
         self.warmup_epochs = int(getattr(args, 'warmup_epochs', 5))
+        self.pq_sparse_coef = max(0.0, float(getattr(args, 'pq_sparse_coef', 1.0)))
+        self.pq_dense_coef = max(0.0, float(getattr(args, 'pq_dense_coef', 1.0)))
+        self.pq_dense_start_epoch = max(0, int(getattr(args, 'pq_dense_start_epoch', 0)))
+        self.pq_dense_warmup_epochs = max(0, int(getattr(args, 'pq_dense_warmup_epochs', 0)))
         self.quadtree_loss_coef = float(getattr(args, 'quadtree_loss_coef', 0.1))
         self.quadtree_prior_coef = float(getattr(args, 'quadtree_prior_coef', 0.025))
         self.split_count_threshold = int(getattr(args, 'split_count_threshold', 2))
@@ -476,6 +480,7 @@ class PET(nn.Module):
         if self.eval_count_mode not in ('threshold', 'count_head_topk'):
             raise ValueError('eval_count_mode must be one of "threshold" or "count_head_topk"')
         self.eval_count_head_min_score = float(getattr(args, 'eval_count_head_min_score', 0.5))
+        self.eval_dense_start_epoch = max(0, int(getattr(args, 'eval_dense_start_epoch', 0)))
         self.eval_score_calibration = getattr(args, 'eval_score_calibration', 'none')
         if self.eval_score_calibration not in ('none', 'count_head_bias'):
             raise ValueError('eval_score_calibration must be one of "none" or "count_head_bias"')
@@ -743,6 +748,19 @@ class PET(nn.Module):
             return encode_src.detach().float()
         return (encode_src.detach() + scale * (encode_src - encode_src.detach())).float()
 
+    @staticmethod
+    def schedule_weight(epoch, start_epoch, warmup_epochs, coef=1.0):
+        if int(epoch) < int(start_epoch):
+            return 0.0
+        weight = float(coef)
+        warmup_epochs = int(warmup_epochs)
+        if warmup_epochs > 0:
+            weight *= min(
+                1.0,
+                float(int(epoch) - int(start_epoch) + 1) / float(warmup_epochs),
+            )
+        return weight
+
     def compute_loss(self, outputs, criterion, targets, epoch, samples):
         """
         Compute loss, including:
@@ -764,11 +782,21 @@ class PET(nn.Module):
         # sparse point queries loss
         loss_dict_sparse = {k+'_sp':v for k, v in loss_dict_sparse.items()}
         weight_dict_sparse = {k+'_sp':v for k,v in weight_dict.items()}
+        for key in list(weight_dict_sparse.keys()):
+            weight_dict_sparse[key] *= self.pq_sparse_coef
         loss_pq_sparse = sum(loss_dict_sparse[k] * weight_dict_sparse[k] for k in loss_dict_sparse.keys() if k in weight_dict_sparse)
 
         # dense point queries loss
         loss_dict_dense = {k+'_ds':v for k, v in loss_dict_dense.items()}
         weight_dict_dense = {k+'_ds':v for k,v in weight_dict.items()}
+        pq_dense_weight = self.schedule_weight(
+            epoch,
+            self.pq_dense_start_epoch,
+            self.pq_dense_warmup_epochs,
+            self.pq_dense_coef,
+        )
+        for key in list(weight_dict_dense.keys()):
+            weight_dict_dense[key] *= pq_dense_weight
         loss_pq_dense = sum(loss_dict_dense[k] * weight_dict_dense[k] for k in loss_dict_dense.keys() if k in weight_dict_dense)
     
         # point queries loss
@@ -2072,6 +2100,8 @@ class PET(nn.Module):
         for branch, output in (('sparse', outputs.get('sparse')), ('dense', outputs.get('dense'))):
             if output is None:
                 continue
+            if branch == 'dense' and int(epoch) < self.eval_dense_start_epoch:
+                continue
             margins.append(self.person_logit_margin(output).detach().reshape(-1).float())
             weights.append(self.eval_count_weight(output, split_map, branch, samples).detach().reshape(-1).float())
         if not margins:
@@ -2190,6 +2220,8 @@ class PET(nn.Module):
     def test_forward(self, samples, features, pos, **kwargs):
         outputs = self.pet_forward(samples, features, pos, **kwargs)
         out_dense, out_sparse = outputs['dense'], outputs['sparse']
+        eval_epoch = int(kwargs.get('epoch', 0))
+        use_dense_eval = eval_epoch >= self.eval_dense_start_epoch
         pred_logits_parts = []
         pred_points_parts = []
         pred_offsets_parts = []
@@ -2198,7 +2230,7 @@ class PET(nn.Module):
         count_topk = self.eval_count_mode == 'count_head_topk' and self.count_head is not None
         template_out = out_sparse if out_sparse is not None else out_dense
         count_debug = {}
-        eval_score_bias = self.compute_eval_score_bias(outputs, samples, epoch=int(kwargs.get('epoch', 0)))
+        eval_score_bias = self.compute_eval_score_bias(outputs, samples, epoch=eval_epoch)
         if 'count_pred' in outputs:
             count_debug['count_pred'] = float(outputs['count_pred'][0].detach().float().item())
         if eval_score_bias is not None:
@@ -2232,7 +2264,7 @@ class PET(nn.Module):
             points_queries_parts.append(out_sparse['points_queries'][index_sparse])
             score_parts.append(out_sparse_eval_scores[index_sparse])
 
-        if out_dense is not None:
+        if out_dense is not None and use_dense_eval:
             out_dense_scores = self.eval_person_scores(out_dense, eval_score_bias)
             self.update_eval_score_debug(count_debug, 'dense', out_dense_scores)
             out_dense_eval_scores = self.apply_eval_soft_split_gate(out_dense, outputs['split_map_raw'], 'dense', out_dense_scores)
@@ -2259,6 +2291,13 @@ class PET(nn.Module):
             pred_offsets_parts.append(out_dense['pred_offsets'][index_dense])
             points_queries_parts.append(out_dense['points_queries'][index_dense])
             score_parts.append(out_dense_eval_scores[index_dense])
+        elif out_dense is not None:
+            count_debug['dense_skipped'] = 1
+            count_debug['dense_raw'] = int(out_dense['pred_logits'][..., 0].numel())
+            count_debug['dense_score'] = 0
+            count_debug['dense_valid_query'] = 0
+            count_debug['dense_valid_pred'] = 0
+            count_debug['dense_final'] = 0
 
         if pred_logits_parts:
             pred_logits = torch.cat(pred_logits_parts, dim=0)

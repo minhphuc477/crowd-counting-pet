@@ -138,6 +138,10 @@ def get_args_parser():
     # - loss coefficients
     parser.add_argument('--ce_loss_coef', default=1.0, type=float)       # classification loss coefficient
     parser.add_argument('--point_loss_coef', default=5.0, type=float)    # regression loss coefficient
+    parser.add_argument('--pq_sparse_coef', default=1.0, type=float)
+    parser.add_argument('--pq_dense_coef', default=1.0, type=float)
+    parser.add_argument('--pq_dense_start_epoch', default=0, type=int)
+    parser.add_argument('--pq_dense_warmup_epochs', default=0, type=int)
     parser.add_argument('--class_loss_type', default='ce', choices=('ce', 'focal'))
     parser.add_argument('--focal_alpha', default=0.25, type=float)
     parser.add_argument('--focal_gamma', default=2.0, type=float)
@@ -250,6 +254,7 @@ def get_args_parser():
     parser.add_argument('--eval_soft_split_gate', default='pred', choices=('none', 'query', 'pred'))
     parser.add_argument('--eval_count_mode', default='threshold', choices=('threshold', 'count_head_topk'))
     parser.add_argument('--eval_count_head_min_score', default=0.5, type=float)
+    parser.add_argument('--eval_dense_start_epoch', default=0, type=int)
     parser.add_argument('--eval_score_calibration', default='none', choices=('none', 'count_head_bias'))
     parser.add_argument('--eval_score_calibration_strength', default=1.0, type=float)
     parser.add_argument('--eval_score_calibration_start_epoch', default=0, type=int)
@@ -332,6 +337,8 @@ def merge_checkpoint_args(args, checkpoint):
         'amp_dtype', 'strict_model_checks',
     }
     explicit_args = set(getattr(args, '_explicit_args', set()))
+    if 'eval_dense_start_epoch' in explicit_args:
+        runtime_keys.add('eval_dense_start_epoch')
     if getattr(args, 'resume_allow_arch_change', False):
         runtime_keys.update(key for key in ARCHITECTURE_OVERRIDE_KEYS if key in explicit_args)
     for key in runtime_keys:
