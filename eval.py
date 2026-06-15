@@ -248,6 +248,7 @@ def get_args_parser():
     parser.add_argument('--eval_count_head_min_score', default=0.5, type=float)
     parser.add_argument('--eval_score_calibration', default='none', choices=('none', 'count_head_bias'))
     parser.add_argument('--eval_score_calibration_strength', default=1.0, type=float)
+    parser.add_argument('--eval_score_calibration_min_bias', default=-8.0, type=float)
     parser.add_argument('--eval_score_calibration_max_bias', default=8.0, type=float)
     parser.add_argument('--no_eval_filter_invalid_points', action='store_true')
     parser.add_argument('--eval_debug_counting', action='store_true')
@@ -319,7 +320,7 @@ def merge_checkpoint_args(args, checkpoint):
         'eval_nms_radius', 'eval_branch_gate', 'eval_soft_split_gate',
         'eval_count_mode', 'eval_count_head_min_score',
         'eval_score_calibration', 'eval_score_calibration_strength',
-        'eval_score_calibration_max_bias',
+        'eval_score_calibration_min_bias', 'eval_score_calibration_max_bias',
         'no_eval_filter_invalid_points', 'eval_debug_counting',
         'eval_protocol', 'resume_allow_arch_change',
         'amp_dtype', 'strict_model_checks',
@@ -520,6 +521,7 @@ def main(args):
             'eval_count_head_min_score': float(getattr(args, 'eval_count_head_min_score', 0.5)),
             'eval_score_calibration': getattr(args, 'eval_score_calibration', 'none'),
             'eval_score_calibration_strength': float(getattr(args, 'eval_score_calibration_strength', 1.0)),
+            'eval_score_calibration_min_bias': float(getattr(args, 'eval_score_calibration_min_bias', -8.0)),
             'eval_score_calibration_max_bias': float(getattr(args, 'eval_score_calibration_max_bias', 8.0)),
             'eval_filter_invalid_points': not bool(getattr(args, 'no_eval_filter_invalid_points', False)),
         }, indent=2) + "\n", encoding="utf-8")

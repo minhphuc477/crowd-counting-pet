@@ -74,6 +74,7 @@ def run_eval(
     eval_count_head_min_score: float,
     eval_score_calibration: str,
     eval_score_calibration_strength: float,
+    eval_score_calibration_min_bias: float,
     eval_score_calibration_max_bias: float,
     run_dir: Path,
 ) -> dict:
@@ -118,6 +119,8 @@ def run_eval(
         eval_score_calibration,
         "--eval_score_calibration_strength",
         str(eval_score_calibration_strength),
+        "--eval_score_calibration_min_bias",
+        str(eval_score_calibration_min_bias),
         "--eval_score_calibration_max_bias",
         str(eval_score_calibration_max_bias),
         "--eval_protocol",
@@ -156,6 +159,7 @@ def run_eval(
         "eval_count_head_min_score": float(eval_count_head_min_score),
         "eval_score_calibration": eval_score_calibration,
         "eval_score_calibration_strength": float(eval_score_calibration_strength),
+        "eval_score_calibration_min_bias": float(eval_score_calibration_min_bias),
         "eval_score_calibration_max_bias": float(eval_score_calibration_max_bias),
         "eval_protocol": args.eval_protocol,
         "tta_flip": bool(args.tta_flip),
@@ -193,6 +197,7 @@ def write_outputs(records: list[dict], output_dir: Path) -> None:
         "eval_count_head_min_score",
         "eval_score_calibration",
         "eval_score_calibration_strength",
+        "eval_score_calibration_min_bias",
         "eval_score_calibration_max_bias",
         "eval_protocol",
         "tta_flip",
@@ -277,6 +282,7 @@ def get_args() -> argparse.Namespace:
         help="eval-only score calibration modes passed to eval.py",
     )
     parser.add_argument("--eval_score_calibration_strength", default=1.0, type=float)
+    parser.add_argument("--eval_score_calibration_min_bias", default=-8.0, type=float)
     parser.add_argument("--eval_score_calibration_max_bias", default=8.0, type=float)
     parser.add_argument(
         "--eval_protocol",
@@ -347,6 +353,7 @@ def main() -> int:
                                         eval_count_head_min_score,
                                         eval_score_calibration,
                                         args.eval_score_calibration_strength,
+                                        args.eval_score_calibration_min_bias,
                                         args.eval_score_calibration_max_bias,
                                         output_dir,
                                     )

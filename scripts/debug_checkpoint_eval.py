@@ -38,6 +38,7 @@ def get_args():
     parser.add_argument("--eval_count_head_min_score", default=0.5, type=float)
     parser.add_argument("--eval_score_calibration", default="none", choices=("none", "count_head_bias"))
     parser.add_argument("--eval_score_calibration_strength", default=1.0, type=float)
+    parser.add_argument("--eval_score_calibration_min_bias", default=-8.0, type=float)
     parser.add_argument("--eval_score_calibration_max_bias", default=8.0, type=float)
     parser.add_argument("--eval_debug_counting", action="store_true")
     parser.add_argument("--seed", default=42, type=int)
@@ -74,6 +75,7 @@ def main():
     merged_args.eval_count_head_min_score = args.eval_count_head_min_score
     merged_args.eval_score_calibration = args.eval_score_calibration
     merged_args.eval_score_calibration_strength = args.eval_score_calibration_strength
+    merged_args.eval_score_calibration_min_bias = args.eval_score_calibration_min_bias
     merged_args.eval_score_calibration_max_bias = args.eval_score_calibration_max_bias
     merged_args.eval_debug_counting = bool(args.eval_debug_counting)
 

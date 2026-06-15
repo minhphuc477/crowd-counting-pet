@@ -480,10 +480,10 @@ class PET(nn.Module):
         if self.eval_score_calibration not in ('none', 'count_head_bias'):
             raise ValueError('eval_score_calibration must be one of "none" or "count_head_bias"')
         self.eval_score_calibration_strength = float(getattr(args, 'eval_score_calibration_strength', 1.0))
-        self.eval_score_calibration_max_bias = max(
-            0.0,
-            float(getattr(args, 'eval_score_calibration_max_bias', 8.0)),
-        )
+        self.eval_score_calibration_min_bias = float(getattr(args, 'eval_score_calibration_min_bias', -8.0))
+        self.eval_score_calibration_max_bias = float(getattr(args, 'eval_score_calibration_max_bias', 8.0))
+        if self.eval_score_calibration_min_bias > self.eval_score_calibration_max_bias:
+            raise ValueError('eval_score_calibration_min_bias must be <= eval_score_calibration_max_bias')
         self.pet_loss_variant = getattr(args, 'pet_loss_variant', 'paper')
         self.split_loss_variant = getattr(args, 'split_loss_variant', 'auto')
         if self.split_loss_variant == 'auto':
@@ -2062,10 +2062,11 @@ class PET(nn.Module):
             return None
         target_count = target_count.clamp(min=0.0, max=float(valid_weight.item()))
 
+        min_bias = float(self.eval_score_calibration_min_bias)
         max_bias = float(self.eval_score_calibration_max_bias)
-        if max_bias <= 0.0:
+        if max_bias <= min_bias:
             return None
-        low = margin.new_tensor(-max_bias)
+        low = margin.new_tensor(min_bias)
         high = margin.new_tensor(max_bias)
         for _ in range(32):
             mid = (low + high) * 0.5
@@ -2172,6 +2173,8 @@ class PET(nn.Module):
         template_out = out_sparse if out_sparse is not None else out_dense
         count_debug = {}
         eval_score_bias = self.compute_eval_score_bias(outputs, samples)
+        if 'count_pred' in outputs:
+            count_debug['count_pred'] = float(outputs['count_pred'][0].detach().float().item())
         if eval_score_bias is not None:
             count_debug['score_bias'] = float(eval_score_bias.detach().float().item())
 

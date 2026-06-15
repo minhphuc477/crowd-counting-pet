@@ -78,9 +78,9 @@ MODEL_RECIPES = {
         'apg_bg_coef': 0.05,
         'apg_bg_k': 1,
         'apg_bg_min_dist': 12.0,
-        'apg_count_calibration': 'threshold',
+        'apg_count_calibration': 'none',
         'apg_count_calibration_gate': 'detach',
-        'apg_count_calibration_min': 0.05,
+        'apg_count_calibration_min': 0.5,
         'apg_count_calibration_max': 1.0,
         'count_head_loss_coef': 0.2,
         'count_head_loss_type': 'log_l1',
@@ -95,6 +95,7 @@ MODEL_RECIPES = {
         'eval_count_mode': 'threshold',
         'eval_score_calibration': 'count_head_bias',
         'eval_score_calibration_strength': 1.0,
+        'eval_score_calibration_min_bias': 0.0,
         'eval_score_calibration_max_bias': 8.0,
         'score_threshold': 0.5,
         'split_threshold': 0.5,
@@ -588,6 +589,8 @@ def get_args_parser():
                         help='eval-only score calibration; count_head_bias shifts person logits to match the scalar count head')
     parser.add_argument('--eval_score_calibration_strength', default=1.0, type=float,
                         help='fraction of the count-head logit bias applied during eval score calibration')
+    parser.add_argument('--eval_score_calibration_min_bias', default=-8.0, type=float,
+                        help='minimum person-logit bias used by eval score calibration')
     parser.add_argument('--eval_score_calibration_max_bias', default=8.0, type=float,
                         help='maximum absolute person-logit bias used by eval score calibration')
     parser.add_argument('--no_eval_filter_invalid_points', action='store_true',
@@ -920,7 +923,7 @@ def merge_checkpoint_args(args, checkpoint):
             'eval_nms_radius', 'eval_branch_gate', 'eval_soft_split_gate',
             'eval_count_mode', 'eval_count_head_min_score',
             'eval_score_calibration', 'eval_score_calibration_strength',
-            'eval_score_calibration_max_bias',
+            'eval_score_calibration_min_bias', 'eval_score_calibration_max_bias',
             'no_eval_filter_invalid_points', 'eval_debug_counting',
         })
         explicit_args = set(getattr(args, '_explicit_args', set()))
@@ -1469,6 +1472,7 @@ def main(args):
                     'eval_count_head_min_score': float(getattr(args, 'eval_count_head_min_score', 0.5)),
                     'eval_score_calibration': getattr(args, 'eval_score_calibration', 'none'),
                     'eval_score_calibration_strength': float(getattr(args, 'eval_score_calibration_strength', 1.0)),
+                    'eval_score_calibration_min_bias': float(getattr(args, 'eval_score_calibration_min_bias', -8.0)),
                     'eval_score_calibration_max_bias': float(getattr(args, 'eval_score_calibration_max_bias', 8.0)),
                     'eval_filter_invalid_points': not bool(getattr(args, 'no_eval_filter_invalid_points', False)),
                 }
