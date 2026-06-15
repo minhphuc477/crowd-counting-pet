@@ -255,6 +255,9 @@ def get_args_parser():
     parser.add_argument('--eval_count_mode', default='threshold', choices=('threshold', 'count_head_topk'))
     parser.add_argument('--eval_count_head_min_score', default=0.5, type=float)
     parser.add_argument('--eval_dense_start_epoch', default=0, type=int)
+    parser.add_argument('--eval_dense_residual_mode', default='none', choices=('none', 'count_head'))
+    parser.add_argument('--eval_dense_residual_start_epoch', default=0, type=int)
+    parser.add_argument('--eval_dense_residual_min_score', default=0.0, type=float)
     parser.add_argument('--eval_score_calibration', default='none', choices=('none', 'count_head_bias'))
     parser.add_argument('--eval_score_calibration_strength', default=1.0, type=float)
     parser.add_argument('--eval_score_calibration_start_epoch', default=0, type=int)
@@ -339,6 +342,9 @@ def merge_checkpoint_args(args, checkpoint):
     explicit_args = set(getattr(args, '_explicit_args', set()))
     if 'eval_dense_start_epoch' in explicit_args:
         runtime_keys.add('eval_dense_start_epoch')
+    for key in ('eval_dense_residual_mode', 'eval_dense_residual_start_epoch', 'eval_dense_residual_min_score'):
+        if key in explicit_args:
+            runtime_keys.add(key)
     if getattr(args, 'resume_allow_arch_change', False):
         runtime_keys.update(key for key in ARCHITECTURE_OVERRIDE_KEYS if key in explicit_args)
     for key in runtime_keys:

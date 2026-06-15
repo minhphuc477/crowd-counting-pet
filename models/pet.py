@@ -481,6 +481,11 @@ class PET(nn.Module):
             raise ValueError('eval_count_mode must be one of "threshold" or "count_head_topk"')
         self.eval_count_head_min_score = float(getattr(args, 'eval_count_head_min_score', 0.5))
         self.eval_dense_start_epoch = max(0, int(getattr(args, 'eval_dense_start_epoch', 0)))
+        self.eval_dense_residual_mode = getattr(args, 'eval_dense_residual_mode', 'none')
+        if self.eval_dense_residual_mode not in ('none', 'count_head'):
+            raise ValueError('eval_dense_residual_mode must be one of "none" or "count_head"')
+        self.eval_dense_residual_start_epoch = max(0, int(getattr(args, 'eval_dense_residual_start_epoch', 0)))
+        self.eval_dense_residual_min_score = float(getattr(args, 'eval_dense_residual_min_score', 0.0))
         self.eval_score_calibration = getattr(args, 'eval_score_calibration', 'none')
         if self.eval_score_calibration not in ('none', 'count_head_bias'):
             raise ValueError('eval_score_calibration must be one of "none" or "count_head_bias"')
@@ -2224,6 +2229,12 @@ class PET(nn.Module):
         out_dense, out_sparse = outputs['dense'], outputs['sparse']
         eval_epoch = int(kwargs.get('epoch', 0))
         use_dense_eval = eval_epoch >= self.eval_dense_start_epoch
+        use_dense_residual = (
+            not use_dense_eval
+            and self.eval_dense_residual_mode == 'count_head'
+            and eval_epoch >= self.eval_dense_residual_start_epoch
+            and 'count_pred' in outputs
+        )
         pred_logits_parts = []
         pred_points_parts = []
         pred_offsets_parts = []
@@ -2233,6 +2244,7 @@ class PET(nn.Module):
         template_out = out_sparse if out_sparse is not None else out_dense
         count_debug = {}
         eval_score_bias = self.compute_eval_score_bias(outputs, samples, epoch=eval_epoch)
+        sparse_selected_count = 0
         if 'count_pred' in outputs:
             count_debug['count_pred'] = float(outputs['count_pred'][0].detach().float().item())
         if eval_score_bias is not None:
@@ -2260,18 +2272,21 @@ class PET(nn.Module):
             if sparse_gate is not None:
                 index_sparse = index_sparse & sparse_gate.to(device=index_sparse.device)
             count_debug['sparse_final'] = int(index_sparse.sum().detach().item())
+            sparse_selected_count = count_debug['sparse_final']
             pred_logits_parts.append(out_sparse['pred_logits'][index_sparse])
             pred_points_parts.append(out_sparse['pred_points'][index_sparse])
             pred_offsets_parts.append(out_sparse['pred_offsets'][index_sparse])
             points_queries_parts.append(out_sparse['points_queries'][index_sparse])
             score_parts.append(out_sparse_eval_scores[index_sparse])
 
-        if out_dense is not None and use_dense_eval:
+        if out_dense is not None and (use_dense_eval or use_dense_residual):
             out_dense_scores = self.eval_person_scores(out_dense, eval_score_bias)
             self.update_eval_score_debug(count_debug, 'dense', out_dense_scores)
             out_dense_eval_scores = self.apply_eval_soft_split_gate(out_dense, outputs['split_map_raw'], 'dense', out_dense_scores)
             if count_topk:
                 index_dense = out_dense_eval_scores >= self.eval_count_head_min_score
+            elif use_dense_residual:
+                index_dense = out_dense_eval_scores >= self.eval_dense_residual_min_score
             else:
                 index_dense = self.get_score_mask(out_dense_eval_scores).to(out_dense['pred_logits'].device)
             count_debug['dense_raw'] = int(out_dense_scores.numel())
@@ -2287,6 +2302,21 @@ class PET(nn.Module):
             dense_gate = self.get_eval_branch_gate_mask(out_dense, outputs['split_map_raw'], 'dense')
             if dense_gate is not None:
                 index_dense = index_dense & dense_gate.to(device=index_dense.device)
+            if use_dense_residual:
+                residual = outputs['count_pred'][0].detach().float() - float(sparse_selected_count)
+                residual_k = int(torch.ceil(residual.clamp(min=0.0, max=float(index_dense.numel()))).item())
+                candidate_idx = torch.nonzero(index_dense, as_tuple=False).flatten()
+                if residual_k <= 0 or candidate_idx.numel() == 0:
+                    index_dense = torch.zeros_like(index_dense, dtype=torch.bool)
+                    residual_k = 0
+                else:
+                    residual_k = min(residual_k, int(candidate_idx.numel()))
+                    top_local = out_dense_eval_scores[candidate_idx].topk(residual_k, largest=True).indices
+                    keep_idx = candidate_idx[top_local]
+                    residual_mask = torch.zeros_like(index_dense, dtype=torch.bool)
+                    residual_mask[keep_idx] = True
+                    index_dense = residual_mask
+                count_debug['dense_residual_k'] = residual_k
             count_debug['dense_final'] = int(index_dense.sum().detach().item())
             pred_logits_parts.append(out_dense['pred_logits'][index_dense])
             pred_points_parts.append(out_dense['pred_points'][index_dense])

@@ -75,12 +75,12 @@ MODEL_RECIPES = {
         'apg_warmup_epochs': 100,
         'apg_sparse_coef': 1.0,
         'apg_dense_coef': 0.25,
-        'apg_dense_start_epoch': 300,
-        'apg_dense_warmup_epochs': 400,
+        'apg_dense_start_epoch': 150,
+        'apg_dense_warmup_epochs': 550,
         'pq_sparse_coef': 1.0,
         'pq_dense_coef': 1.0,
-        'pq_dense_start_epoch': 300,
-        'pq_dense_warmup_epochs': 400,
+        'pq_dense_start_epoch': 150,
+        'pq_dense_warmup_epochs': 550,
         'apg_pos_k': 1,
         'apg_point_coef': 5.0,
         'apg_bg_coef': 0.05,
@@ -107,6 +107,9 @@ MODEL_RECIPES = {
         'eval_score_calibration_min_bias': -8.0,
         'eval_score_calibration_max_bias': 8.0,
         'eval_dense_start_epoch': 700,
+        'eval_dense_residual_mode': 'count_head',
+        'eval_dense_residual_start_epoch': 150,
+        'eval_dense_residual_min_score': 0.30,
         'score_threshold': 0.5,
         'split_threshold': 0.5,
         'split_threshold_quantile': 0.5,
@@ -613,6 +616,12 @@ def get_args_parser():
                         help='minimum candidate score before count-head top-K selection')
     parser.add_argument('--eval_dense_start_epoch', default=0, type=int,
                         help='skip dense branch predictions during eval before this epoch')
+    parser.add_argument('--eval_dense_residual_mode', default='none', choices=('none', 'count_head'),
+                        help='before dense eval starts, optionally add top dense candidates only for count-head residual')
+    parser.add_argument('--eval_dense_residual_start_epoch', default=0, type=int,
+                        help='first eval epoch where residual dense top-up is allowed')
+    parser.add_argument('--eval_dense_residual_min_score', default=0.0, type=float,
+                        help='minimum dense score allowed for residual dense top-up')
     parser.add_argument('--eval_score_calibration', default='none', choices=('none', 'count_head_bias'),
                         help='eval-only score calibration; count_head_bias shifts person logits to match the scalar count head')
     parser.add_argument('--eval_score_calibration_strength', default=1.0, type=float,
@@ -960,6 +969,9 @@ def merge_checkpoint_args(args, checkpoint):
         explicit_args = set(getattr(args, '_explicit_args', set()))
         if 'eval_dense_start_epoch' in explicit_args:
             runtime_keys.add('eval_dense_start_epoch')
+        for key in ('eval_dense_residual_mode', 'eval_dense_residual_start_epoch', 'eval_dense_residual_min_score'):
+            if key in explicit_args:
+                runtime_keys.add(key)
         aux_resume_keys = {
             'class_loss_type', 'focal_alpha', 'focal_gamma',
             'pq_sparse_coef', 'pq_dense_coef',
