@@ -1049,11 +1049,19 @@ class PET(nn.Module):
             else:
                 routed_apg_weight = self.routed_apg_loss_coef
             if routed_apg_active:
-                loss_routed_apg = self.compute_routed_apg_loss(outputs, targets)
+                routed_apg_count_scale = self.compute_apg_count_scale(outputs, targets, epoch)
+                loss_routed_apg = self.compute_routed_apg_loss(
+                    outputs,
+                    targets,
+                    positive_scale=routed_apg_count_scale,
+                )
             else:
+                routed_apg_count_scale = output_sparse['pred_logits'].new_tensor(1.0)
                 loss_routed_apg = output_sparse['pred_logits'].sum() * 0.0
             loss_dict['loss_routed_apg'] = loss_routed_apg
+            loss_dict['loss_routed_apg_count_scale'] = routed_apg_count_scale
             weight_dict['loss_routed_apg'] = routed_apg_weight
+            weight_dict['loss_routed_apg_count_scale'] = 0.0
             losses += loss_routed_apg * routed_apg_weight
         if self.inheritance_loss_coef > 0:
             inheritance_active = epoch >= self.inheritance_start_epoch and (
@@ -1502,7 +1510,7 @@ class PET(nn.Module):
         ).sum(dim=-1).mean()
         return loss_cls + self.routed_apg_point_coef * loss_point
 
-    def compute_routed_apg_loss(self, outputs, targets):
+    def compute_routed_apg_loss(self, outputs, targets, positive_scale=None):
         """Split-responsibility APG for PET's sparse/dense quadtree branches.
 
         Plain APG gives both branches the same positive target. Hard QD-APG
@@ -1526,6 +1534,12 @@ class PET(nn.Module):
         weighted_losses = []
         weights = []
         bg_losses = []
+        if positive_scale is None:
+            positive_scale = split_map.new_tensor(1.0)
+        positive_scale = positive_scale.to(device=device, dtype=dtype).clamp(
+            self.apg_count_calibration_min,
+            self.apg_count_calibration_max,
+        )
         for batch_idx, target in enumerate(targets):
             gt_points = target['points'].to(device=device, dtype=dtype)
             if gt_points.numel() == 0:
@@ -1544,12 +1558,12 @@ class PET(nn.Module):
                 if sparse_idx is not None:
                     sparse_positive[sparse_idx] = True
                     weight = sparse_resp[point_idx].to(dtype=dtype)
-                    weighted_losses.append(self._routed_positive_loss(output_sparse, batch_idx, sparse_idx, gt_point) * weight)
+                    weighted_losses.append(self._routed_positive_loss(output_sparse, batch_idx, sparse_idx, gt_point) * weight * positive_scale)
                     weights.append(weight)
                 if dense_idx is not None:
                     dense_positive[dense_idx] = True
                     weight = dense_resp[point_idx].to(dtype=dtype)
-                    weighted_losses.append(self._routed_positive_loss(output_dense, batch_idx, dense_idx, gt_point) * weight)
+                    weighted_losses.append(self._routed_positive_loss(output_dense, batch_idx, dense_idx, gt_point) * weight * positive_scale)
                     weights.append(weight)
             if self.routed_apg_bg_coef > 0 and self.routed_apg_bg_k > 0:
                 bg_count = max(1, int(gt_points.shape[0]) * self.routed_apg_bg_k)

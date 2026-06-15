@@ -121,26 +121,24 @@ MODEL_RECIPES = {
     },
     # PET-compatible routed APG plus detached scalar count calibration.
     #
-    # This is the coherent version of APG+LC+count-calibration for scratch
-    # training. Plain APG supervises both sparse and dense branches on the same
-    # GT point; that is useful for recovering PET, but it is not a true
-    # sparse/dense architecture. This recipe gives every GT point a single
-    # quadtree branch owner from the GT split teacher, then uses the same owner
-    # for the base Hungarian targets and routed APG. The count head remains
-    # detached from PET features, so it can calibrate scores without causing
-    # the severe over-counting seen from density/top-k variants.
+    # This is the conservative scratch-training version. It keeps PET's base
+    # Hungarian point-query loss intact, because hard-routing those targets made
+    # sparse nearly background-only and caused dense over-counting. Branch
+    # ownership is applied through routed APG and GT split supervision instead.
+    # The count head remains detached from PET features, so it calibrates scores
+    # without causing the severe over-counting seen from density/top-k variants.
     'vgg_routed_apglc_countcal': {
         'backbone': 'vgg16_bn',
         'timm_adapter': 'lite_fpn',
         'pet_loss_variant': 'paper',
         'split_loss_variant': 'paper_gt',
-        'branch_target_routing': 'gt_count',
+        'branch_target_routing': 'none',
         'pq_sparse_coef': 1.0,
         'pq_dense_coef': 1.0,
         'pq_dense_start_epoch': 0,
         'pq_dense_warmup_epochs': 0,
         'apg_loss_coef': 0.0,
-        'routed_apg_loss_coef': 1.0,
+        'routed_apg_loss_coef': 0.25,
         'routed_apg_point_coef': 5.0,
         'routed_apg_pos_k': 1,
         'routed_apg_bg_coef': 0.05,
@@ -152,6 +150,10 @@ MODEL_RECIPES = {
         'routed_apg_min_weight': 0.0,
         'routed_apg_source': 'gt_count',
         'routed_apg_gate': 'detach',
+        'apg_count_calibration': 'threshold',
+        'apg_count_calibration_gate': 'hard',
+        'apg_count_calibration_min': 0.05,
+        'apg_count_calibration_max': 1.0,
         'count_head_loss_coef': 0.2,
         'count_head_loss_type': 'log_l1',
         'count_head_start_epoch': 0,
