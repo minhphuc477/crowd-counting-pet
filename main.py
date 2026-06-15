@@ -95,6 +95,7 @@ MODEL_RECIPES = {
         'eval_count_mode': 'threshold',
         'eval_score_calibration': 'count_head_bias',
         'eval_score_calibration_strength': 1.0,
+        'eval_score_calibration_start_epoch': 700,
         'eval_score_calibration_min_bias': 0.0,
         'eval_score_calibration_max_bias': 8.0,
         'score_threshold': 0.5,
@@ -589,6 +590,8 @@ def get_args_parser():
                         help='eval-only score calibration; count_head_bias shifts person logits to match the scalar count head')
     parser.add_argument('--eval_score_calibration_strength', default=1.0, type=float,
                         help='fraction of the count-head logit bias applied during eval score calibration')
+    parser.add_argument('--eval_score_calibration_start_epoch', default=0, type=int,
+                        help='first eval epoch where score calibration is allowed')
     parser.add_argument('--eval_score_calibration_min_bias', default=-8.0, type=float,
                         help='minimum person-logit bias used by eval score calibration')
     parser.add_argument('--eval_score_calibration_max_bias', default=8.0, type=float,
@@ -923,6 +926,7 @@ def merge_checkpoint_args(args, checkpoint):
             'eval_nms_radius', 'eval_branch_gate', 'eval_soft_split_gate',
             'eval_count_mode', 'eval_count_head_min_score',
             'eval_score_calibration', 'eval_score_calibration_strength',
+            'eval_score_calibration_start_epoch',
             'eval_score_calibration_min_bias', 'eval_score_calibration_max_bias',
             'no_eval_filter_invalid_points', 'eval_debug_counting',
         })
@@ -1355,7 +1359,7 @@ def main(args):
         t1 = time.time()
         eval_model, eval_model_name = select_eval_model(model, model_without_ddp, model_ema, args)
         if args.eval_protocol == 'crowd_no_overlap':
-            test_stats = evaluate_crowd_no_overlap(eval_model, data_loader_val, device, vis_dir=None)
+            test_stats = evaluate_crowd_no_overlap(eval_model, data_loader_val, device, epoch=args.start_epoch, vis_dir=None)
         else:
             test_stats = evaluate(eval_model, data_loader_val, device, args.start_epoch, None)
         t2 = time.time()
@@ -1432,7 +1436,7 @@ def main(args):
             t1 = time.time()
             eval_model, eval_model_name = select_eval_model(model, model_without_ddp, model_ema, args)
             if args.eval_protocol == 'crowd_no_overlap':
-                test_stats = evaluate_crowd_no_overlap(eval_model, data_loader_val, device, vis_dir=None)
+                test_stats = evaluate_crowd_no_overlap(eval_model, data_loader_val, device, epoch=epoch, vis_dir=None)
             else:
                 test_stats = evaluate(eval_model, data_loader_val, device, epoch, None)
             t2 = time.time()
@@ -1472,6 +1476,7 @@ def main(args):
                     'eval_count_head_min_score': float(getattr(args, 'eval_count_head_min_score', 0.5)),
                     'eval_score_calibration': getattr(args, 'eval_score_calibration', 'none'),
                     'eval_score_calibration_strength': float(getattr(args, 'eval_score_calibration_strength', 1.0)),
+                    'eval_score_calibration_start_epoch': int(getattr(args, 'eval_score_calibration_start_epoch', 0)),
                     'eval_score_calibration_min_bias': float(getattr(args, 'eval_score_calibration_min_bias', -8.0)),
                     'eval_score_calibration_max_bias': float(getattr(args, 'eval_score_calibration_max_bias', 8.0)),
                     'eval_filter_invalid_points': not bool(getattr(args, 'no_eval_filter_invalid_points', False)),

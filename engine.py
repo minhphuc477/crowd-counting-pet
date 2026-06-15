@@ -167,8 +167,8 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
     return {k: meter.global_avg for k, meter in metric_logger.meters.items()}
 
 
-def _predict_count(model, samples, targets):
-    outputs = model(samples, test=True, targets=targets)
+def _predict_count(model, samples, targets, epoch=0):
+    outputs = model(samples, test=True, targets=targets, epoch=epoch)
     outputs_scores = torch.nn.functional.softmax(outputs['pred_logits'], -1)[:, :, 1][0]
     return outputs, float(len(outputs_scores))
 
@@ -216,14 +216,14 @@ def _resize_nested_tensor(samples, scale):
 
 
 @torch.no_grad()
-def evaluate_crowd_no_overlap(model, data_loader, device, vis_dir=None, tta_flip=False, tta_scales=None):
+def evaluate_crowd_no_overlap(model, data_loader, device, epoch=0, vis_dir=None, tta_flip=False, tta_scales=None):
     """P2PNet/APGCC-style full-image crowd evaluation without crop overlap.
 
     The APGCC issue #7 refers to P2PNet's evaluator. PET already evaluates full
     validation images, so this wrapper preserves that protocol while accepting
     PET targets (`points`) and its thresholded `test_forward()` output.
     """
-    return evaluate(model, data_loader, device, vis_dir=vis_dir, tta_flip=tta_flip, tta_scales=tta_scales)
+    return evaluate(model, data_loader, device, epoch=epoch, vis_dir=vis_dir, tta_flip=tta_flip, tta_scales=tta_scales)
 
 
 # evaluation
@@ -250,7 +250,7 @@ def evaluate(model, data_loader, device, epoch=0, vis_dir=None, tta_flip=False, 
         img_h, img_w = _valid_hw(samples)
 
         # inference
-        outputs, predict_cnt = _predict_count(model, samples, targets)
+        outputs, predict_cnt = _predict_count(model, samples, targets, epoch=epoch)
         # outputs_scores: per-query person probability, shape [N_queries]
         # test_forward() already applies score thresholding and returns only
         # surviving (person) queries in pred_logits, so len(outputs_scores) is
@@ -260,14 +260,14 @@ def evaluate(model, data_loader, device, epoch=0, vis_dir=None, tta_flip=False, 
             tta_counts = []
             for scale in tta_scales:
                 scaled_samples = _resize_nested_tensor(samples, scale)
-                _, scaled_count = _predict_count(model, scaled_samples, targets)
+                _, scaled_count = _predict_count(model, scaled_samples, targets, epoch=epoch)
                 tta_counts.append(scaled_count)
                 if tta_flip:
                     flipped_samples = NestedTensor(
                         torch.flip(scaled_samples.tensors, dims=[3]),
                         torch.flip(scaled_samples.mask, dims=[2]),
                     )
-                    _, flipped_count = _predict_count(model, flipped_samples, targets)
+                    _, flipped_count = _predict_count(model, flipped_samples, targets, epoch=epoch)
                     tta_counts.append(flipped_count)
             predict_cnt = float(sum(tta_counts) / len(tta_counts))
         gt_cnt = targets[0]['points'].shape[0]

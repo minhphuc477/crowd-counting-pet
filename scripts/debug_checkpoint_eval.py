@@ -38,6 +38,7 @@ def get_args():
     parser.add_argument("--eval_count_head_min_score", default=0.5, type=float)
     parser.add_argument("--eval_score_calibration", default="none", choices=("none", "count_head_bias"))
     parser.add_argument("--eval_score_calibration_strength", default=1.0, type=float)
+    parser.add_argument("--eval_score_calibration_start_epoch", default=0, type=int)
     parser.add_argument("--eval_score_calibration_min_bias", default=-8.0, type=float)
     parser.add_argument("--eval_score_calibration_max_bias", default=8.0, type=float)
     parser.add_argument("--eval_debug_counting", action="store_true")
@@ -75,6 +76,7 @@ def main():
     merged_args.eval_count_head_min_score = args.eval_count_head_min_score
     merged_args.eval_score_calibration = args.eval_score_calibration
     merged_args.eval_score_calibration_strength = args.eval_score_calibration_strength
+    merged_args.eval_score_calibration_start_epoch = args.eval_score_calibration_start_epoch
     merged_args.eval_score_calibration_min_bias = args.eval_score_calibration_min_bias
     merged_args.eval_score_calibration_max_bias = args.eval_score_calibration_max_bias
     merged_args.eval_debug_counting = bool(args.eval_debug_counting)
@@ -103,10 +105,11 @@ def main():
         generator=generator,
     )
 
-    stats = evaluate(model, data_loader_val, device)
+    checkpoint_epoch = int(checkpoint.get("epoch", 0))
+    stats = evaluate(model, data_loader_val, device, epoch=checkpoint_epoch)
     record = {
         "checkpoint": str(checkpoint_path),
-        "checkpoint_epoch": int(checkpoint.get("epoch", -1)),
+        "checkpoint_epoch": checkpoint_epoch,
         "checkpoint_model_key": args.checkpoint_model_key,
         "missing_keys": missing[:50],
         "unexpected_keys": unexpected[:50],

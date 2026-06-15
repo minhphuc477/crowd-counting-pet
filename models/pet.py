@@ -480,6 +480,7 @@ class PET(nn.Module):
         if self.eval_score_calibration not in ('none', 'count_head_bias'):
             raise ValueError('eval_score_calibration must be one of "none" or "count_head_bias"')
         self.eval_score_calibration_strength = float(getattr(args, 'eval_score_calibration_strength', 1.0))
+        self.eval_score_calibration_start_epoch = int(getattr(args, 'eval_score_calibration_start_epoch', 0))
         self.eval_score_calibration_min_bias = float(getattr(args, 'eval_score_calibration_min_bias', -8.0))
         self.eval_score_calibration_max_bias = float(getattr(args, 'eval_score_calibration_max_bias', 8.0))
         if self.eval_score_calibration_min_bias > self.eval_score_calibration_max_bias:
@@ -2026,7 +2027,7 @@ class PET(nn.Module):
             weight = weight * soft_resp.to(device=weight.device, dtype=weight.dtype).view_as(weight)
         return weight
 
-    def compute_eval_score_bias(self, outputs, samples):
+    def compute_eval_score_bias(self, outputs, samples, epoch=0):
         """Solve a scalar person-logit bias from the count head.
 
         Top-K count-head inference was too brittle in this codebase: a bad K
@@ -2036,6 +2037,8 @@ class PET(nn.Module):
         estimate.
         """
         if self.eval_score_calibration != 'count_head_bias':
+            return None
+        if int(epoch) < self.eval_score_calibration_start_epoch:
             return None
         if self.count_head is None or 'count_pred' not in outputs:
             return None
@@ -2172,7 +2175,7 @@ class PET(nn.Module):
         count_topk = self.eval_count_mode == 'count_head_topk' and self.count_head is not None
         template_out = out_sparse if out_sparse is not None else out_dense
         count_debug = {}
-        eval_score_bias = self.compute_eval_score_bias(outputs, samples)
+        eval_score_bias = self.compute_eval_score_bias(outputs, samples, epoch=int(kwargs.get('epoch', 0)))
         if 'count_pred' in outputs:
             count_debug['count_pred'] = float(outputs['count_pred'][0].detach().float().item())
         if eval_score_bias is not None:
