@@ -558,6 +558,18 @@ class PET(nn.Module):
         self.apg_start_epoch = int(getattr(args, 'apg_start_epoch', 0))
         self.apg_warmup_epochs = max(0, int(getattr(args, 'apg_warmup_epochs', 0)))
         self.apg_end_epoch = int(getattr(args, 'apg_end_epoch', -1))
+        self.apg_count_calibration = getattr(args, 'apg_count_calibration', 'none')
+        if self.apg_count_calibration not in ('none', 'threshold', 'soft'):
+            raise ValueError('apg_count_calibration must be one of "none", "threshold", or "soft"')
+        self.apg_count_calibration_gate = getattr(args, 'apg_count_calibration_gate', 'detach')
+        if self.apg_count_calibration_gate not in ('none', 'detach', 'soft', 'hard'):
+            raise ValueError('apg_count_calibration_gate must be one of "none", "detach", "soft", or "hard"')
+        self.apg_count_calibration_min = max(0.0, float(getattr(args, 'apg_count_calibration_min', 0.05)))
+        self.apg_count_calibration_max = max(
+            self.apg_count_calibration_min,
+            float(getattr(args, 'apg_count_calibration_max', 1.25)),
+        )
+        self.apg_count_calibration_eps = max(1e-6, float(getattr(args, 'apg_count_calibration_eps', 1.0)))
         self.apg_contrastive_coef = float(getattr(args, 'apg_contrastive_coef', 0.0))
         self.apg_neg_k = max(0, int(getattr(args, 'apg_neg_k', 4)))
         self.apg_margin = float(getattr(args, 'apg_margin', 1.0))
@@ -840,16 +852,19 @@ class PET(nn.Module):
                 )
             else:
                 apg_weight = self.apg_loss_coef
+            apg_count_scale = self.compute_apg_count_scale(outputs, targets) if apg_active else output_sparse['pred_logits'].new_tensor(1.0)
             if apg_active:
-                loss_apg_sparse = self.compute_apg_loss(output_sparse, targets)
-                loss_apg_dense = self.compute_apg_loss(output_dense, targets)
+                loss_apg_sparse = self.compute_apg_loss(output_sparse, targets, positive_scale=apg_count_scale)
+                loss_apg_dense = self.compute_apg_loss(output_dense, targets, positive_scale=apg_count_scale)
             else:
                 loss_apg_sparse = output_sparse['pred_logits'].sum() * 0.0
                 loss_apg_dense = output_dense['pred_logits'].sum() * 0.0
             loss_dict['loss_apg_sp'] = loss_apg_sparse
             loss_dict['loss_apg_ds'] = loss_apg_dense
+            loss_dict['loss_apg_count_scale'] = apg_count_scale
             weight_dict['loss_apg_sp'] = apg_weight
             weight_dict['loss_apg_ds'] = apg_weight
+            weight_dict['loss_apg_count_scale'] = 0.0
             losses += (loss_apg_sparse + loss_apg_dense) * apg_weight
         if self.apg_soft_loss_coef > 0:
             apg_active = epoch >= self.apg_start_epoch and (
@@ -958,7 +973,7 @@ class PET(nn.Module):
         alpha_t = torch.where(target == 1, alpha, 1.0 - alpha)
         return (-alpha_t * (1.0 - pt).pow(self.focal_gamma) * log_pt).mean()
 
-    def compute_apg_loss(self, output, targets):
+    def compute_apg_loss(self, output, targets, positive_scale=None):
         """Auxiliary Point Guidance for PET point queries.
 
         APGCC's full method adds auxiliary proposal guidance to stabilize
@@ -971,6 +986,12 @@ class PET(nn.Module):
         point_queries = output.get('points_queries')
         if point_queries is None:
             return logits.sum() * 0.0
+        if positive_scale is None:
+            positive_scale = logits.new_tensor(1.0)
+        elif not torch.is_tensor(positive_scale):
+            positive_scale = logits.new_tensor(float(positive_scale))
+        else:
+            positive_scale = positive_scale.to(device=logits.device, dtype=logits.dtype)
 
         device = logits.device
         img_h, img_w = output['img_shape']
@@ -1050,13 +1071,13 @@ class PET(nn.Module):
             return logits.sum() * 0.0
         loss_cls = torch.stack(cls_losses).mean()
         loss_point = torch.stack(point_losses).mean()
-        loss = loss_cls + self.apg_point_coef * loss_point
+        loss = positive_scale * (loss_cls + self.apg_point_coef * loss_point)
         if bg_losses:
             loss = loss + self.apg_bg_coef * torch.stack(bg_losses).mean()
         if contrastive_losses:
-            loss = loss + self.apg_contrastive_coef * torch.stack(contrastive_losses).mean()
+            loss = loss + positive_scale * self.apg_contrastive_coef * torch.stack(contrastive_losses).mean()
         if consistency_losses:
-            loss = loss + self.apg_consistency_coef * torch.stack(consistency_losses).mean()
+            loss = loss + positive_scale * self.apg_consistency_coef * torch.stack(consistency_losses).mean()
         return loss
 
     def compute_soft_apg_loss(self, output, targets):
@@ -1558,6 +1579,49 @@ class PET(nn.Module):
 
     def _region_count_gates(self, outputs, branch_name, scores):
         return self._split_gates_for_scores(outputs, branch_name, scores, self.region_count_gate)
+
+    def compute_apg_count_scale(self, outputs, targets):
+        """Return a detached multiplier that weakens positive APG during over-count.
+
+        APG is useful because it clarifies proposal supervision, but PET has two
+        query branches. When both branches already produce too many high-score
+        queries, more positive-only APG pressure worsens calibration. This ratio
+        keeps APG tied to PET's current count state while leaving local APG
+        background negatives active.
+        """
+        if self.apg_count_calibration == 'none':
+            return outputs['split_map_raw'].new_tensor(1.0)
+
+        output_sparse, output_dense = outputs['sparse'], outputs['dense']
+        device = output_sparse['pred_logits'].device
+        dtype = output_sparse['pred_logits'].dtype
+        target_counts = torch.as_tensor(
+            [target['points'].shape[0] for target in targets],
+            dtype=dtype,
+            device=device,
+        )
+        pred_counts = torch.zeros_like(target_counts)
+        threshold = self.score_threshold if self.score_threshold >= 0 else 0.5
+        threshold = torch.as_tensor(threshold, dtype=dtype, device=device)
+
+        for branch_name, output in (('sparse', output_sparse), ('dense', output_dense)):
+            scores = F.softmax(output['pred_logits'], -1)[..., 1]
+            gates = self._split_gates_for_scores(
+                outputs,
+                branch_name,
+                scores,
+                self.apg_count_calibration_gate,
+            )
+            if self.apg_count_calibration == 'threshold':
+                count_map = (scores >= threshold).to(dtype)
+            else:
+                count_map = scores
+            pred_counts = pred_counts + (count_map * gates).sum(dim=1)
+
+        eps = self.apg_count_calibration_eps
+        scale = (target_counts + eps) / (pred_counts + eps)
+        scale = scale.clamp(self.apg_count_calibration_min, self.apg_count_calibration_max)
+        return scale.detach().mean()
 
     def compute_region_count_loss(self, outputs, targets):
         """Local Point-to-Region count calibration on PET's real query logits."""

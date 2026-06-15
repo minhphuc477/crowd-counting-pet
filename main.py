@@ -402,6 +402,16 @@ def get_args_parser():
                         help='linearly ramp APG loss weight for this many epochs after --apg_start_epoch')
     parser.add_argument('--apg_end_epoch', default=-1, type=int,
                         help='epoch after which APG auxiliary supervision turns off; negative keeps it on')
+    parser.add_argument('--apg_count_calibration', default='none', choices=('none', 'threshold', 'soft'),
+                        help='modulate positive APG pressure by current PET count calibration')
+    parser.add_argument('--apg_count_calibration_gate', default='detach', choices=('none', 'detach', 'soft', 'hard'),
+                        help='split gate used when estimating PET count for APG count calibration')
+    parser.add_argument('--apg_count_calibration_min', default=0.05, type=float,
+                        help='minimum multiplier for positive APG terms under over-count')
+    parser.add_argument('--apg_count_calibration_max', default=1.25, type=float,
+                        help='maximum multiplier for positive APG terms under under-count')
+    parser.add_argument('--apg_count_calibration_eps', default=1.0, type=float,
+                        help='stability constant for APG count calibration ratio')
     parser.add_argument('--apg_contrastive_coef', default=0.0, type=float,
                         help='local APG contrastive margin loss weight inside APG; 0 disables it')
     parser.add_argument('--apg_neg_k', default=4, type=int,
@@ -844,6 +854,9 @@ def merge_checkpoint_args(args, checkpoint):
             'apg_loss_coef', 'apg_pos_k', 'apg_point_coef',
             'apg_bg_coef', 'apg_bg_k', 'apg_bg_min_dist',
             'apg_start_epoch', 'apg_warmup_epochs', 'apg_end_epoch',
+            'apg_count_calibration', 'apg_count_calibration_gate',
+            'apg_count_calibration_min', 'apg_count_calibration_max',
+            'apg_count_calibration_eps',
             'apg_contrastive_coef', 'apg_neg_k', 'apg_margin',
             'apg_consistency_coef', 'apg_consistency_k', 'apg_consistency_sigma',
             'apg_soft_loss_coef', 'apg_soft_pos_k', 'apg_soft_sigma', 'apg_soft_point_coef',
