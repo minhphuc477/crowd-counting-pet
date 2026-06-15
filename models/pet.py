@@ -459,6 +459,9 @@ class PET(nn.Module):
         self.pq_dense_coef = max(0.0, float(getattr(args, 'pq_dense_coef', 1.0)))
         self.pq_dense_start_epoch = max(0, int(getattr(args, 'pq_dense_start_epoch', 0)))
         self.pq_dense_warmup_epochs = max(0, int(getattr(args, 'pq_dense_warmup_epochs', 0)))
+        self.branch_target_routing = getattr(args, 'branch_target_routing', 'none')
+        if self.branch_target_routing not in ('none', 'gt_count'):
+            raise ValueError('branch_target_routing must be one of "none" or "gt_count"')
         self.quadtree_loss_coef = float(getattr(args, 'quadtree_loss_coef', 0.1))
         self.quadtree_prior_coef = float(getattr(args, 'quadtree_prior_coef', 0.025))
         self.split_count_threshold = int(getattr(args, 'split_count_threshold', 2))
@@ -766,6 +769,66 @@ class PET(nn.Module):
             )
         return weight
 
+    def build_branch_targets(self, targets, split_map, img_shape):
+        """Assign each GT point to one PET branch using the GT quadtree teacher.
+
+        PET's sparse and dense branches should not both receive the same
+        Hungarian positive. The split teacher marks a splitter cell as dense
+        when it contains at least ``split_count_threshold`` people; GT points in
+        such cells supervise the dense branch, all others supervise sparse.
+        """
+        if self.branch_target_routing == 'none':
+            return targets, targets
+        if self.branch_target_routing != 'gt_count':
+            raise ValueError(f'unsupported branch_target_routing: {self.branch_target_routing}')
+
+        bs, _, split_h, split_w = split_map.shape
+        img_h, img_w = img_shape
+        sparse_targets = []
+        dense_targets = []
+        for batch_idx, target in enumerate(targets[:bs]):
+            points = target['points'].to(device=split_map.device, dtype=torch.float32)
+            if points.numel() == 0:
+                sparse_targets.append(target)
+                dense_targets.append(target)
+                continue
+
+            y = torch.clamp((points[:, 0] / max(float(img_h), 1.0) * split_h).long(), 0, split_h - 1)
+            x = torch.clamp((points[:, 1] / max(float(img_w), 1.0) * split_w).long(), 0, split_w - 1)
+            linear_idx = y * split_w + x
+            counts = torch.zeros(split_h * split_w, dtype=torch.long, device=split_map.device)
+            counts.scatter_add_(0, linear_idx, torch.ones_like(linear_idx, dtype=torch.long))
+            dense_mask = counts[linear_idx] >= self.split_count_threshold
+            sparse_mask = ~dense_mask
+
+            point_device = target['points'].device
+            sparse_mask = sparse_mask.to(device=point_device)
+            dense_mask = dense_mask.to(device=point_device)
+
+            sparse_target = dict(target)
+            dense_target = dict(target)
+            sparse_target['points'] = target['points'][sparse_mask]
+            dense_target['points'] = target['points'][dense_mask]
+            if 'labels' in target:
+                sparse_target['labels'] = target['labels'][sparse_mask]
+                dense_target['labels'] = target['labels'][dense_mask]
+            else:
+                sparse_target['labels'] = torch.ones(
+                    sparse_target['points'].shape[0], dtype=torch.long, device=point_device
+                )
+                dense_target['labels'] = torch.ones(
+                    dense_target['points'].shape[0], dtype=torch.long, device=point_device
+                )
+            sparse_targets.append(sparse_target)
+            dense_targets.append(dense_target)
+
+        # Keep batch length unchanged even if a caller passes extra metadata
+        # targets beyond split_map batch size.
+        if len(targets) > bs:
+            sparse_targets.extend(targets[bs:])
+            dense_targets.extend(targets[bs:])
+        return sparse_targets, dense_targets
+
     def compute_loss(self, outputs, criterion, targets, epoch, samples):
         """
         Compute loss, including:
@@ -775,14 +838,19 @@ class PET(nn.Module):
         output_sparse, output_dense = outputs['sparse'], outputs['dense']
         weight_dict = criterion.weight_dict
         warmup_ep = self.warmup_epochs
+        targets_sparse, targets_dense = self.build_branch_targets(
+            targets,
+            outputs['split_map_raw'],
+            samples.tensors.shape[-2:],
+        )
 
         # compute loss
         if epoch >= warmup_ep:
-            loss_dict_sparse = criterion(output_sparse, targets, div=outputs['split_map_sparse'])
-            loss_dict_dense = criterion(output_dense, targets, div=outputs['split_map_dense'])
+            loss_dict_sparse = criterion(output_sparse, targets_sparse, div=outputs['split_map_sparse'])
+            loss_dict_dense = criterion(output_dense, targets_dense, div=outputs['split_map_dense'])
         else:
-            loss_dict_sparse = criterion(output_sparse, targets)
-            loss_dict_dense = criterion(output_dense, targets)
+            loss_dict_sparse = criterion(output_sparse, targets_sparse)
+            loss_dict_dense = criterion(output_dense, targets_dense)
 
         # sparse point queries loss
         loss_dict_sparse = {k+'_sp':v for k, v in loss_dict_sparse.items()}

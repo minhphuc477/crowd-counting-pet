@@ -142,6 +142,7 @@ def get_args_parser():
     parser.add_argument('--pq_dense_coef', default=1.0, type=float)
     parser.add_argument('--pq_dense_start_epoch', default=0, type=int)
     parser.add_argument('--pq_dense_warmup_epochs', default=0, type=int)
+    parser.add_argument('--branch_target_routing', default='none', choices=('none', 'gt_count'))
     parser.add_argument('--class_loss_type', default='ce', choices=('ce', 'focal'))
     parser.add_argument('--focal_alpha', default=0.25, type=float)
     parser.add_argument('--focal_gamma', default=2.0, type=float)

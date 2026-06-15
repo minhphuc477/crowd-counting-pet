@@ -119,6 +119,66 @@ MODEL_RECIPES = {
         'bad_count_start_epoch': 100,
         'bad_count_direction': 'over',
     },
+    # PET-compatible routed APG plus detached scalar count calibration.
+    #
+    # This is the coherent version of APG+LC+count-calibration for scratch
+    # training. Plain APG supervises both sparse and dense branches on the same
+    # GT point; that is useful for recovering PET, but it is not a true
+    # sparse/dense architecture. This recipe gives every GT point a single
+    # quadtree branch owner from the GT split teacher, then uses the same owner
+    # for the base Hungarian targets and routed APG. The count head remains
+    # detached from PET features, so it can calibrate scores without causing
+    # the severe over-counting seen from density/top-k variants.
+    'vgg_routed_apglc_countcal': {
+        'backbone': 'vgg16_bn',
+        'timm_adapter': 'lite_fpn',
+        'pet_loss_variant': 'paper',
+        'split_loss_variant': 'paper_gt',
+        'branch_target_routing': 'gt_count',
+        'pq_sparse_coef': 1.0,
+        'pq_dense_coef': 1.0,
+        'pq_dense_start_epoch': 0,
+        'pq_dense_warmup_epochs': 0,
+        'apg_loss_coef': 0.0,
+        'routed_apg_loss_coef': 1.0,
+        'routed_apg_point_coef': 5.0,
+        'routed_apg_pos_k': 1,
+        'routed_apg_bg_coef': 0.05,
+        'routed_apg_bg_k': 1,
+        'routed_apg_bg_min_dist': 12.0,
+        'routed_apg_start_epoch': 0,
+        'routed_apg_end_epoch': -1,
+        'routed_apg_warmup_epochs': 100,
+        'routed_apg_min_weight': 0.0,
+        'routed_apg_source': 'gt_count',
+        'routed_apg_gate': 'detach',
+        'count_head_loss_coef': 0.2,
+        'count_head_loss_type': 'log_l1',
+        'count_head_start_epoch': 0,
+        'count_head_end_epoch': -1,
+        'count_head_warmup_epochs': 100,
+        'count_head_feature_grad_scale': 0.0,
+        'count_head_feature_grad_start_epoch': 0,
+        'count_head_feature_grad_warmup_epochs': 0,
+        'allow_count_head_fresh_train': True,
+        'density_map_loss_coef': 0.0,
+        'eval_count_mode': 'threshold',
+        'eval_score_calibration': 'count_head_bias',
+        'eval_score_calibration_strength': 1.0,
+        'eval_score_calibration_start_epoch': 100,
+        'eval_score_calibration_min_bias': -8.0,
+        'eval_score_calibration_max_bias': 8.0,
+        'eval_dense_start_epoch': 0,
+        'eval_dense_residual_mode': 'none',
+        'score_threshold': 0.5,
+        'split_threshold': 0.5,
+        'split_threshold_quantile': 0.5,
+        'eval_nms_radius': 4.0,
+        'eval_branch_gate': 'pred',
+        'eval_soft_split_gate': 'none',
+        'bad_count_start_epoch': 100,
+        'bad_count_direction': 'all',
+    },
 }
 
 HEAVY_BACKBONE_PREFIXES = (
@@ -374,6 +434,8 @@ def get_args_parser():
                         help='epoch when dense base point-query loss starts')
     parser.add_argument('--pq_dense_warmup_epochs', default=0, type=int,
                         help='linearly ramp dense base point-query loss after --pq_dense_start_epoch')
+    parser.add_argument('--branch_target_routing', default='none', choices=('none', 'gt_count'),
+                        help='route base sparse/dense Hungarian targets by quadtree GT responsibility')
     parser.add_argument('--class_loss_type', default='ce', choices=('ce', 'focal'),
                         help='classification loss for person/background point-query logits')
     parser.add_argument('--focal_alpha', default=0.25, type=float,
@@ -976,6 +1038,7 @@ def merge_checkpoint_args(args, checkpoint):
             'class_loss_type', 'focal_alpha', 'focal_gamma',
             'pq_sparse_coef', 'pq_dense_coef',
             'pq_dense_start_epoch', 'pq_dense_warmup_epochs',
+            'branch_target_routing',
             'count_head_loss_coef', 'count_head_loss_type',
             'count_head_start_epoch', 'count_head_end_epoch', 'count_head_init_count',
             'count_head_warmup_epochs',
