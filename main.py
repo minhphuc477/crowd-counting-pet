@@ -57,6 +57,44 @@ BACKBONE_RECIPES = {
 }
 
 MODEL_RECIPES = {
+    # PET + lite FPN + APG with a spatial foreground-confidence branch.
+    #
+    # This follows the safer pattern seen in APGCC and dense/heatmap counters:
+    # guidance stays local. There is no scalar count-head top-k, no global
+    # count-bias, and no hard branch target routing. The foreground head is a
+    # real branch trained from epoch 0 and used as a local logit prior at eval.
+    'vgg_apglc_foreground': {
+        'backbone': 'vgg16_bn',
+        'timm_adapter': 'lite_fpn',
+        'pet_loss_variant': 'paper',
+        'split_loss_variant': 'paper',
+        'apg_loss_coef': 1.0,
+        'apg_pos_k': 1,
+        'apg_point_coef': 5.0,
+        'apg_bg_coef': 0.0,
+        'apg_count_calibration': 'none',
+        'count_head_loss_coef': 0.0,
+        'density_map_loss_coef': 0.0,
+        'routed_apg_loss_coef': 0.0,
+        'foreground_loss_coef': 0.10,
+        'foreground_sigma': 8.0,
+        'foreground_neg_shrink': 16.0,
+        'foreground_init_prior': 0.5,
+        'eval_foreground_gate': 'query',
+        'eval_foreground_gate_strength': 0.75,
+        'score_threshold': 0.5,
+        'split_threshold': 0.5,
+        'split_threshold_quantile': 0.5,
+        'eval_count_mode': 'threshold',
+        'eval_score_calibration': 'none',
+        'eval_dense_start_epoch': 0,
+        'eval_dense_residual_mode': 'none',
+        'eval_nms_radius': 0.0,
+        'eval_branch_gate': 'none',
+        'eval_soft_split_gate': 'none',
+        'bad_count_start_epoch': 100,
+        'bad_count_direction': 'all',
+    },
     # PET-compatible APG plus a scalar density-sum calibration head.
     #
     # This recipe is intentionally conservative. The count head is trained from
@@ -68,6 +106,7 @@ MODEL_RECIPES = {
     'vgg_apglc_countcal': {
         'backbone': 'vgg16_bn',
         'timm_adapter': 'lite_fpn',
+        'warmup_epochs': 0,
         'pet_loss_variant': 'paper',
         'split_loss_variant': 'paper',
         'apg_loss_coef': 1.0,
@@ -101,9 +140,9 @@ MODEL_RECIPES = {
         'allow_count_head_fresh_train': True,
         'density_map_loss_coef': 0.0,
         'eval_count_mode': 'threshold',
-        'eval_score_calibration': 'count_head_bias',
+        'eval_score_calibration': 'none',
         'eval_score_calibration_strength': 1.0,
-        'eval_score_calibration_start_epoch': 100,
+        'eval_score_calibration_start_epoch': 0,
         'eval_score_calibration_min_bias': -8.0,
         'eval_score_calibration_max_bias': 8.0,
         'eval_dense_start_epoch': 700,
@@ -125,11 +164,15 @@ MODEL_RECIPES = {
     # Hungarian point-query loss intact, because hard-routing those targets made
     # sparse nearly background-only and caused dense over-counting. Branch
     # ownership is applied through routed APG and GT split supervision instead.
-    # The count head remains detached from PET features, so it calibrates scores
-    # without causing the severe over-counting seen from density/top-k variants.
+    # The count head remains detached and is not used to bias validation logits
+    # by default; the epoch-135 under-count run showed that online count-head
+    # score calibration can suppress valid PET predictions. All active losses
+    # in this recipe start at epoch 0; disabled components are disabled by mode,
+    # not hidden behind unreachable start epochs.
     'vgg_routed_apglc_countcal': {
         'backbone': 'vgg16_bn',
         'timm_adapter': 'lite_fpn',
+        'warmup_epochs': 0,
         'pet_loss_variant': 'paper',
         'split_loss_variant': 'paper_gt',
         'branch_target_routing': 'none',
@@ -146,7 +189,7 @@ MODEL_RECIPES = {
         'routed_apg_bg_min_dist': 12.0,
         'routed_apg_start_epoch': 0,
         'routed_apg_end_epoch': -1,
-        'routed_apg_warmup_epochs': 100,
+        'routed_apg_warmup_epochs': 0,
         'routed_apg_min_weight': 0.0,
         'routed_apg_source': 'gt_count',
         'routed_apg_gate': 'detach',
@@ -158,16 +201,16 @@ MODEL_RECIPES = {
         'count_head_loss_type': 'log_l1',
         'count_head_start_epoch': 0,
         'count_head_end_epoch': -1,
-        'count_head_warmup_epochs': 100,
+        'count_head_warmup_epochs': 0,
         'count_head_feature_grad_scale': 0.0,
         'count_head_feature_grad_start_epoch': 0,
         'count_head_feature_grad_warmup_epochs': 0,
         'allow_count_head_fresh_train': True,
         'density_map_loss_coef': 0.0,
         'eval_count_mode': 'threshold',
-        'eval_score_calibration': 'count_head_bias',
+        'eval_score_calibration': 'none',
         'eval_score_calibration_strength': 1.0,
-        'eval_score_calibration_start_epoch': 100,
+        'eval_score_calibration_start_epoch': 0,
         'eval_score_calibration_min_bias': -8.0,
         'eval_score_calibration_max_bias': 8.0,
         'eval_dense_start_epoch': 0,
@@ -273,6 +316,10 @@ ARCHITECTURE_OVERRIDE_KEYS = {
     'fusion_mhf_norm',
     'fusion_mhf_spatial_kernel',
     'fusion_mhf_output_activation',
+    'foreground_loss_coef',
+    'foreground_sigma',
+    'foreground_neg_shrink',
+    'foreground_init_prior',
     'vgg_fpn_main_lr',
 }
 
@@ -500,6 +547,14 @@ def get_args_parser():
                         help='epoch when density-map auxiliary starts')
     parser.add_argument('--density_map_end_epoch', default=-1, type=int,
                         help='epoch after which density-map auxiliary turns off; negative keeps it on')
+    parser.add_argument('--foreground_loss_coef', default=0.0, type=float,
+                        help='spatial foreground heatmap auxiliary weight; 0 disables it')
+    parser.add_argument('--foreground_sigma', default=8.0, type=float,
+                        help='pixel Gaussian sigma for the foreground heatmap target')
+    parser.add_argument('--foreground_neg_shrink', default=16.0, type=float,
+                        help='negative focal-loss shrink factor for foreground heatmap supervision')
+    parser.add_argument('--foreground_init_prior', default=0.5, type=float,
+                        help='initial foreground prior probability for the spatial foreground head')
     parser.add_argument('--region_count_loss_coef', default=0.0, type=float,
                         help='local region count calibration loss weight; 0 disables it')
     parser.add_argument('--region_count_grid', default=4, type=int,
@@ -674,6 +729,10 @@ def get_args_parser():
                         help='eval-only split-aware sparse/dense ownership gate; none keeps PET concatenation')
     parser.add_argument('--eval_soft_split_gate', default='none', choices=('none', 'query', 'pred'),
                         help='eval-only soft split responsibility multiplied into person scores before thresholding')
+    parser.add_argument('--eval_foreground_gate', default='none', choices=('none', 'query', 'pred'),
+                        help='sample the foreground head at query/pred points and add it as a local person-logit prior')
+    parser.add_argument('--eval_foreground_gate_strength', default=0.75, type=float,
+                        help='strength of the foreground local person-logit prior during evaluation')
     parser.add_argument('--eval_count_mode', default='threshold', choices=('threshold', 'count_head_topk'),
                         help='threshold keeps PET behavior; count_head_topk keeps top-K APG candidates using the separate count head')
     parser.add_argument('--eval_count_head_min_score', default=0.5, type=float,
@@ -1024,6 +1083,7 @@ def merge_checkpoint_args(args, checkpoint):
             'min_lr', 'ema_decay',
             'score_threshold', 'split_threshold', 'split_threshold_quantile',
             'eval_nms_radius', 'eval_branch_gate', 'eval_soft_split_gate',
+            'eval_foreground_gate', 'eval_foreground_gate_strength',
             'eval_count_mode', 'eval_count_head_min_score',
             'eval_score_calibration', 'eval_score_calibration_strength',
             'eval_score_calibration_start_epoch',
@@ -1053,6 +1113,9 @@ def merge_checkpoint_args(args, checkpoint):
             'density_map_loss_type', 'density_map_pos_weight',
             'density_map_grad_scale',
             'density_map_start_epoch', 'density_map_end_epoch',
+            'foreground_loss_coef', 'foreground_sigma',
+            'foreground_neg_shrink', 'foreground_init_prior',
+            'eval_foreground_gate', 'eval_foreground_gate_strength',
             'region_count_loss_coef', 'region_count_grid', 'region_count_gate',
             'region_count_type', 'region_count_start_epoch', 'region_count_end_epoch',
             'bayesian_loss_coef', 'bayesian_sigma', 'bayesian_bg_coef',

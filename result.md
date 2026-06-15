@@ -15,8 +15,8 @@ best mae: 59.895604395604394 best epoch: 755
 ============================================
 
 
-**f370552b75b2b0f60b48b6e57f28e1d59140920b commit result:**
+**db447294a22eae0401adde5b961ea195fbc87f9b commit result:**
 
 ```
-vgg16_bn_scratch_routed_apglc_countcal_seed42 
+vgg16_bn_scratch_routed_apglc_countcal_v2_seed42 
 ```

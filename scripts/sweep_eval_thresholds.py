@@ -77,6 +77,8 @@ def run_eval(
     eval_score_calibration_start_epoch: int,
     eval_score_calibration_min_bias: float,
     eval_score_calibration_max_bias: float,
+    eval_foreground_gate: str | None,
+    eval_foreground_gate_strength: float | None,
     run_dir: Path,
 ) -> dict:
     tag = (
@@ -84,6 +86,10 @@ def run_eval(
         f"nms_{eval_nms_radius:.6g}_gate_{eval_branch_gate}_soft_{eval_soft_split_gate}_"
         f"count_{eval_count_mode}_min_{eval_count_head_min_score:.6g}_cal_{eval_score_calibration}"
     ).replace(".", "p")
+    if eval_foreground_gate is not None:
+        tag += f"_fg_{eval_foreground_gate}"
+    if eval_foreground_gate_strength is not None:
+        tag += f"_fgs_{eval_foreground_gate_strength:.6g}".replace(".", "p")
     results_file = run_dir / f"{tag}.json"
     log_file = run_dir / f"{tag}.log"
 
@@ -135,6 +141,10 @@ def run_eval(
         cmd.append("--tta_flip")
     if args.tta_scales:
         cmd.extend(["--tta_scales", args.tta_scales])
+    if eval_foreground_gate is not None:
+        cmd.extend(["--eval_foreground_gate", eval_foreground_gate])
+    if eval_foreground_gate_strength is not None:
+        cmd.extend(["--eval_foreground_gate_strength", str(eval_foreground_gate_strength)])
 
     started = time.time()
     proc = subprocess.run(
@@ -165,6 +175,10 @@ def run_eval(
         "eval_score_calibration_start_epoch": int(eval_score_calibration_start_epoch),
         "eval_score_calibration_min_bias": float(eval_score_calibration_min_bias),
         "eval_score_calibration_max_bias": float(eval_score_calibration_max_bias),
+        "eval_foreground_gate": eval_foreground_gate if eval_foreground_gate is not None else "checkpoint",
+        "eval_foreground_gate_strength": (
+            float(eval_foreground_gate_strength) if eval_foreground_gate_strength is not None else "checkpoint"
+        ),
         "eval_protocol": args.eval_protocol,
         "tta_flip": bool(args.tta_flip),
         "tta_scales": args.tta_scales,
@@ -204,6 +218,8 @@ def write_outputs(records: list[dict], output_dir: Path) -> None:
         "eval_score_calibration_start_epoch",
         "eval_score_calibration_min_bias",
         "eval_score_calibration_max_bias",
+        "eval_foreground_gate",
+        "eval_foreground_gate_strength",
         "eval_protocol",
         "tta_flip",
         "tta_scales",
@@ -291,6 +307,20 @@ def get_args() -> argparse.Namespace:
     parser.add_argument("--eval_score_calibration_min_bias", default=-8.0, type=float)
     parser.add_argument("--eval_score_calibration_max_bias", default=8.0, type=float)
     parser.add_argument(
+        "--eval_foreground_gates",
+        nargs="+",
+        choices=("none", "query", "pred"),
+        default=None,
+        help="optional foreground-gate overrides; omitted preserves checkpoint args",
+    )
+    parser.add_argument(
+        "--eval_foreground_gate_strengths",
+        nargs="+",
+        type=float,
+        default=None,
+        help="optional foreground-gate strength overrides; omitted preserves checkpoint args",
+    )
+    parser.add_argument(
         "--eval_protocol",
         default="pet",
         choices=("pet", "crowd_no_overlap"),
@@ -324,10 +354,21 @@ def main() -> int:
     count_modes = list(dict.fromkeys(args.eval_count_modes))
     count_min_scores = _unique_sorted(args.eval_count_head_min_scores)
     score_calibrations = list(dict.fromkeys(args.eval_score_calibrations))
+    foreground_gates = (
+        [None]
+        if args.eval_foreground_gates is None
+        else list(dict.fromkeys(args.eval_foreground_gates))
+    )
+    foreground_strengths = (
+        [None]
+        if args.eval_foreground_gate_strengths is None
+        else _unique_sorted(args.eval_foreground_gate_strengths)
+    )
     records = []
     total = (
         len(scores) * len(splits) * len(radii) * len(gates) * len(soft_gates)
         * len(count_modes) * len(count_min_scores) * len(score_calibrations)
+        * len(foreground_gates) * len(foreground_strengths)
     )
     index = 0
     for split_threshold in splits:
@@ -336,40 +377,56 @@ def main() -> int:
                 for eval_count_mode in count_modes:
                     for eval_count_head_min_score in count_min_scores:
                         for eval_score_calibration in score_calibrations:
-                            for eval_nms_radius in radii:
-                                for score_threshold in scores:
-                                    index += 1
-                                    print(
-                                        f"[{index}/{total}] score_threshold={score_threshold} "
-                                        f"split_threshold={split_threshold} eval_nms_radius={eval_nms_radius} "
-                                        f"eval_branch_gate={eval_branch_gate} "
-                                        f"eval_soft_split_gate={eval_soft_split_gate} "
-                                        f"eval_count_mode={eval_count_mode} "
-                                        f"eval_count_head_min_score={eval_count_head_min_score} "
-                                        f"eval_score_calibration={eval_score_calibration}"
-                                    )
-                                    record = run_eval(
-                                        args,
-                                        score_threshold,
-                                        split_threshold,
-                                        eval_nms_radius,
-                                        eval_branch_gate,
-                                        eval_soft_split_gate,
-                                        eval_count_mode,
-                                        eval_count_head_min_score,
-                                        eval_score_calibration,
-                                        args.eval_score_calibration_strength,
-                                        args.eval_score_calibration_start_epoch,
-                                        args.eval_score_calibration_min_bias,
-                                        args.eval_score_calibration_max_bias,
-                                        output_dir,
-                                    )
-                                    records.append(record)
-                                    if record.get("ok"):
-                                        print(f"  mae={record['eval_mae']:.4f} mse={record['eval_mse']:.4f}")
-                                    else:
-                                        print(f"  failed; see {record['log_file']}")
-                                    write_outputs(records, output_dir)
+                            for eval_foreground_gate in foreground_gates:
+                                for eval_foreground_gate_strength in foreground_strengths:
+                                    for eval_nms_radius in radii:
+                                        for score_threshold in scores:
+                                            index += 1
+                                            fg_gate_text = (
+                                                eval_foreground_gate
+                                                if eval_foreground_gate is not None
+                                                else "checkpoint"
+                                            )
+                                            fg_strength_text = (
+                                                eval_foreground_gate_strength
+                                                if eval_foreground_gate_strength is not None
+                                                else "checkpoint"
+                                            )
+                                            print(
+                                                f"[{index}/{total}] score_threshold={score_threshold} "
+                                                f"split_threshold={split_threshold} eval_nms_radius={eval_nms_radius} "
+                                                f"eval_branch_gate={eval_branch_gate} "
+                                                f"eval_soft_split_gate={eval_soft_split_gate} "
+                                                f"eval_count_mode={eval_count_mode} "
+                                                f"eval_count_head_min_score={eval_count_head_min_score} "
+                                                f"eval_score_calibration={eval_score_calibration} "
+                                                f"eval_foreground_gate={fg_gate_text} "
+                                                f"eval_foreground_gate_strength={fg_strength_text}"
+                                            )
+                                            record = run_eval(
+                                                args,
+                                                score_threshold,
+                                                split_threshold,
+                                                eval_nms_radius,
+                                                eval_branch_gate,
+                                                eval_soft_split_gate,
+                                                eval_count_mode,
+                                                eval_count_head_min_score,
+                                                eval_score_calibration,
+                                                args.eval_score_calibration_strength,
+                                                args.eval_score_calibration_start_epoch,
+                                                args.eval_score_calibration_min_bias,
+                                                args.eval_score_calibration_max_bias,
+                                                eval_foreground_gate,
+                                                eval_foreground_gate_strength,
+                                                output_dir,
+                                            )
+                                            records.append(record)
+                                            if record.get("ok"):
+                                                print(f"  mae={record['eval_mae']:.4f} mse={record['eval_mse']:.4f}")
+                                            else:
+                                                print(f"  failed; see {record['log_file']}")
+                                            write_outputs(records, output_dir)
 
     ok_records = [record for record in records if record.get("ok") and "eval_mae" in record]
     if not ok_records:

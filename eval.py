@@ -61,6 +61,10 @@ ARCHITECTURE_OVERRIDE_KEYS = {
     'fusion_mhf_norm',
     'fusion_mhf_spatial_kernel',
     'fusion_mhf_output_activation',
+    'foreground_loss_coef',
+    'foreground_sigma',
+    'foreground_neg_shrink',
+    'foreground_init_prior',
 }
 
 
@@ -170,6 +174,10 @@ def get_args_parser():
     parser.add_argument('--density_map_grad_scale', default=1.0, type=float)
     parser.add_argument('--density_map_start_epoch', default=0, type=int)
     parser.add_argument('--density_map_end_epoch', default=-1, type=int)
+    parser.add_argument('--foreground_loss_coef', default=0.0, type=float)
+    parser.add_argument('--foreground_sigma', default=8.0, type=float)
+    parser.add_argument('--foreground_neg_shrink', default=16.0, type=float)
+    parser.add_argument('--foreground_init_prior', default=0.5, type=float)
     parser.add_argument('--region_count_loss_coef', default=0.0, type=float)
     parser.add_argument('--region_count_grid', default=4, type=int)
     parser.add_argument('--region_count_gate', default='detach', choices=('none', 'detach', 'soft', 'hard'))
@@ -253,6 +261,8 @@ def get_args_parser():
     parser.add_argument('--eval_nms_radius', default=4.0, type=float)
     parser.add_argument('--eval_branch_gate', default='pred', choices=('none', 'query', 'pred'))
     parser.add_argument('--eval_soft_split_gate', default='pred', choices=('none', 'query', 'pred'))
+    parser.add_argument('--eval_foreground_gate', default='none', choices=('none', 'query', 'pred'))
+    parser.add_argument('--eval_foreground_gate_strength', default=0.75, type=float)
     parser.add_argument('--eval_count_mode', default='threshold', choices=('threshold', 'count_head_topk'))
     parser.add_argument('--eval_count_head_min_score', default=0.5, type=float)
     parser.add_argument('--eval_dense_start_epoch', default=0, type=int)
@@ -332,6 +342,7 @@ def merge_checkpoint_args(args, checkpoint):
         'override_score_threshold', 'override_split_threshold', 'override_split_threshold_quantile',
         'checkpoint_model_key', 'deterministic', 'tta_flip', 'tta_scales',
         'eval_nms_radius', 'eval_branch_gate', 'eval_soft_split_gate',
+        'eval_foreground_gate', 'eval_foreground_gate_strength',
         'eval_count_mode', 'eval_count_head_min_score',
         'eval_score_calibration', 'eval_score_calibration_strength',
         'eval_score_calibration_start_epoch',

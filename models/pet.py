@@ -399,6 +399,29 @@ class GlobalCountHead(nn.Module):
         return density.flatten(1).sum(dim=1)
 
 
+class ForegroundConfidenceHead(nn.Module):
+    """Spatial foreground prior for PET point-query scores.
+
+    This is intentionally local. Unlike a scalar count head, it cannot globally
+    shift every point-query logit up or down; it only provides a per-location
+    prior learned from point heatmaps.
+    """
+
+    def __init__(self, hidden_dim, init_prior=0.5):
+        super().__init__()
+        init_prior = min(max(float(init_prior), 1e-4), 1.0 - 1e-4)
+        self.net = nn.Sequential(
+            nn.Conv2d(hidden_dim, hidden_dim // 4, 3, padding=1),
+            nn.GELU(),
+            nn.Conv2d(hidden_dim // 4, 1, 1),
+        )
+        nn.init.zeros_(self.net[-1].weight)
+        nn.init.constant_(self.net[-1].bias, math.log(init_prior / (1.0 - init_prior)))
+
+    def forward(self, x):
+        return self.net(x.float())
+
+
 class PET(nn.Module):
     """ 
     Point quEry Transformer
@@ -539,6 +562,22 @@ class PET(nn.Module):
             raise ValueError('density_map_grad_scale must be non-negative')
         self.density_map_start_epoch = int(getattr(args, 'density_map_start_epoch', 0))
         self.density_map_end_epoch = int(getattr(args, 'density_map_end_epoch', -1))
+        self.foreground_loss_coef = float(getattr(args, 'foreground_loss_coef', 0.0))
+        self.foreground_sigma = max(1e-6, float(getattr(args, 'foreground_sigma', 8.0)))
+        self.foreground_neg_shrink = max(1.0, float(getattr(args, 'foreground_neg_shrink', 16.0)))
+        self.foreground_init_prior = float(getattr(args, 'foreground_init_prior', 0.5))
+        self.eval_foreground_gate = getattr(args, 'eval_foreground_gate', 'none')
+        if self.eval_foreground_gate not in ('none', 'query', 'pred'):
+            raise ValueError('eval_foreground_gate must be one of "none", "query", or "pred"')
+        self.eval_foreground_gate_strength = float(getattr(args, 'eval_foreground_gate_strength', 0.75))
+        needs_foreground_head = (
+            self.foreground_loss_coef > 0
+            or self.eval_foreground_gate != 'none'
+        )
+        self.foreground_head = (
+            ForegroundConfidenceHead(hidden_dim, init_prior=self.foreground_init_prior)
+            if needs_foreground_head else None
+        )
         needs_count_head = (
             self.count_head_loss_coef > 0
             or self.density_map_loss_coef > 0
@@ -949,6 +988,11 @@ class PET(nn.Module):
             loss_dict['loss_density_map'] = loss_density_map
             weight_dict['loss_density_map'] = self.density_map_loss_coef
             losses += loss_density_map * self.density_map_loss_coef
+        if self.foreground_loss_coef > 0:
+            loss_foreground = self.compute_foreground_loss(outputs, targets, samples)
+            loss_dict['loss_foreground'] = loss_foreground
+            weight_dict['loss_foreground'] = self.foreground_loss_coef
+            losses += loss_foreground * self.foreground_loss_coef
         if self.bayesian_loss_coef > 0:
             bayesian_start_epoch = warmup_ep if self.bayesian_start_epoch < 0 else self.bayesian_start_epoch
             bayesian_active = epoch >= bayesian_start_epoch and (
@@ -1864,6 +1908,68 @@ class PET(nn.Module):
         weights = 1.0 + pos_weight * (target_density > 0).to(dtype=raw_loss.dtype)
         return (raw_loss * weights).sum() / weights.sum().clamp_min(1.0)
 
+    def build_foreground_targets(self, outputs, targets, samples):
+        if 'foreground_logits' not in outputs:
+            raise KeyError('foreground_logits is required for foreground supervision')
+        logits = outputs['foreground_logits']
+        device = logits.device
+        dtype = logits.dtype
+        batch_size, _, map_h, map_w = logits.shape
+        target = torch.zeros(batch_size, map_h, map_w, dtype=dtype, device=device)
+        img_h, img_w = outputs['sparse']['img_shape']
+        img_h = max(float(img_h), 1.0)
+        img_w = max(float(img_w), 1.0)
+
+        yy = (torch.arange(map_h, dtype=dtype, device=device) + 0.5) * (img_h / max(float(map_h), 1.0))
+        xx = (torch.arange(map_w, dtype=dtype, device=device) + 0.5) * (img_w / max(float(map_w), 1.0))
+        grid_y, grid_x = torch.meshgrid(yy, xx, indexing='ij')
+        sigma = max(float(self.foreground_sigma), 1e-6)
+
+        for batch_idx, item in enumerate(targets):
+            points = item['points'].to(device=device, dtype=dtype)
+            if points.numel() == 0:
+                continue
+            for point in points:
+                dist2 = (grid_y - point[0]).pow(2) + (grid_x - point[1]).pow(2)
+                gaussian = torch.exp(-0.5 * dist2 / (sigma * sigma))
+                target[batch_idx] = torch.maximum(target[batch_idx], gaussian)
+            y_idx = torch.clamp((points[:, 0] / img_h * map_h).long(), 0, map_h - 1)
+            x_idx = torch.clamp((points[:, 1] / img_w * map_w).long(), 0, map_w - 1)
+            target[batch_idx, y_idx, x_idx] = 1.0
+
+        if samples.mask is None:
+            valid = torch.ones(batch_size, map_h, map_w, dtype=torch.bool, device=device)
+        else:
+            valid = ~F.interpolate(
+                samples.mask[:, None].float(),
+                size=(map_h, map_w),
+                mode='nearest',
+            ).to(device=device).squeeze(1).bool()
+        return target, valid
+
+    def compute_foreground_loss(self, outputs, targets, samples):
+        if self.foreground_head is None or 'foreground_logits' not in outputs:
+            return outputs['split_map_raw'].sum() * 0.0
+        logits = outputs['foreground_logits'].squeeze(1).float()
+        target, valid = self.build_foreground_targets(outputs, targets, samples)
+        target = target.float()
+        pred = logits.sigmoid().clamp(1e-4, 1.0 - 1e-4)
+
+        pos_mask = (target >= 1.0 - 1e-6) & valid
+        neg_mask = (target < 1.0 - 1e-6) & valid
+        pos_loss = -(pred.log() * (1.0 - pred).pow(2) * pos_mask.float()).sum()
+        neg_weights = (1.0 - target).pow(4)
+        neg_loss = -(
+            (1.0 - pred).log()
+            * pred.pow(2)
+            * neg_weights
+            * neg_mask.float()
+        ).sum() / self.foreground_neg_shrink
+        num_pos = pos_mask.float().sum()
+        if num_pos > 0:
+            return (pos_loss + neg_loss) / num_pos
+        return neg_loss / neg_mask.float().sum().clamp_min(1.0)
+
     def compute_bayesian_point_loss(self, outputs, targets):
         """Point-level expected-count loss around each GT point.
 
@@ -2003,6 +2109,40 @@ class PET(nn.Module):
             return torch.nn.functional.softmax(output['pred_logits'], -1)[..., 1]
         bias = score_bias.to(device=output['pred_logits'].device, dtype=output['pred_logits'].dtype)
         return torch.sigmoid(self.person_logit_margin(output) + bias)
+
+    def sample_foreground_logits(self, output, foreground_logits):
+        mode = self.eval_foreground_gate
+        if mode == 'none' or foreground_logits is None or output is None:
+            return None
+        if mode == 'query':
+            points = output['points_queries']
+        else:
+            points = output['pred_points']
+        if points.numel() == 0:
+            return torch.zeros(points.shape[0], dtype=foreground_logits.dtype, device=foreground_logits.device)
+
+        points = points.to(device=foreground_logits.device, dtype=foreground_logits.dtype).clamp(0.0, 1.0)
+        grid = torch.stack(
+            [points[:, 1] * 2.0 - 1.0, points[:, 0] * 2.0 - 1.0],
+            dim=-1,
+        ).view(1, -1, 1, 2)
+        return F.grid_sample(
+            foreground_logits[:1],
+            grid,
+            mode='bilinear',
+            padding_mode='border',
+            align_corners=False,
+        ).view(-1)
+
+    def eval_person_scores_with_foreground(self, output, foreground_logits, score_bias=None):
+        fg_logits = self.sample_foreground_logits(output, foreground_logits)
+        if fg_logits is None:
+            return self.eval_person_scores(output, score_bias)
+        margin = self.person_logit_margin(output)
+        if score_bias is not None:
+            margin = margin + score_bias.to(device=margin.device, dtype=margin.dtype)
+        fg_logits = fg_logits.to(device=margin.device, dtype=margin.dtype).view_as(margin)
+        return torch.sigmoid(margin + float(self.eval_foreground_gate_strength) * fg_logits)
 
     @staticmethod
     def update_eval_score_debug(count_debug, prefix, scores):
@@ -2294,6 +2434,8 @@ class PET(nn.Module):
             count_density = self.count_head.predict_density(self.count_head_features(encode_src, count_epoch), mask)
             outputs['count_density'] = count_density
             outputs['count_pred'] = count_density.flatten(1).sum(dim=1)
+        if self.foreground_head is not None:
+            outputs['foreground_logits'] = self.foreground_head(encode_src)
         if 'train' in kwargs:
             outputs['encode_src'] = encode_src
         return outputs
@@ -2331,9 +2473,10 @@ class PET(nn.Module):
             count_debug['count_pred'] = float(outputs['count_pred'][0].detach().float().item())
         if eval_score_bias is not None:
             count_debug['score_bias'] = float(eval_score_bias.detach().float().item())
+        foreground_logits = outputs.get('foreground_logits')
 
         if out_sparse is not None:
-            out_sparse_scores = self.eval_person_scores(out_sparse, eval_score_bias)
+            out_sparse_scores = self.eval_person_scores_with_foreground(out_sparse, foreground_logits, eval_score_bias)
             self.update_eval_score_debug(count_debug, 'sparse', out_sparse_scores)
             out_sparse_eval_scores = self.apply_eval_soft_split_gate(out_sparse, outputs['split_map_raw'], 'sparse', out_sparse_scores)
             if count_topk:
@@ -2362,7 +2505,7 @@ class PET(nn.Module):
             score_parts.append(out_sparse_eval_scores[index_sparse])
 
         if out_dense is not None and (use_dense_eval or use_dense_residual):
-            out_dense_scores = self.eval_person_scores(out_dense, eval_score_bias)
+            out_dense_scores = self.eval_person_scores_with_foreground(out_dense, foreground_logits, eval_score_bias)
             self.update_eval_score_debug(count_debug, 'dense', out_dense_scores)
             out_dense_eval_scores = self.apply_eval_soft_split_gate(out_dense, outputs['split_map_raw'], 'dense', out_dense_scores)
             if count_topk:
