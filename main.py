@@ -342,6 +342,8 @@ def get_args_parser():
                         help='scale gradients from count/density auxiliaries into PET encoder; 0 trains only the head')
     parser.add_argument('--count_head_feature_grad_start_epoch', default=0, type=int,
                         help='epoch when count-head gradients may flow into PET features; before this, only the head is trained')
+    parser.add_argument('--count_head_feature_grad_warmup_epochs', default=0, type=int,
+                        help='linearly ramp count-head feature gradients after --count_head_feature_grad_start_epoch')
     parser.add_argument('--train_count_head_only', action='store_true',
                         help='freeze PET and train only the separate count head')
     parser.add_argument('--density_map_loss_coef', default=0.0, type=float,
@@ -829,7 +831,8 @@ def merge_checkpoint_args(args, checkpoint):
             'allow_count_head_fresh_train', 'allow_count_head_from_start',
             'force_unsafe_count_head_from_start', 'safe_count_head_start_epoch',
             'count_head_init_cells', 'count_head_feature_grad_scale',
-            'count_head_feature_grad_start_epoch', 'train_count_head_only',
+            'count_head_feature_grad_start_epoch', 'count_head_feature_grad_warmup_epochs',
+            'train_count_head_only',
             'density_map_loss_coef', 'allow_unstable_density_map_loss',
             'density_map_loss_type', 'density_map_pos_weight',
             'density_map_grad_scale',

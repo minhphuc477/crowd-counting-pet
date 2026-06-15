@@ -501,6 +501,10 @@ class PET(nn.Module):
         self.count_head_init_cells = float(getattr(args, 'count_head_init_cells', 1024.0))
         self.count_head_feature_grad_scale = float(getattr(args, 'count_head_feature_grad_scale', 1.0))
         self.count_head_feature_grad_start_epoch = int(getattr(args, 'count_head_feature_grad_start_epoch', 0))
+        self.count_head_feature_grad_warmup_epochs = max(
+            0,
+            int(getattr(args, 'count_head_feature_grad_warmup_epochs', 0)),
+        )
         if self.count_head_feature_grad_scale < 0.0:
             raise ValueError('count_head_feature_grad_scale must be non-negative')
         self.density_map_loss_coef = float(getattr(args, 'density_map_loss_coef', 0.0))
@@ -696,6 +700,12 @@ class PET(nn.Module):
         if int(epoch) < self.count_head_feature_grad_start_epoch:
             return encode_src.detach().float()
         scale = self.count_head_feature_grad_scale
+        if self.count_head_feature_grad_warmup_epochs > 0:
+            scale *= min(
+                1.0,
+                float(int(epoch) - self.count_head_feature_grad_start_epoch + 1)
+                / float(self.count_head_feature_grad_warmup_epochs),
+            )
         if scale >= 1.0:
             return encode_src.float()
         if scale <= 0.0:
