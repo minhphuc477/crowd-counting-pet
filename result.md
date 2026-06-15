@@ -3,7 +3,7 @@
 Best: mae=71.3516 mse=103.1025 score_threshold=0.5 split_threshold=0.45 eval_nms_radius=0.0 eval_branch_gate=none eval_soft_split_gate=none eval_score_calibration=count_head_bias
 Results saved to: eval_results/SHA/vgg16_bn_scratch_apglc_countcal_sweep
 
-**e8203857468720a3e6502042d224e94eb5f410d7 commit result:** 
+**e8203857468720a3e6502042d224e94eb5f410d7 commit result:**
 
 ```
 vgg16_bn_scratch_apglc_countcal_densecurr_apgcal_seed42 
@@ -14,9 +14,10 @@ epoch: 885 mae: 64.08241758241758 mse: 95.60969765517662 pred_cnt: 392.412087912
 best mae: 59.895604395604394 best epoch: 755
 ============================================
 
-
-**db447294a22eae0401adde5b961ea195fbc87f9b commit result:**
+**fa0abcae3318332baecef10538a071aaae6660af commit result:**
 
 ```
-vgg16_bn_scratch_routed_apglc_countcal_v2_seed42 
+vgg16_bn_apglc_late_countreg_seed42 
 ```
+
+do more research and read publications that can achieve mae below 48

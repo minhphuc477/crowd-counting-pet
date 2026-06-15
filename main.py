@@ -57,12 +57,97 @@ BACKBONE_RECIPES = {
 }
 
 MODEL_RECIPES = {
+    # Known stable scratch path from this repo/session:
+    # PET + lite FPN + APG, with the same conservative APG schedule used by
+    # the successful APG/LC runs. No scalar count head, no density map, no
+    # routed targets, and no foreground gate.
+    'vgg_apglc': {
+        'backbone': 'vgg16_bn',
+        'timm_adapter': 'lite_fpn',
+        'pet_loss_variant': 'paper',
+        'split_loss_variant': 'paper',
+        'apg_loss_coef': 1.0,
+        'apg_start_epoch': 0,
+        'apg_warmup_epochs': 100,
+        'apg_sparse_coef': 1.0,
+        'apg_dense_coef': 0.25,
+        'apg_dense_start_epoch': 150,
+        'apg_dense_warmup_epochs': 550,
+        'apg_pos_k': 1,
+        'apg_point_coef': 5.0,
+        'apg_bg_coef': 0.0,
+        'apg_count_calibration': 'none',
+        'count_head_loss_coef': 0.0,
+        'density_map_loss_coef': 0.0,
+        'routed_apg_loss_coef': 0.0,
+        'foreground_loss_coef': 0.0,
+        'eval_foreground_gate': 'none',
+        'eval_count_mode': 'threshold',
+        'eval_score_calibration': 'none',
+        'eval_dense_start_epoch': 0,
+        'eval_dense_residual_mode': 'none',
+        'eval_nms_radius': 0.0,
+        'eval_branch_gate': 'none',
+        'eval_soft_split_gate': 'none',
+        'score_threshold': 0.5,
+        'split_threshold': 0.5,
+        'split_threshold_quantile': 0.5,
+        'bad_count_start_epoch': 100,
+        'bad_count_direction': 'all',
+    },
+    # Scratch version of the observed 50 -> 48 path.
+    #
+    # APG+LC is trained first. A small scalar density-sum count regularizer is
+    # introduced only after the original step-drop point, when PET scores should
+    # already be calibrated. This keeps the count head out of early query
+    # formation, but lets it provide the count-aware feature nudge that produced
+    # the best fine-tune result. It never uses top-k or count-bias evaluation.
+    'vgg_apglc_late_countreg': {
+        'backbone': 'vgg16_bn',
+        'timm_adapter': 'lite_fpn',
+        'pet_loss_variant': 'paper',
+        'split_loss_variant': 'paper',
+        'apg_loss_coef': 1.0,
+        'apg_start_epoch': 0,
+        'apg_warmup_epochs': 100,
+        'apg_sparse_coef': 1.0,
+        'apg_dense_coef': 0.25,
+        'apg_dense_start_epoch': 150,
+        'apg_dense_warmup_epochs': 550,
+        'apg_pos_k': 1,
+        'apg_point_coef': 5.0,
+        'apg_bg_coef': 0.0,
+        'apg_count_calibration': 'none',
+        'count_head_loss_coef': 0.10,
+        'count_head_loss_type': 'log_l1',
+        'count_head_start_epoch': 700,
+        'count_head_end_epoch': -1,
+        'count_head_warmup_epochs': 200,
+        'count_head_feature_grad_scale': 0.05,
+        'count_head_feature_grad_start_epoch': 700,
+        'count_head_feature_grad_warmup_epochs': 200,
+        'allow_count_head_fresh_train': True,
+        'density_map_loss_coef': 0.0,
+        'routed_apg_loss_coef': 0.0,
+        'foreground_loss_coef': 0.0,
+        'eval_foreground_gate': 'none',
+        'eval_count_mode': 'threshold',
+        'eval_score_calibration': 'none',
+        'eval_dense_start_epoch': 0,
+        'eval_dense_residual_mode': 'none',
+        'eval_nms_radius': 0.0,
+        'eval_branch_gate': 'none',
+        'eval_soft_split_gate': 'none',
+        'score_threshold': 0.5,
+        'split_threshold': 0.5,
+        'split_threshold_quantile': 0.5,
+        'bad_count_start_epoch': 100,
+        'bad_count_direction': 'all',
+    },
     # PET + lite FPN + APG with a spatial foreground-confidence branch.
     #
-    # This follows the safer pattern seen in APGCC and dense/heatmap counters:
-    # guidance stays local. There is no scalar count-head top-k, no global
-    # count-bias, and no hard branch target routing. The foreground head is a
-    # real branch trained from epoch 0 and used as a local logit prior at eval.
+    # Experimental only. It keeps guidance local and uses suppress-only eval,
+    # but it is not the recommended recipe until it beats vgg_apglc from scratch.
     'vgg_apglc_foreground': {
         'backbone': 'vgg16_bn',
         'timm_adapter': 'lite_fpn',
