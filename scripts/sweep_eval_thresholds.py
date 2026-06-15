@@ -403,59 +403,59 @@ def main() -> int:
                                     for eval_foreground_gate_strength in foreground_strengths:
                                         for eval_nms_radius in radii:
                                             for score_threshold in scores:
-                                            index += 1
-                                            fg_gate_text = (
-                                                eval_foreground_gate
-                                                if eval_foreground_gate is not None
-                                                else "checkpoint"
-                                            )
-                                            fg_strength_text = (
-                                                eval_foreground_gate_strength
-                                                if eval_foreground_gate_strength is not None
-                                                else "checkpoint"
-                                            )
-                                            fg_mode_text = (
-                                                eval_foreground_gate_mode
-                                                if eval_foreground_gate_mode is not None
-                                                else "checkpoint"
-                                            )
-                                            print(
-                                                f"[{index}/{total}] score_threshold={score_threshold} "
-                                                f"split_threshold={split_threshold} eval_nms_radius={eval_nms_radius} "
-                                                f"eval_branch_gate={eval_branch_gate} "
-                                                f"eval_soft_split_gate={eval_soft_split_gate} "
-                                                f"eval_count_mode={eval_count_mode} "
-                                                f"eval_count_head_min_score={eval_count_head_min_score} "
-                                                f"eval_score_calibration={eval_score_calibration} "
-                                                f"eval_foreground_gate={fg_gate_text} "
-                                                f"eval_foreground_gate_mode={fg_mode_text} "
-                                                f"eval_foreground_gate_strength={fg_strength_text}"
-                                            )
-                                            record = run_eval(
-                                                args,
-                                                score_threshold,
-                                                split_threshold,
-                                                eval_nms_radius,
-                                                eval_branch_gate,
-                                                eval_soft_split_gate,
-                                                eval_count_mode,
-                                                eval_count_head_min_score,
-                                                eval_score_calibration,
-                                                args.eval_score_calibration_strength,
-                                                args.eval_score_calibration_start_epoch,
-                                                args.eval_score_calibration_min_bias,
-                                                args.eval_score_calibration_max_bias,
-                                                eval_foreground_gate,
-                                                eval_foreground_gate_mode,
-                                                eval_foreground_gate_strength,
-                                                output_dir,
-                                            )
-                                            records.append(record)
-                                            if record.get("ok"):
-                                                print(f"  mae={record['eval_mae']:.4f} mse={record['eval_mse']:.4f}")
-                                            else:
-                                                print(f"  failed; see {record['log_file']}")
-                                            write_outputs(records, output_dir)
+                                                index += 1
+                                                fg_gate_text = (
+                                                    eval_foreground_gate
+                                                    if eval_foreground_gate is not None
+                                                    else "checkpoint"
+                                                )
+                                                fg_strength_text = (
+                                                    eval_foreground_gate_strength
+                                                    if eval_foreground_gate_strength is not None
+                                                    else "checkpoint"
+                                                )
+                                                fg_mode_text = (
+                                                    eval_foreground_gate_mode
+                                                    if eval_foreground_gate_mode is not None
+                                                    else "checkpoint"
+                                                )
+                                                print(
+                                                    f"[{index}/{total}] score_threshold={score_threshold} "
+                                                    f"split_threshold={split_threshold} eval_nms_radius={eval_nms_radius} "
+                                                    f"eval_branch_gate={eval_branch_gate} "
+                                                    f"eval_soft_split_gate={eval_soft_split_gate} "
+                                                    f"eval_count_mode={eval_count_mode} "
+                                                    f"eval_count_head_min_score={eval_count_head_min_score} "
+                                                    f"eval_score_calibration={eval_score_calibration} "
+                                                    f"eval_foreground_gate={fg_gate_text} "
+                                                    f"eval_foreground_gate_mode={fg_mode_text} "
+                                                    f"eval_foreground_gate_strength={fg_strength_text}"
+                                                )
+                                                record = run_eval(
+                                                    args,
+                                                    score_threshold,
+                                                    split_threshold,
+                                                    eval_nms_radius,
+                                                    eval_branch_gate,
+                                                    eval_soft_split_gate,
+                                                    eval_count_mode,
+                                                    eval_count_head_min_score,
+                                                    eval_score_calibration,
+                                                    args.eval_score_calibration_strength,
+                                                    args.eval_score_calibration_start_epoch,
+                                                    args.eval_score_calibration_min_bias,
+                                                    args.eval_score_calibration_max_bias,
+                                                    eval_foreground_gate,
+                                                    eval_foreground_gate_mode,
+                                                    eval_foreground_gate_strength,
+                                                    output_dir,
+                                                )
+                                                records.append(record)
+                                                if record.get("ok"):
+                                                    print(f"  mae={record['eval_mae']:.4f} mse={record['eval_mse']:.4f}")
+                                                else:
+                                                    print(f"  failed; see {record['log_file']}")
+                                                write_outputs(records, output_dir)
 
     ok_records = [record for record in records if record.get("ok") and "eval_mae" in record]
     if not ok_records:
