@@ -324,6 +324,8 @@ def get_args_parser():
                         help='epoch when the separate count-head loss starts')
     parser.add_argument('--count_head_end_epoch', default=-1, type=int,
                         help='epoch after which the separate count-head loss turns off; negative keeps it on')
+    parser.add_argument('--count_head_warmup_epochs', default=0, type=int,
+                        help='linearly ramp the separate count-head loss after --count_head_start_epoch')
     parser.add_argument('--allow_count_head_fresh_train', action='store_true',
                         help='allow count-head auxiliary during fresh training; disabled by default after severe SHA over-counting')
     parser.add_argument('--allow_count_head_from_start', action='store_true',
@@ -823,6 +825,7 @@ def merge_checkpoint_args(args, checkpoint):
             'class_loss_type', 'focal_alpha', 'focal_gamma',
             'count_head_loss_coef', 'count_head_loss_type',
             'count_head_start_epoch', 'count_head_end_epoch', 'count_head_init_count',
+            'count_head_warmup_epochs',
             'allow_count_head_fresh_train', 'allow_count_head_from_start',
             'force_unsafe_count_head_from_start', 'safe_count_head_start_epoch',
             'count_head_init_cells', 'count_head_feature_grad_scale',

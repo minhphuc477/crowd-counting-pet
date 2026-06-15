@@ -496,6 +496,7 @@ class PET(nn.Module):
             raise ValueError('count_head_loss_type must be one of "log_l1", "l1", or "smooth_l1"')
         self.count_head_start_epoch = int(getattr(args, 'count_head_start_epoch', 0))
         self.count_head_end_epoch = int(getattr(args, 'count_head_end_epoch', -1))
+        self.count_head_warmup_epochs = max(0, int(getattr(args, 'count_head_warmup_epochs', 0)))
         self.count_head_init_count = float(getattr(args, 'count_head_init_count', 40.0))
         self.count_head_init_cells = float(getattr(args, 'count_head_init_cells', 1024.0))
         self.count_head_feature_grad_scale = float(getattr(args, 'count_head_feature_grad_scale', 1.0))
@@ -782,13 +783,19 @@ class PET(nn.Module):
             count_head_active = epoch >= self.count_head_start_epoch and (
                 self.count_head_end_epoch < 0 or epoch <= self.count_head_end_epoch
             )
+            count_head_weight = self.count_head_loss_coef
+            if count_head_active and self.count_head_warmup_epochs > 0:
+                count_head_weight *= min(
+                    1.0,
+                    float(epoch - self.count_head_start_epoch + 1) / float(self.count_head_warmup_epochs),
+                )
             if count_head_active:
                 loss_count_head = self.compute_count_head_loss(outputs, targets)
             else:
                 loss_count_head = outputs['split_map_raw'].sum() * 0.0
             loss_dict['loss_count_head'] = loss_count_head
-            weight_dict['loss_count_head'] = self.count_head_loss_coef
-            losses += loss_count_head * self.count_head_loss_coef
+            weight_dict['loss_count_head'] = count_head_weight if count_head_active else 0.0
+            losses += loss_count_head * weight_dict['loss_count_head']
         if self.density_map_loss_coef > 0:
             density_map_active = epoch >= self.density_map_start_epoch and (
                 self.density_map_end_epoch < 0 or epoch <= self.density_map_end_epoch
