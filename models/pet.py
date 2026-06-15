@@ -569,6 +569,9 @@ class PET(nn.Module):
         self.eval_foreground_gate = getattr(args, 'eval_foreground_gate', 'none')
         if self.eval_foreground_gate not in ('none', 'query', 'pred'):
             raise ValueError('eval_foreground_gate must be one of "none", "query", or "pred"')
+        self.eval_foreground_gate_mode = getattr(args, 'eval_foreground_gate_mode', 'suppress')
+        if self.eval_foreground_gate_mode not in ('suppress', 'logit_add'):
+            raise ValueError('eval_foreground_gate_mode must be one of "suppress" or "logit_add"')
         self.eval_foreground_gate_strength = float(getattr(args, 'eval_foreground_gate_strength', 0.75))
         needs_foreground_head = (
             self.foreground_loss_coef > 0
@@ -2138,11 +2141,22 @@ class PET(nn.Module):
         fg_logits = self.sample_foreground_logits(output, foreground_logits)
         if fg_logits is None:
             return self.eval_person_scores(output, score_bias)
-        margin = self.person_logit_margin(output)
-        if score_bias is not None:
-            margin = margin + score_bias.to(device=margin.device, dtype=margin.dtype)
-        fg_logits = fg_logits.to(device=margin.device, dtype=margin.dtype).view_as(margin)
-        return torch.sigmoid(margin + float(self.eval_foreground_gate_strength) * fg_logits)
+        base_scores = self.eval_person_scores(output, score_bias)
+        fg_logits = fg_logits.to(device=base_scores.device, dtype=base_scores.dtype).view_as(base_scores)
+        strength = max(0.0, float(self.eval_foreground_gate_strength))
+        if self.eval_foreground_gate_mode == 'logit_add':
+            margin = self.person_logit_margin(output)
+            if score_bias is not None:
+                margin = margin + score_bias.to(device=margin.device, dtype=margin.dtype)
+            return torch.sigmoid(margin + strength * fg_logits)
+
+        # Suppress-only gate: foreground can remove local background false positives
+        # but can never increase a PET query score above the base APG/LC score.
+        # A freshly initialized foreground head with p=0.5 is neutral.
+        fg_prob = fg_logits.sigmoid()
+        suppress = (0.5 - fg_prob).clamp_min(0.0) * 2.0
+        multiplier = (1.0 - strength * suppress).clamp_min(max(0.0, 1.0 - strength))
+        return base_scores * multiplier
 
     @staticmethod
     def update_eval_score_debug(count_debug, prefix, scores):

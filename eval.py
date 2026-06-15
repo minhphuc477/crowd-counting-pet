@@ -262,6 +262,7 @@ def get_args_parser():
     parser.add_argument('--eval_branch_gate', default='pred', choices=('none', 'query', 'pred'))
     parser.add_argument('--eval_soft_split_gate', default='pred', choices=('none', 'query', 'pred'))
     parser.add_argument('--eval_foreground_gate', default='none', choices=('none', 'query', 'pred'))
+    parser.add_argument('--eval_foreground_gate_mode', default='suppress', choices=('suppress', 'logit_add'))
     parser.add_argument('--eval_foreground_gate_strength', default=0.75, type=float)
     parser.add_argument('--eval_count_mode', default='threshold', choices=('threshold', 'count_head_topk'))
     parser.add_argument('--eval_count_head_min_score', default=0.5, type=float)
@@ -342,7 +343,7 @@ def merge_checkpoint_args(args, checkpoint):
         'override_score_threshold', 'override_split_threshold', 'override_split_threshold_quantile',
         'checkpoint_model_key', 'deterministic', 'tta_flip', 'tta_scales',
         'eval_nms_radius', 'eval_branch_gate', 'eval_soft_split_gate',
-        'eval_foreground_gate', 'eval_foreground_gate_strength',
+        'eval_foreground_gate', 'eval_foreground_gate_mode', 'eval_foreground_gate_strength',
         'eval_count_mode', 'eval_count_head_min_score',
         'eval_score_calibration', 'eval_score_calibration_strength',
         'eval_score_calibration_start_epoch',

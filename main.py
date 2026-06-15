@@ -81,6 +81,7 @@ MODEL_RECIPES = {
         'foreground_neg_shrink': 16.0,
         'foreground_init_prior': 0.5,
         'eval_foreground_gate': 'query',
+        'eval_foreground_gate_mode': 'suppress',
         'eval_foreground_gate_strength': 0.75,
         'score_threshold': 0.5,
         'split_threshold': 0.5,
@@ -731,6 +732,8 @@ def get_args_parser():
                         help='eval-only soft split responsibility multiplied into person scores before thresholding')
     parser.add_argument('--eval_foreground_gate', default='none', choices=('none', 'query', 'pred'),
                         help='sample the foreground head at query/pred points and add it as a local person-logit prior')
+    parser.add_argument('--eval_foreground_gate_mode', default='suppress', choices=('suppress', 'logit_add'),
+                        help='suppress only reduces point scores; logit_add is the older experimental additive prior')
     parser.add_argument('--eval_foreground_gate_strength', default=0.75, type=float,
                         help='strength of the foreground local person-logit prior during evaluation')
     parser.add_argument('--eval_count_mode', default='threshold', choices=('threshold', 'count_head_topk'),
@@ -1083,7 +1086,7 @@ def merge_checkpoint_args(args, checkpoint):
             'min_lr', 'ema_decay',
             'score_threshold', 'split_threshold', 'split_threshold_quantile',
             'eval_nms_radius', 'eval_branch_gate', 'eval_soft_split_gate',
-            'eval_foreground_gate', 'eval_foreground_gate_strength',
+            'eval_foreground_gate', 'eval_foreground_gate_mode', 'eval_foreground_gate_strength',
             'eval_count_mode', 'eval_count_head_min_score',
             'eval_score_calibration', 'eval_score_calibration_strength',
             'eval_score_calibration_start_epoch',
@@ -1115,7 +1118,7 @@ def merge_checkpoint_args(args, checkpoint):
             'density_map_start_epoch', 'density_map_end_epoch',
             'foreground_loss_coef', 'foreground_sigma',
             'foreground_neg_shrink', 'foreground_init_prior',
-            'eval_foreground_gate', 'eval_foreground_gate_strength',
+            'eval_foreground_gate', 'eval_foreground_gate_mode', 'eval_foreground_gate_strength',
             'region_count_loss_coef', 'region_count_grid', 'region_count_gate',
             'region_count_type', 'region_count_start_epoch', 'region_count_end_epoch',
             'bayesian_loss_coef', 'bayesian_sigma', 'bayesian_bg_coef',
