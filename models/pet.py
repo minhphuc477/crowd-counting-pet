@@ -463,11 +463,11 @@ class PET(nn.Module):
         self.split_threshold = float(getattr(args, 'split_threshold', -1.0))
         self.split_threshold_quantile = float(getattr(args, 'split_threshold_quantile', 0.5))
         self.score_threshold = float(getattr(args, 'score_threshold', 0.5))
-        self.eval_nms_radius = float(getattr(args, 'eval_nms_radius', 4.0))
-        self.eval_branch_gate = getattr(args, 'eval_branch_gate', 'pred')
+        self.eval_nms_radius = float(getattr(args, 'eval_nms_radius', 0.0))
+        self.eval_branch_gate = getattr(args, 'eval_branch_gate', 'none')
         if self.eval_branch_gate not in ('none', 'query', 'pred'):
             raise ValueError('eval_branch_gate must be one of "none", "query", or "pred"')
-        self.eval_soft_split_gate = getattr(args, 'eval_soft_split_gate', 'pred')
+        self.eval_soft_split_gate = getattr(args, 'eval_soft_split_gate', 'none')
         if self.eval_soft_split_gate not in ('none', 'query', 'pred'):
             raise ValueError('eval_soft_split_gate must be one of "none", "query", or "pred"')
         self.eval_filter_invalid_points = not bool(getattr(args, 'no_eval_filter_invalid_points', False))

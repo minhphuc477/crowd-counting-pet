@@ -506,11 +506,11 @@ def get_args_parser():
                         help='legacy adaptive split-map quantile (unused when split_threshold is set)')
     parser.add_argument('--score_threshold', default=0.5, type=float,
                         help='point classification threshold; negative enables adaptive score thresholding')
-    parser.add_argument('--eval_nms_radius', default=4.0, type=float,
-                        help='optional eval-only point NMS radius in pixels; 0 disables duplicate suppression')
-    parser.add_argument('--eval_branch_gate', default='pred', choices=('none', 'query', 'pred'),
+    parser.add_argument('--eval_nms_radius', default=0.0, type=float,
+                        help='optional eval-only point NMS radius in pixels; 0 disables duplicate suppression and matches PET')
+    parser.add_argument('--eval_branch_gate', default='none', choices=('none', 'query', 'pred'),
                         help='eval-only split-aware sparse/dense ownership gate; none keeps PET concatenation')
-    parser.add_argument('--eval_soft_split_gate', default='pred', choices=('none', 'query', 'pred'),
+    parser.add_argument('--eval_soft_split_gate', default='none', choices=('none', 'query', 'pred'),
                         help='eval-only soft split responsibility multiplied into person scores before thresholding')
     parser.add_argument('--eval_count_mode', default='threshold', choices=('threshold', 'count_head_topk'),
                         help='threshold keeps PET behavior; count_head_topk keeps top-K APG candidates using the separate count head')
@@ -858,7 +858,8 @@ def merge_checkpoint_args(args, checkpoint):
         if getattr(args, 'resume_allow_arch_change', False):
             runtime_keys.update(key for key in ARCHITECTURE_OVERRIDE_KEYS if key in explicit_args)
     for key in runtime_keys:
-        setattr(merged, key, getattr(args, key))
+        if hasattr(args, key):
+            setattr(merged, key, getattr(args, key))
     if hasattr(args, '_explicit_args'):
         setattr(merged, '_explicit_args', getattr(args, '_explicit_args'))
     return merged
