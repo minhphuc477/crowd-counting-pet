@@ -14,10 +14,8 @@ epoch: 885 mae: 64.08241758241758 mse: 95.60969765517662 pred_cnt: 392.412087912
 best mae: 59.895604395604394 best epoch: 755
 ============================================
 
-**fa0abcae3318332baecef10538a071aaae6660af commit result:**
+**ad9aef1d354d99925333004b363e696569a0686a commit result:**
 
 ```
-vgg16_bn_apglc_late_countreg_seed42 
+vgg16_bn_apglc_drf_late_countreg_seed42 
 ```
-
-do more research and read publications that can achieve mae below 48

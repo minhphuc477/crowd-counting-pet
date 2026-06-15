@@ -42,6 +42,20 @@ def _parse_size_pair_list(value, default, name):
     return [_parse_size_pair(pair, None, name) for pair in value]
 
 
+def _parse_positive_int_list(value, default, name):
+    if value is None or value == '':
+        values = list(default)
+    elif isinstance(value, str):
+        values = [int(part.strip()) for part in value.split(',') if part.strip()]
+    else:
+        values = [int(part) for part in value]
+    if not values:
+        raise ValueError(f'{name} must contain at least one integer')
+    if any(part <= 0 for part in values):
+        raise ValueError(f'{name} values must be positive, got {values}')
+    return values
+
+
 def _valid_image_shape(samples, device=None):
     """Return [H, W] of the non-padded image area.
 
@@ -327,6 +341,64 @@ class QuadContextMixer(nn.Module):
         return x + self.out_proj(mixed_context)
 
 
+class DynamicReceptiveFieldMixer(nn.Module):
+    """PANet-inspired dynamic local receptive-field mixer.
+
+    PANet's DRF result points to perspective-varying receptive fields as a real
+    counting improvement, not a thresholding trick. PET already has a stable
+    point-query decoder, so this module only changes the encoded 8x feature map:
+    several depthwise dilated branches are blended per location by a learned
+    gate. The residual projection is zero-initialized, making the module an
+    exact identity at step 0 and preserving the known APG+LC training dynamics.
+    """
+    def __init__(self, hidden_dim, dilations=(1, 2, 3), mid_dim=64, activation='gelu'):
+        super().__init__()
+        self.dilations = tuple(int(dilation) for dilation in dilations)
+        if not self.dilations:
+            raise ValueError('DynamicReceptiveFieldMixer requires at least one dilation')
+        mid_dim = max(1, int(mid_dim))
+        if activation == 'gelu':
+            act_factory = nn.GELU
+        elif activation == 'relu':
+            act_factory = lambda: nn.ReLU(inplace=True)
+        else:
+            raise ValueError(f'Unsupported DRF activation: {activation}. Use "gelu" or "relu".')
+
+        self.branches = nn.ModuleList([
+            nn.Sequential(
+                nn.Conv2d(
+                    hidden_dim,
+                    hidden_dim,
+                    kernel_size=3,
+                    padding=dilation,
+                    dilation=dilation,
+                    groups=hidden_dim,
+                    bias=False,
+                ),
+                _make_group_norm(hidden_dim),
+                act_factory(),
+                nn.Conv2d(hidden_dim, hidden_dim, kernel_size=1, bias=False),
+            )
+            for dilation in self.dilations
+        ])
+        self.gate = nn.Sequential(
+            nn.Conv2d(hidden_dim, mid_dim, kernel_size=1, bias=False),
+            _make_group_norm(mid_dim),
+            act_factory(),
+            nn.Conv2d(mid_dim, len(self.dilations), kernel_size=1),
+        )
+        self.out_proj = nn.Conv2d(hidden_dim, hidden_dim, kernel_size=1)
+        nn.init.zeros_(self.out_proj.weight)
+        nn.init.zeros_(self.out_proj.bias)
+
+    def forward(self, x):
+        weights = torch.softmax(self.gate(x).float(), dim=1).to(dtype=x.dtype)
+        branch_sum = x.new_zeros(x.shape)
+        for idx, branch in enumerate(self.branches):
+            branch_sum = branch_sum + branch(x) * weights[:, idx:idx + 1]
+        return x + self.out_proj(branch_sum)
+
+
 class QuadtreeSplitter(nn.Module):
     def __init__(self, hidden_dim, context_h, context_w, head='pool', mid_dim=128, activation='gelu'):
         super().__init__()
@@ -452,6 +524,22 @@ class PET(nn.Module):
         )  # encoder window size
         args.enc_layers = len(enc_win_list)
         self.context_encoder = build_encoder(args, enc_win_list=enc_win_list)
+        perspective_mixer = getattr(args, 'perspective_mixer', 'none')
+        if perspective_mixer == 'none':
+            self.perspective_mixer = nn.Identity()
+        elif perspective_mixer == 'drf':
+            self.perspective_mixer = DynamicReceptiveFieldMixer(
+                hidden_dim,
+                dilations=_parse_positive_int_list(
+                    getattr(args, 'perspective_mixer_dilations', '1,2,3'),
+                    (1, 2, 3),
+                    'perspective_mixer_dilations',
+                ),
+                mid_dim=getattr(args, 'perspective_mixer_mid_dim', 64),
+                activation=getattr(args, 'perspective_mixer_activation', 'gelu'),
+            )
+        else:
+            raise ValueError(f'Unsupported perspective_mixer: {perspective_mixer}. Use "none" or "drf".')
 
         # quadtree splitter
         context_patch = _parse_size_pair(getattr(args, 'context_patch_size', ''), (128, 64), 'context_patch_size')
@@ -2384,6 +2472,7 @@ class PET(nn.Module):
         src_pos_embed = pos[self.encode_feats]
         assert mask is not None
         encode_src = self.context_encoder(src, src_pos_embed, mask)
+        encode_src = self.perspective_mixer(encode_src)
         encode_src = self.quad_context_mixer(encode_src)
         context_info = (encode_src, src_pos_embed, mask)
         

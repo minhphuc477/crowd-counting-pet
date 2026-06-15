@@ -58,7 +58,7 @@ BACKBONE_RECIPES = {
 
 MODEL_RECIPES = {
     # Known stable scratch path from this repo/session:
-    # PET + lite FPN + APG, with the same conservative APG schedule used by
+    # PET + lite FPN + APG, with the same full sparse+dense APG path used by
     # the successful APG/LC runs. No scalar count head, no density map, no
     # routed targets, and no foreground gate.
     'vgg_apglc': {
@@ -68,11 +68,11 @@ MODEL_RECIPES = {
         'split_loss_variant': 'paper',
         'apg_loss_coef': 1.0,
         'apg_start_epoch': 0,
-        'apg_warmup_epochs': 100,
+        'apg_warmup_epochs': 0,
         'apg_sparse_coef': 1.0,
-        'apg_dense_coef': 0.25,
-        'apg_dense_start_epoch': 150,
-        'apg_dense_warmup_epochs': 550,
+        'apg_dense_coef': 1.0,
+        'apg_dense_start_epoch': 0,
+        'apg_dense_warmup_epochs': 0,
         'apg_pos_k': 1,
         'apg_point_coef': 5.0,
         'apg_bg_coef': 0.0,
@@ -109,11 +109,62 @@ MODEL_RECIPES = {
         'split_loss_variant': 'paper',
         'apg_loss_coef': 1.0,
         'apg_start_epoch': 0,
-        'apg_warmup_epochs': 100,
+        'apg_warmup_epochs': 0,
         'apg_sparse_coef': 1.0,
-        'apg_dense_coef': 0.25,
-        'apg_dense_start_epoch': 150,
-        'apg_dense_warmup_epochs': 550,
+        'apg_dense_coef': 1.0,
+        'apg_dense_start_epoch': 0,
+        'apg_dense_warmup_epochs': 0,
+        'apg_pos_k': 1,
+        'apg_point_coef': 5.0,
+        'apg_bg_coef': 0.0,
+        'apg_count_calibration': 'none',
+        'count_head_loss_coef': 0.10,
+        'count_head_loss_type': 'log_l1',
+        'count_head_start_epoch': 700,
+        'count_head_end_epoch': -1,
+        'count_head_warmup_epochs': 200,
+        'count_head_feature_grad_scale': 0.05,
+        'count_head_feature_grad_start_epoch': 700,
+        'count_head_feature_grad_warmup_epochs': 200,
+        'allow_count_head_fresh_train': True,
+        'density_map_loss_coef': 0.0,
+        'routed_apg_loss_coef': 0.0,
+        'foreground_loss_coef': 0.0,
+        'eval_foreground_gate': 'none',
+        'eval_count_mode': 'threshold',
+        'eval_score_calibration': 'none',
+        'eval_dense_start_epoch': 0,
+        'eval_dense_residual_mode': 'none',
+        'eval_nms_radius': 0.0,
+        'eval_branch_gate': 'none',
+        'eval_soft_split_gate': 'none',
+        'score_threshold': 0.5,
+        'split_threshold': 0.5,
+        'split_threshold_quantile': 0.5,
+        'bad_count_start_epoch': 100,
+        'bad_count_direction': 'all',
+    },
+    # Publication-inspired scratch path:
+    # stable APG+LC + PANet-style dynamic receptive fields + late scalar count
+    # regularization. The DRF residual starts as identity, so early training
+    # remains the known stable APG+LC behavior rather than another count-head
+    # from-scratch failure mode.
+    'vgg_apglc_drf_late_countreg': {
+        'backbone': 'vgg16_bn',
+        'timm_adapter': 'lite_fpn',
+        'pet_loss_variant': 'paper',
+        'split_loss_variant': 'paper',
+        'perspective_mixer': 'drf',
+        'perspective_mixer_dilations': '1,2,3',
+        'perspective_mixer_mid_dim': 64,
+        'perspective_mixer_activation': 'gelu',
+        'apg_loss_coef': 1.0,
+        'apg_start_epoch': 0,
+        'apg_warmup_epochs': 0,
+        'apg_sparse_coef': 1.0,
+        'apg_dense_coef': 1.0,
+        'apg_dense_start_epoch': 0,
+        'apg_dense_warmup_epochs': 0,
         'apg_pos_k': 1,
         'apg_point_coef': 5.0,
         'apg_bg_coef': 0.0,
@@ -155,11 +206,11 @@ MODEL_RECIPES = {
         'split_loss_variant': 'paper',
         'apg_loss_coef': 1.0,
         'apg_start_epoch': 0,
-        'apg_warmup_epochs': 100,
+        'apg_warmup_epochs': 0,
         'apg_sparse_coef': 1.0,
-        'apg_dense_coef': 0.25,
-        'apg_dense_start_epoch': 150,
-        'apg_dense_warmup_epochs': 550,
+        'apg_dense_coef': 1.0,
+        'apg_dense_start_epoch': 0,
+        'apg_dense_warmup_epochs': 0,
         'apg_pos_k': 1,
         'apg_point_coef': 5.0,
         'apg_bg_coef': 0.0,
@@ -318,6 +369,14 @@ MODEL_RECIPES = {
     },
 }
 
+EXPERIMENTAL_MODEL_RECIPES = {
+    # These paths are kept for audit/reproduction only. Session runs showed
+    # catastrophic over/under-counting before they could improve on APG+LC.
+    'vgg_apglc_foreground',
+    'vgg_apglc_countcal',
+    'vgg_routed_apglc_countcal',
+}
+
 HEAVY_BACKBONE_PREFIXES = (
     'convnext_base',
     'convnextv2_base',
@@ -394,6 +453,10 @@ ARCHITECTURE_OVERRIDE_KEYS = {
     'quad_context_shift',
     'quad_context_mid_dim',
     'quad_context_activation',
+    'perspective_mixer',
+    'perspective_mixer_dilations',
+    'perspective_mixer_mid_dim',
+    'perspective_mixer_activation',
     'splitter_head',
     'splitter_hidden_dim',
     'splitter_activation',
@@ -461,6 +524,8 @@ def get_args_parser():
     parser.add_argument('--model_recipe', default='none',
                         choices=('none',) + tuple(MODEL_RECIPES.keys()),
                         help='apply a vetted model/loss recipe before safety checks')
+    parser.add_argument('--allow_experimental_model_recipe', action='store_true',
+                        help='allow recipes kept only for ablation/reproduction after known bad SHA runs')
     parser.add_argument('--warmup_epochs', default=5, type=int,
                         help='number of warmup epochs')
     parser.add_argument('--hold_epochs', default=-1, type=int,
@@ -551,6 +616,14 @@ def get_args_parser():
                         help='hidden channels for the quad context mixer gate')
     parser.add_argument('--quad_context_activation', default='gelu', choices=('relu', 'gelu'),
                         help='activation used by --quad_context_mixer lite')
+    parser.add_argument('--perspective_mixer', default='none', choices=('none', 'drf'),
+                        help='optional PANet-inspired dynamic receptive-field mixer after the encoder')
+    parser.add_argument('--perspective_mixer_dilations', default='1,2,3', type=str,
+                        help='comma-separated dilations used by --perspective_mixer drf')
+    parser.add_argument('--perspective_mixer_mid_dim', default=64, type=int,
+                        help='hidden channels for the dynamic receptive-field gate')
+    parser.add_argument('--perspective_mixer_activation', default='gelu', choices=('relu', 'gelu'),
+                        help='activation used by --perspective_mixer drf')
     parser.add_argument('--splitter_head', default='pool', choices=('pool', 'conv'),
                         help='quadtree splitter head; pool matches official PET, conv adds local context')
     parser.add_argument('--splitter_hidden_dim', default=128, type=int,
@@ -949,6 +1022,15 @@ def apply_model_recipe(args):
     recipe_name = getattr(args, 'model_recipe', 'none')
     if recipe_name == 'none':
         return
+    if (
+        recipe_name in EXPERIMENTAL_MODEL_RECIPES
+        and not bool(getattr(args, 'allow_experimental_model_recipe', False))
+    ):
+        raise ValueError(
+            f'model_recipe={recipe_name!r} is experimental and blocked by default '
+            'because it produced severe SHA count drift in this repo. Use '
+            '--allow_experimental_model_recipe only for isolated ablations.'
+        )
     recipe = MODEL_RECIPES[recipe_name]
     explicit_args = set(getattr(args, '_explicit_args', set()))
     for key, value in recipe.items():
