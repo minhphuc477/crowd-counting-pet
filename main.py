@@ -144,6 +144,57 @@ MODEL_RECIPES = {
         'bad_count_start_epoch': 100,
         'bad_count_direction': 'all',
     },
+    # Scratch version of the 50 -> 48 path with the missing half of APGCC
+    # restored. APGCC uses both auxiliary positives and negatives; positive-only
+    # APG repeatedly produced early SHA score explosions in this repo. This
+    # recipe keeps PET/APG+LC intact, adds local APG negatives from epoch 0, and
+    # delays the scalar density-sum count regularizer until after the original
+    # PET step drop so it cannot form the query scores from scratch.
+    'vgg_apglc_balanced_late_countreg': {
+        'backbone': 'vgg16_bn',
+        'timm_adapter': 'lite_fpn',
+        'pet_loss_variant': 'paper',
+        'split_loss_variant': 'paper',
+        'apg_loss_coef': 1.0,
+        'apg_start_epoch': 0,
+        'apg_warmup_epochs': 0,
+        'apg_sparse_coef': 1.0,
+        'apg_dense_coef': 1.0,
+        'apg_dense_start_epoch': 0,
+        'apg_dense_warmup_epochs': 0,
+        'apg_pos_k': 1,
+        'apg_point_coef': 5.0,
+        'apg_bg_coef': 0.5,
+        'apg_bg_k': 8,
+        'apg_bg_min_dist': 12.0,
+        'apg_bg_offset_coef': 1.0,
+        'apg_count_calibration': 'none',
+        'count_head_loss_coef': 0.10,
+        'count_head_loss_type': 'log_l1',
+        'count_head_start_epoch': 700,
+        'count_head_end_epoch': -1,
+        'count_head_warmup_epochs': 200,
+        'count_head_feature_grad_scale': 0.05,
+        'count_head_feature_grad_start_epoch': 700,
+        'count_head_feature_grad_warmup_epochs': 200,
+        'allow_count_head_fresh_train': True,
+        'density_map_loss_coef': 0.0,
+        'routed_apg_loss_coef': 0.0,
+        'foreground_loss_coef': 0.0,
+        'eval_foreground_gate': 'none',
+        'eval_count_mode': 'threshold',
+        'eval_score_calibration': 'none',
+        'eval_dense_start_epoch': 0,
+        'eval_dense_residual_mode': 'none',
+        'eval_nms_radius': 0.0,
+        'eval_branch_gate': 'none',
+        'eval_soft_split_gate': 'none',
+        'score_threshold': 0.59,
+        'split_threshold': 0.45,
+        'split_threshold_quantile': 0.5,
+        'bad_count_start_epoch': 100,
+        'bad_count_direction': 'all',
+    },
     # Publication-inspired scratch path:
     # stable APG+LC + PANet-style dynamic receptive fields + late scalar count
     # regularization. The DRF residual starts as identity, so early training
@@ -373,6 +424,7 @@ EXPERIMENTAL_MODEL_RECIPES = {
     # These paths are kept for audit/reproduction only. Session runs showed
     # catastrophic over/under-counting before they could improve on APG+LC.
     'vgg_apglc_foreground',
+    'vgg_apglc_drf_late_countreg',
     'vgg_apglc_countcal',
     'vgg_routed_apglc_countcal',
 }
@@ -756,6 +808,8 @@ def get_args_parser():
                         help='background point queries per GT used by APG local suppression')
     parser.add_argument('--apg_bg_min_dist', default=12.0, type=float,
                         help='minimum pixel distance from every GT for APG background samples')
+    parser.add_argument('--apg_bg_offset_coef', default=0.0, type=float,
+                        help='offset-to-zero coefficient for APG auxiliary negative points')
     parser.add_argument('--apg_start_epoch', default=0, type=int,
                         help='epoch when APG auxiliary supervision starts')
     parser.add_argument('--apg_warmup_epochs', default=0, type=int,
@@ -1297,7 +1351,7 @@ def merge_checkpoint_args(args, checkpoint):
             'bayesian_loss_coef', 'bayesian_sigma', 'bayesian_bg_coef',
             'bayesian_loss_gate', 'bayesian_start_epoch', 'bayesian_end_epoch',
             'apg_loss_coef', 'apg_pos_k', 'apg_point_coef',
-            'apg_bg_coef', 'apg_bg_k', 'apg_bg_min_dist',
+            'apg_bg_coef', 'apg_bg_k', 'apg_bg_min_dist', 'apg_bg_offset_coef',
             'apg_start_epoch', 'apg_warmup_epochs',
             'apg_sparse_coef', 'apg_dense_coef',
             'apg_dense_start_epoch', 'apg_dense_warmup_epochs',

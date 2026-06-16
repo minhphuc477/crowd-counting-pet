@@ -708,6 +708,7 @@ class PET(nn.Module):
         self.apg_bg_coef = float(getattr(args, 'apg_bg_coef', 0.0))
         self.apg_bg_k = max(0, int(getattr(args, 'apg_bg_k', 0)))
         self.apg_bg_min_dist = max(0.0, float(getattr(args, 'apg_bg_min_dist', 12.0)))
+        self.apg_bg_offset_coef = max(0.0, float(getattr(args, 'apg_bg_offset_coef', 0.0)))
         self.apg_start_epoch = int(getattr(args, 'apg_start_epoch', 0))
         self.apg_warmup_epochs = max(0, int(getattr(args, 'apg_warmup_epochs', 0)))
         self.apg_sparse_coef = max(0.0, float(getattr(args, 'apg_sparse_coef', 1.0)))
@@ -1279,6 +1280,7 @@ class PET(nn.Module):
         cls_losses = []
         point_losses = []
         bg_losses = []
+        bg_offset_losses = []
         contrastive_losses = []
         consistency_losses = []
         for batch_idx, target in enumerate(targets):
@@ -1307,6 +1309,15 @@ class PET(nn.Module):
                     bg_idx = bg_candidates[order]
                     bg_target = torch.zeros(bg_idx.shape[0], dtype=torch.long, device=device)
                     bg_losses.append(self.point_classification_loss(logits[batch_idx, bg_idx], bg_target))
+                    if self.apg_bg_offset_coef > 0:
+                        zero_offsets = pred_points.new_zeros(output['pred_offsets'][batch_idx, bg_idx].shape)
+                        bg_offset_losses.append(
+                            F.smooth_l1_loss(
+                                output['pred_offsets'][batch_idx, bg_idx],
+                                zero_offsets,
+                                reduction='none',
+                            ).sum(dim=-1).mean()
+                        )
 
             gt_for_queries = gt_points[torch.cdist(query_abs[nearest], gt_points, p=2).argmin(dim=1)]
             gt_norm = gt_for_queries.clone()
@@ -1351,6 +1362,8 @@ class PET(nn.Module):
         loss = positive_scale * (loss_cls + self.apg_point_coef * loss_point)
         if bg_losses:
             loss = loss + self.apg_bg_coef * torch.stack(bg_losses).mean()
+        if bg_offset_losses:
+            loss = loss + self.apg_bg_coef * self.apg_bg_offset_coef * torch.stack(bg_offset_losses).mean()
         if contrastive_losses:
             loss = loss + positive_scale * self.apg_contrastive_coef * torch.stack(contrastive_losses).mean()
         if consistency_losses:

@@ -67,6 +67,7 @@ KEY_ARGS = (
     'apg_bg_coef',
     'apg_bg_k',
     'apg_bg_min_dist',
+    'apg_bg_offset_coef',
     'apg_start_epoch',
     'apg_warmup_epochs',
     'apg_end_epoch',
