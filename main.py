@@ -694,6 +694,7 @@ MODEL_RECIPES = {
 EXPERIMENTAL_MODEL_RECIPES = {
     # These paths are kept for audit/reproduction only. Session runs showed
     # catastrophic over/under-counting before they could improve on APG+LC.
+    'vgg_apglc_cbme_late_countreg',
     'vgg_apglc_foreground',
     'vgg_apglc_drf_late_countreg',
     'vgg_apglc_balanced_late_countreg',
