@@ -452,7 +452,17 @@ def main() -> int:
                                                 )
                                                 records.append(record)
                                                 if record.get("ok"):
-                                                    print(f"  mae={record['eval_mae']:.4f} mse={record['eval_mse']:.4f}")
+                                                    pred_cnt = record.get("pred_cnt")
+                                                    gt_cnt = record.get("gt_cnt")
+                                                    if pred_cnt is not None and gt_cnt is not None:
+                                                        print(
+                                                            f"  mae={record['eval_mae']:.4f} "
+                                                            f"mse={record['eval_mse']:.4f} "
+                                                            f"pred={float(pred_cnt):.4f} "
+                                                            f"gt={float(gt_cnt):.4f}"
+                                                        )
+                                                    else:
+                                                        print(f"  mae={record['eval_mae']:.4f} mse={record['eval_mse']:.4f}")
                                                 else:
                                                     print(f"  failed; see {record['log_file']}")
                                                 write_outputs(records, output_dir)

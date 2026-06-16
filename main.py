@@ -66,10 +66,7 @@ MODEL_RECIPES = {
         'timm_adapter': 'lite_fpn',
         'pet_loss_variant': 'paper',
         'split_loss_variant': 'paper',
-        # Successful APG+LC logs had APG scaled at roughly 0.02
-        # (e.g. loss_apg_sp 0.027 vs unscaled 1.36). Full-strength APG
-        # starts scratch training near loss=3 and repeatedly over-counts.
-        'apg_loss_coef': 0.02,
+        'apg_loss_coef': 1.0,
         'apg_start_epoch': 0,
         'apg_warmup_epochs': 0,
         'apg_sparse_coef': 1.0,
@@ -110,9 +107,7 @@ MODEL_RECIPES = {
         'timm_adapter': 'lite_fpn',
         'pet_loss_variant': 'paper',
         'split_loss_variant': 'paper',
-        # Keep the same APG scale as the stable APG+LC run, then introduce
-        # count regularization after PET's original step-drop point.
-        'apg_loss_coef': 0.02,
+        'apg_loss_coef': 1.0,
         'apg_start_epoch': 0,
         'apg_warmup_epochs': 0,
         'apg_sparse_coef': 1.0,
@@ -1455,18 +1450,6 @@ def sanitize_unstable_training_args(args):
             'Leaving BatchNorm in train mode can destroy PET score calibration in a few epochs.'
         )
         args.freeze_bn = True
-
-    apg_coef_for_warning = float(getattr(args, 'apg_loss_coef', 0.0))
-    if (
-        fresh_train
-        and apg_coef_for_warning > 0.1
-        and int(getattr(args, 'apg_warmup_epochs', 0)) <= 0
-    ):
-        print(
-            'WARNING: fresh PET training with --apg_loss_coef > 0.1 and no APG warmup '
-            'starts in the high-loss regime that produced SHA over-count drift in this repo. '
-            'The known stable APG+LC run used an effective APG weight around 0.02.'
-        )
 
     fresh_timm_train = fresh_train and is_timm_backbone(getattr(args, 'backbone', ''))
     if fresh_timm_train:
