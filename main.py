@@ -192,6 +192,60 @@ MODEL_RECIPES = {
         'bad_count_start_epoch': 100,
         'bad_count_direction': 'all',
     },
+    # PET-specific novelty: Cross-Branch Mutual Exclusion (CBME).
+    #
+    # The repeated scratch failures show duplicate sparse+dense confidence as
+    # APG ramps. CBME penalizes overlapping sparse/dense person probabilities
+    # after projecting sparse scores to the dense grid. It does not impose a
+    # global count target and does not replace threshold inference; it only says
+    # that one image location should not be counted confidently by both PET
+    # branches.
+    'vgg_apglc_cbme_late_countreg': {
+        'backbone': 'vgg16_bn',
+        'timm_adapter': 'lite_fpn',
+        'pet_loss_variant': 'paper',
+        'split_loss_variant': 'paper',
+        'apg_loss_coef': 1.0,
+        'apg_start_epoch': 0,
+        'apg_warmup_epochs': 100,
+        'apg_sparse_coef': 1.0,
+        'apg_dense_coef': 1.0,
+        'apg_dense_start_epoch': 0,
+        'apg_dense_warmup_epochs': 100,
+        'apg_pos_k': 1,
+        'apg_point_coef': 5.0,
+        'apg_bg_coef': 0.0,
+        'apg_count_calibration': 'none',
+        'count_loss_coef': 0.0,
+        'branch_exclusion_loss_coef': 0.05,
+        'branch_exclusion_start_epoch': 0,
+        'branch_exclusion_end_epoch': -1,
+        'count_head_loss_coef': 0.10,
+        'count_head_loss_type': 'log_l1',
+        'count_head_start_epoch': 700,
+        'count_head_end_epoch': -1,
+        'count_head_warmup_epochs': 200,
+        'count_head_feature_grad_scale': 0.05,
+        'count_head_feature_grad_start_epoch': 700,
+        'count_head_feature_grad_warmup_epochs': 200,
+        'allow_count_head_fresh_train': True,
+        'density_map_loss_coef': 0.0,
+        'routed_apg_loss_coef': 0.0,
+        'foreground_loss_coef': 0.0,
+        'eval_foreground_gate': 'none',
+        'eval_count_mode': 'threshold',
+        'eval_score_calibration': 'none',
+        'eval_dense_start_epoch': 0,
+        'eval_dense_residual_mode': 'none',
+        'eval_nms_radius': 0.0,
+        'eval_branch_gate': 'none',
+        'eval_soft_split_gate': 'none',
+        'score_threshold': 0.5,
+        'split_threshold': 0.5,
+        'split_threshold_quantile': 0.5,
+        'bad_count_start_epoch': 100,
+        'bad_count_direction': 'all',
+    },
     # Scratch version of the 50 -> 48 path with the missing half of APGCC
     # restored. APGCC uses both auxiliary positives and negatives; positive-only
     # APG repeatedly produced early SHA score explosions in this repo. This
@@ -646,6 +700,7 @@ EXPERIMENTAL_MODEL_RECIPES = {
     'vgg_apglc_budget_late_countreg',
     'vgg_apglc_count_feedback_late_countreg',
     'vgg_apglc_lowloss_count_feedback',
+    'vgg_apglc_warmapg_late_countreg',
     'vgg_apglc_countcal',
     'vgg_routed_apglc_countcal',
 }
