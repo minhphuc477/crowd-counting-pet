@@ -66,7 +66,10 @@ MODEL_RECIPES = {
         'timm_adapter': 'lite_fpn',
         'pet_loss_variant': 'paper',
         'split_loss_variant': 'paper',
-        'apg_loss_coef': 1.0,
+        # Successful APG+LC logs had APG scaled at roughly 0.02
+        # (e.g. loss_apg_sp 0.027 vs unscaled 1.36). Full-strength APG
+        # starts scratch training near loss=3 and repeatedly over-counts.
+        'apg_loss_coef': 0.02,
         'apg_start_epoch': 0,
         'apg_warmup_epochs': 0,
         'apg_sparse_coef': 1.0,
@@ -107,7 +110,9 @@ MODEL_RECIPES = {
         'timm_adapter': 'lite_fpn',
         'pet_loss_variant': 'paper',
         'split_loss_variant': 'paper',
-        'apg_loss_coef': 1.0,
+        # Keep the same APG scale as the stable APG+LC run, then introduce
+        # count regularization after PET's original step-drop point.
+        'apg_loss_coef': 0.02,
         'apg_start_epoch': 0,
         'apg_warmup_epochs': 0,
         'apg_sparse_coef': 1.0,
@@ -1451,6 +1456,18 @@ def sanitize_unstable_training_args(args):
         )
         args.freeze_bn = True
 
+    apg_coef_for_warning = float(getattr(args, 'apg_loss_coef', 0.0))
+    if (
+        fresh_train
+        and apg_coef_for_warning > 0.1
+        and int(getattr(args, 'apg_warmup_epochs', 0)) <= 0
+    ):
+        print(
+            'WARNING: fresh PET training with --apg_loss_coef > 0.1 and no APG warmup '
+            'starts in the high-loss regime that produced SHA over-count drift in this repo. '
+            'The known stable APG+LC run used an effective APG weight around 0.02.'
+        )
+
     fresh_timm_train = fresh_train and is_timm_backbone(getattr(args, 'backbone', ''))
     if fresh_timm_train:
         class_prior_prob = float(getattr(args, 'class_prior_prob', -1.0))
@@ -1650,6 +1667,8 @@ def merge_checkpoint_args(args, checkpoint):
             'bayesian_loss_gate', 'bayesian_start_epoch', 'bayesian_end_epoch',
             'apg_loss_coef', 'apg_pos_k', 'apg_point_coef',
             'apg_bg_coef', 'apg_bg_k', 'apg_bg_min_dist', 'apg_bg_offset_coef',
+            'apg_local_neg_coef', 'apg_local_neg_k', 'apg_local_neg_min_dist',
+            'apg_local_neg_max_dist', 'apg_local_neg_offset_coef',
             'apg_start_epoch', 'apg_warmup_epochs',
             'apg_sparse_coef', 'apg_dense_coef',
             'apg_dense_start_epoch', 'apg_dense_warmup_epochs',
