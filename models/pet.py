@@ -617,11 +617,12 @@ class PET(nn.Module):
             raise ValueError('split_loss_variant must be one of "auto", "paper", "gt", or "paper_gt"')
         self.count_loss_coef = float(getattr(args, 'count_loss_coef', 0.0))
         self.count_loss_gate = getattr(args, 'count_loss_gate', 'detach')
-        if self.count_loss_gate not in ('detach', 'soft', 'hard'):
-            raise ValueError('count_loss_gate must be one of "detach", "soft", or "hard"')
+        if self.count_loss_gate not in ('none', 'detach', 'soft', 'hard'):
+            raise ValueError('count_loss_gate must be one of "none", "detach", "soft", or "hard"')
         self.count_loss_type = getattr(args, 'count_loss_type', 'log_l1')
-        if self.count_loss_type not in ('log_l1', 'l1', 'smooth_l1'):
-            raise ValueError('count_loss_type must be one of "log_l1", "l1", or "smooth_l1"')
+        if self.count_loss_type not in ('log_l1', 'l1', 'smooth_l1', 'over_log_l1'):
+            raise ValueError('count_loss_type must be one of "log_l1", "l1", "smooth_l1", or "over_log_l1"')
+        self.count_loss_budget_margin = max(1.0, float(getattr(args, 'count_loss_budget_margin', 1.0)))
         self.count_loss_start_epoch = int(getattr(args, 'count_loss_start_epoch', -1))
         self.count_head_loss_coef = float(getattr(args, 'count_head_loss_coef', 0.0))
         self.count_head_loss_type = getattr(args, 'count_head_loss_type', 'log_l1')
@@ -1833,7 +1834,10 @@ class PET(nn.Module):
         sparse_scores = F.softmax(output_sparse['pred_logits'], -1)[..., 1]
         dense_scores = F.softmax(output_dense['pred_logits'], -1)[..., 1]
 
-        if self.count_loss_gate == 'hard':
+        if self.count_loss_gate == 'none':
+            sparse_gate = torch.ones_like(sparse_scores)
+            dense_gate = torch.ones_like(dense_scores)
+        elif self.count_loss_gate == 'hard':
             threshold = outputs['split_threshold'].to(device=device, dtype=dtype)
             sparse_gate = ((1.0 - outputs['split_map_sparse'].to(device=device, dtype=dtype)) <= threshold).to(dtype)
             dense_gate = (outputs['split_map_dense'].to(device=device, dtype=dtype) > threshold).to(dtype)
@@ -1846,6 +1850,10 @@ class PET(nn.Module):
 
         pred_counts = (sparse_scores * sparse_gate.reshape_as(sparse_scores)).sum(dim=1)
         pred_counts = pred_counts + (dense_scores * dense_gate.reshape_as(dense_scores)).sum(dim=1)
+        if self.count_loss_type == 'over_log_l1':
+            budget = target_counts * self.count_loss_budget_margin
+            over = torch.relu(torch.log1p(pred_counts) - torch.log1p(budget))
+            return over.mean()
         if self.count_loss_type == 'l1':
             return F.l1_loss(pred_counts, target_counts)
         if self.count_loss_type == 'smooth_l1':

@@ -195,6 +195,61 @@ MODEL_RECIPES = {
         'bad_count_start_epoch': 100,
         'bad_count_direction': 'all',
     },
+    # PET-specific scratch novelty: query-budget APG+LC.
+    #
+    # This is not APGCC reuse. It keeps PET threshold inference and APG+LC, but
+    # adds an overcount-only soft budget on the actual sparse+dense PET person
+    # probabilities. The loss does nothing when PET is under-counting and only
+    # suppresses query-score explosions, which is the failure shown by the
+    # epoch-5/10 logs. The scalar count head is still delayed until after the
+    # original step-drop point.
+    'vgg_apglc_budget_late_countreg': {
+        'backbone': 'vgg16_bn',
+        'timm_adapter': 'lite_fpn',
+        'pet_loss_variant': 'paper',
+        'split_loss_variant': 'paper',
+        'apg_loss_coef': 1.0,
+        'apg_start_epoch': 0,
+        'apg_warmup_epochs': 0,
+        'apg_sparse_coef': 1.0,
+        'apg_dense_coef': 1.0,
+        'apg_dense_start_epoch': 0,
+        'apg_dense_warmup_epochs': 0,
+        'apg_pos_k': 1,
+        'apg_point_coef': 5.0,
+        'apg_bg_coef': 0.0,
+        'apg_count_calibration': 'none',
+        'count_loss_coef': 0.10,
+        'count_loss_gate': 'none',
+        'count_loss_type': 'over_log_l1',
+        'count_loss_budget_margin': 1.10,
+        'count_loss_start_epoch': 0,
+        'count_head_loss_coef': 0.10,
+        'count_head_loss_type': 'log_l1',
+        'count_head_start_epoch': 700,
+        'count_head_end_epoch': -1,
+        'count_head_warmup_epochs': 200,
+        'count_head_feature_grad_scale': 0.05,
+        'count_head_feature_grad_start_epoch': 700,
+        'count_head_feature_grad_warmup_epochs': 200,
+        'allow_count_head_fresh_train': True,
+        'density_map_loss_coef': 0.0,
+        'routed_apg_loss_coef': 0.0,
+        'foreground_loss_coef': 0.0,
+        'eval_foreground_gate': 'none',
+        'eval_count_mode': 'threshold',
+        'eval_score_calibration': 'none',
+        'eval_dense_start_epoch': 0,
+        'eval_dense_residual_mode': 'none',
+        'eval_nms_radius': 0.0,
+        'eval_branch_gate': 'none',
+        'eval_soft_split_gate': 'none',
+        'score_threshold': 0.59,
+        'split_threshold': 0.45,
+        'split_threshold_quantile': 0.5,
+        'bad_count_start_epoch': 100,
+        'bad_count_direction': 'all',
+    },
     # Publication-inspired scratch path:
     # stable APG+LC + PANet-style dynamic receptive fields + late scalar count
     # regularization. The DRF residual starts as identity, so early training
@@ -425,6 +480,7 @@ EXPERIMENTAL_MODEL_RECIPES = {
     # catastrophic over/under-counting before they could improve on APG+LC.
     'vgg_apglc_foreground',
     'vgg_apglc_drf_late_countreg',
+    'vgg_apglc_balanced_late_countreg',
     'vgg_apglc_countcal',
     'vgg_routed_apglc_countcal',
 }
@@ -714,10 +770,12 @@ def get_args_parser():
                         help='run extra PET tensor finiteness checks during model forward')
     parser.add_argument('--count_loss_coef', default=0.0, type=float,
                         help='optional L1 loss on soft predicted count; 0 disables it')
-    parser.add_argument('--count_loss_gate', default='detach', choices=('detach', 'soft', 'hard'),
+    parser.add_argument('--count_loss_gate', default='detach', choices=('none', 'detach', 'soft', 'hard'),
                         help='routing gates used by count loss; detach calibrates scores without splitter gradients')
-    parser.add_argument('--count_loss_type', default='log_l1', choices=('log_l1', 'l1', 'smooth_l1'),
+    parser.add_argument('--count_loss_type', default='log_l1', choices=('log_l1', 'l1', 'smooth_l1', 'over_log_l1'),
                         help='count-loss scale; log_l1 is safer early in training')
+    parser.add_argument('--count_loss_budget_margin', default=1.0, type=float,
+                        help='target-count multiplier for over_log_l1 count loss')
     parser.add_argument('--count_loss_start_epoch', default=-1, type=int,
                         help='epoch to enable count loss; negative uses warmup_epochs')
     parser.add_argument('--count_head_loss_coef', default=0.0, type=float,
@@ -1328,6 +1386,8 @@ def merge_checkpoint_args(args, checkpoint):
                 runtime_keys.add(key)
         aux_resume_keys = {
             'class_loss_type', 'focal_alpha', 'focal_gamma',
+            'count_loss_coef', 'count_loss_gate', 'count_loss_type',
+            'count_loss_budget_margin', 'count_loss_start_epoch',
             'pq_sparse_coef', 'pq_dense_coef',
             'pq_dense_start_epoch', 'pq_dense_warmup_epochs',
             'branch_target_routing',
