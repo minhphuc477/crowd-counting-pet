@@ -1062,6 +1062,12 @@ def get_args_parser():
                         help='epoch to enable local region count; negative uses warmup_epochs')
     parser.add_argument('--region_count_end_epoch', default=-1, type=int,
                         help='epoch after which local region count turns off; negative keeps it on')
+    parser.add_argument('--branch_exclusion_loss_coef', default=0.0, type=float,
+                        help='cross-branch sparse/dense mutual-exclusion loss weight; 0 disables it')
+    parser.add_argument('--branch_exclusion_start_epoch', default=0, type=int,
+                        help='epoch to enable cross-branch mutual exclusion')
+    parser.add_argument('--branch_exclusion_end_epoch', default=-1, type=int,
+                        help='epoch after which cross-branch mutual exclusion turns off; negative keeps it on')
     parser.add_argument('--bayesian_loss_coef', default=0.0, type=float,
                         help='optional point-level Bayesian expected-count loss weight; 0 disables it')
     parser.add_argument('--bayesian_sigma', default=8.0, type=float,
@@ -1628,6 +1634,7 @@ def merge_checkpoint_args(args, checkpoint):
             'eval_foreground_gate', 'eval_foreground_gate_mode', 'eval_foreground_gate_strength',
             'region_count_loss_coef', 'region_count_grid', 'region_count_gate',
             'region_count_type', 'region_count_start_epoch', 'region_count_end_epoch',
+            'branch_exclusion_loss_coef', 'branch_exclusion_start_epoch', 'branch_exclusion_end_epoch',
             'bayesian_loss_coef', 'bayesian_sigma', 'bayesian_bg_coef',
             'bayesian_loss_gate', 'bayesian_start_epoch', 'bayesian_end_epoch',
             'apg_loss_coef', 'apg_pos_k', 'apg_point_coef',

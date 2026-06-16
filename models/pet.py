@@ -695,6 +695,9 @@ class PET(nn.Module):
             raise ValueError('region_count_type must be one of "log_l1", "l1", or "smooth_l1"')
         self.region_count_start_epoch = int(getattr(args, 'region_count_start_epoch', -1))
         self.region_count_end_epoch = int(getattr(args, 'region_count_end_epoch', -1))
+        self.branch_exclusion_loss_coef = float(getattr(args, 'branch_exclusion_loss_coef', 0.0))
+        self.branch_exclusion_start_epoch = int(getattr(args, 'branch_exclusion_start_epoch', 0))
+        self.branch_exclusion_end_epoch = int(getattr(args, 'branch_exclusion_end_epoch', -1))
         self.bayesian_loss_coef = float(getattr(args, 'bayesian_loss_coef', 0.0))
         self.bayesian_sigma = float(getattr(args, 'bayesian_sigma', 8.0))
         self.bayesian_bg_coef = float(getattr(args, 'bayesian_bg_coef', 0.05))
@@ -1053,6 +1056,17 @@ class PET(nn.Module):
             loss_dict['loss_region_count'] = loss_region_count
             weight_dict['loss_region_count'] = self.region_count_loss_coef
             losses += loss_region_count * self.region_count_loss_coef
+        if self.branch_exclusion_loss_coef > 0:
+            branch_exclusion_active = epoch >= self.branch_exclusion_start_epoch and (
+                self.branch_exclusion_end_epoch < 0 or epoch <= self.branch_exclusion_end_epoch
+            )
+            if branch_exclusion_active:
+                loss_branch_exclusion = self.compute_branch_exclusion_loss(outputs, targets)
+            else:
+                loss_branch_exclusion = outputs['split_map_raw'].sum() * 0.0
+            loss_dict['loss_branch_exclusion'] = loss_branch_exclusion
+            weight_dict['loss_branch_exclusion'] = self.branch_exclusion_loss_coef if branch_exclusion_active else 0.0
+            losses += loss_branch_exclusion * weight_dict['loss_branch_exclusion']
         if self.count_head_loss_coef > 0:
             count_head_active = epoch >= self.count_head_start_epoch and (
                 self.count_head_end_epoch < 0 or epoch <= self.count_head_end_epoch
@@ -1963,6 +1977,38 @@ class PET(nn.Module):
         if self.region_count_type == 'smooth_l1':
             return F.smooth_l1_loss(pred_counts, target_counts)
         return F.l1_loss(torch.log1p(pred_counts), torch.log1p(target_counts))
+
+    def compute_branch_exclusion_loss(self, outputs, targets):
+        """Penalize duplicate sparse+dense confidence on the same dense-grid cells.
+
+        PET's branches should cover different quadtree regions, but threshold
+        inference concatenates both outputs. This loss leaves a single confident
+        branch untouched and penalizes only cross-branch overlap after projecting
+        sparse scores to the dense query grid.
+        """
+        output_sparse, output_dense = outputs['sparse'], outputs['dense']
+        sparse_logits = output_sparse['pred_logits']
+        dense_logits = output_dense['pred_logits']
+        if sparse_logits.ndim != 3 or dense_logits.ndim != 3:
+            return outputs['split_map_raw'].sum() * 0.0
+
+        batch_size, sparse_q, _ = sparse_logits.shape
+        _, dense_q, _ = dense_logits.shape
+        sparse_h = int(round(math.sqrt(float(sparse_q))))
+        dense_h = int(round(math.sqrt(float(dense_q))))
+        if sparse_h * sparse_h != sparse_q or dense_h * dense_h != dense_q:
+            return outputs['split_map_raw'].sum() * 0.0
+
+        sparse_scores = F.softmax(sparse_logits, -1)[..., 1].reshape(batch_size, 1, sparse_h, sparse_h)
+        dense_scores = F.softmax(dense_logits, -1)[..., 1].reshape(batch_size, 1, dense_h, dense_h)
+        sparse_up = F.interpolate(sparse_scores, size=(dense_h, dense_h), mode='bilinear', align_corners=False)
+        overlap = (sparse_up * dense_scores).flatten(1).sum(dim=1)
+        target_counts = torch.as_tensor(
+            [target['points'].shape[0] for target in targets],
+            dtype=overlap.dtype,
+            device=overlap.device,
+        ).clamp(min=1.0)
+        return torch.log1p(overlap / target_counts).mean()
 
     def compute_count_head_loss(self, outputs, targets):
         if self.count_head is None or 'count_pred' not in outputs:
