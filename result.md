@@ -14,8 +14,8 @@ epoch: 885 mae: 64.08241758241758 mse: 95.60969765517662 pred_cnt: 392.412087912
 best mae: 59.895604395604394 best epoch: 755
 ============================================
 
-**de4a09d60208f01a4aa85f51b58a5e1f61c6fc46 commit result:**
+**85e55c9c3167c8feba68a4b64eb9354caff89c5a commit result:**
 
 ```
-vgg16_bn_apglc_drf_late_countreg_seed42 
+vgg16_bn_apglc_budget_late_countreg_seed42 
 ```
