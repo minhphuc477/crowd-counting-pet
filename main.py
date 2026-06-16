@@ -58,15 +58,17 @@ BACKBONE_RECIPES = {
 
 MODEL_RECIPES = {
     # Known stable scratch path from this repo/session:
-    # PET + lite FPN + APG, with the same full sparse+dense APG path used by
-    # the successful APG/LC runs. No scalar count head, no density map, no
-    # routed targets, and no foreground gate.
+    # PET + lite FPN + low-weight APG. The saved best checkpoint
+    # vgg16_bn_drop700_apg_lc_seed42 records apg_loss_coef=0.02; full-strength
+    # APG (1.0) repeatedly started in the high-loss over-count regime.
+    # No scalar count head, no density map, no routed targets, and no
+    # foreground gate.
     'vgg_apglc': {
         'backbone': 'vgg16_bn',
         'timm_adapter': 'lite_fpn',
         'pet_loss_variant': 'paper',
         'split_loss_variant': 'paper',
-        'apg_loss_coef': 1.0,
+        'apg_loss_coef': 0.02,
         'apg_start_epoch': 0,
         'apg_warmup_epochs': 0,
         'apg_sparse_coef': 1.0,
@@ -107,7 +109,7 @@ MODEL_RECIPES = {
         'timm_adapter': 'lite_fpn',
         'pet_loss_variant': 'paper',
         'split_loss_variant': 'paper',
-        'apg_loss_coef': 1.0,
+        'apg_loss_coef': 0.02,
         'apg_start_epoch': 0,
         'apg_warmup_epochs': 0,
         'apg_sparse_coef': 1.0,
@@ -1450,6 +1452,22 @@ def sanitize_unstable_training_args(args):
             'Leaving BatchNorm in train mode can destroy PET score calibration in a few epochs.'
         )
         args.freeze_bn = True
+
+    apg_coef_for_guard = float(getattr(args, 'apg_loss_coef', 0.0))
+    if fresh_train and apg_coef_for_guard > 0.1 and int(getattr(args, 'apg_warmup_epochs', 0)) <= 0:
+        if 'apg_loss_coef' in explicit_args:
+            print(
+                'WARNING: explicit --apg_loss_coef > 0.1 with no APG warmup does not match the '
+                'verified vgg16_bn_drop700_apg_lc_seed42 checkpoint, which used apg_loss_coef=0.02. '
+                'Proceeding because you passed it explicitly.'
+            )
+        else:
+            print(
+                'WARNING: fresh APG+LC recipe requested apg_loss_coef > 0.1 with no warmup. '
+                'The verified vgg16_bn_drop700_apg_lc_seed42 checkpoint used apg_loss_coef=0.02; '
+                'setting apg_loss_coef=0.02. Pass --apg_loss_coef explicitly to override.'
+            )
+            args.apg_loss_coef = 0.02
 
     fresh_timm_train = fresh_train and is_timm_backbone(getattr(args, 'backbone', ''))
     if fresh_timm_train:
