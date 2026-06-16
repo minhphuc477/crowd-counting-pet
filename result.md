@@ -23,5 +23,3 @@ Best: mae=68.0879 mse=104.8842 score_threshold=0.52 split_threshold=0.47 eval_nm
 Results saved to: eval_results/SHA/vgg16_bn_apglc_lowloss_count_feedback_seed42_sweep
 
 **85ecae0c24ee9d07040605b450e707f70b60f399 commit result**
-
-  --output_dir outputs/SHA/vgg16_bn_apglc_cbme015_late_countreg_seed42

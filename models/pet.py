@@ -713,6 +713,11 @@ class PET(nn.Module):
         self.apg_bg_k = max(0, int(getattr(args, 'apg_bg_k', 0)))
         self.apg_bg_min_dist = max(0.0, float(getattr(args, 'apg_bg_min_dist', 12.0)))
         self.apg_bg_offset_coef = max(0.0, float(getattr(args, 'apg_bg_offset_coef', 0.0)))
+        self.apg_local_neg_coef = max(0.0, float(getattr(args, 'apg_local_neg_coef', 0.0)))
+        self.apg_local_neg_k = max(0, int(getattr(args, 'apg_local_neg_k', 0)))
+        self.apg_local_neg_min_dist = max(0.0, float(getattr(args, 'apg_local_neg_min_dist', 2.0)))
+        self.apg_local_neg_max_dist = float(getattr(args, 'apg_local_neg_max_dist', 8.0))
+        self.apg_local_neg_offset_coef = max(0.0, float(getattr(args, 'apg_local_neg_offset_coef', 1.0)))
         self.apg_start_epoch = int(getattr(args, 'apg_start_epoch', 0))
         self.apg_warmup_epochs = max(0, int(getattr(args, 'apg_warmup_epochs', 0)))
         self.apg_sparse_coef = max(0.0, float(getattr(args, 'apg_sparse_coef', 1.0)))
@@ -1296,6 +1301,8 @@ class PET(nn.Module):
         point_losses = []
         bg_losses = []
         bg_offset_losses = []
+        local_neg_losses = []
+        local_neg_offset_losses = []
         contrastive_losses = []
         consistency_losses = []
         for batch_idx, target in enumerate(targets):
@@ -1310,10 +1317,11 @@ class PET(nn.Module):
             cls_target = torch.ones(nearest.shape[0], dtype=torch.long, device=device)
             cls_losses.append(self.point_classification_loss(logits[batch_idx, nearest], cls_target))
 
+            positive_mask = torch.zeros(query_abs.shape[0], dtype=torch.bool, device=device)
+            positive_mask[nearest] = True
+
             if self.apg_bg_coef > 0 and self.apg_bg_k > 0:
                 min_query_dist = query_dist.min(dim=0).values
-                positive_mask = torch.zeros(query_abs.shape[0], dtype=torch.bool, device=device)
-                positive_mask[nearest] = True
                 bg_mask = (~positive_mask) & (min_query_dist >= self.apg_bg_min_dist)
                 bg_candidates = torch.nonzero(bg_mask, as_tuple=False).flatten()
                 if bg_candidates.numel() > 0:
@@ -1334,6 +1342,41 @@ class PET(nn.Module):
                             ).sum(dim=-1).mean()
                         )
 
+            if self.apg_local_neg_coef > 0 and self.apg_local_neg_k > 0:
+                local_neg_idx = []
+                max_dist = self.apg_local_neg_max_dist
+                for gt_idx in range(gt_points.shape[0]):
+                    dist = query_dist[gt_idx]
+                    ring_mask = (~positive_mask) & (dist >= self.apg_local_neg_min_dist)
+                    if max_dist > 0:
+                        ring_mask = ring_mask & (dist <= max_dist)
+                    candidates = torch.nonzero(ring_mask, as_tuple=False).flatten()
+                    if candidates.numel() == 0 and max_dist > 0:
+                        # Sparse grids can have no candidate inside a small
+                        # ring. Fall back to the nearest non-positive query
+                        # outside the exclusion radius instead of silently
+                        # dropping the APGCC negative for that GT point.
+                        fallback_mask = (~positive_mask) & (dist >= self.apg_local_neg_min_dist)
+                        candidates = torch.nonzero(fallback_mask, as_tuple=False).flatten()
+                    if candidates.numel() == 0:
+                        continue
+                    neg_count = min(candidates.numel(), self.apg_local_neg_k)
+                    _, order = torch.topk(dist[candidates], k=neg_count, largest=False)
+                    local_neg_idx.append(candidates[order])
+                if local_neg_idx:
+                    neg_idx = torch.unique(torch.cat(local_neg_idx))
+                    neg_target = torch.zeros(neg_idx.shape[0], dtype=torch.long, device=device)
+                    local_neg_losses.append(self.point_classification_loss(logits[batch_idx, neg_idx], neg_target))
+                    if self.apg_local_neg_offset_coef > 0:
+                        zero_offsets = pred_points.new_zeros(output['pred_offsets'][batch_idx, neg_idx].shape)
+                        local_neg_offset_losses.append(
+                            F.smooth_l1_loss(
+                                output['pred_offsets'][batch_idx, neg_idx],
+                                zero_offsets,
+                                reduction='none',
+                            ).sum(dim=-1).mean()
+                        )
+
             gt_for_queries = gt_points[torch.cdist(query_abs[nearest], gt_points, p=2).argmin(dim=1)]
             gt_norm = gt_for_queries.clone()
             gt_norm[:, 0] /= img_h
@@ -1344,8 +1387,6 @@ class PET(nn.Module):
             if self.apg_contrastive_coef > 0 and self.apg_neg_k > 0:
                 candidate_k = min(k + self.apg_neg_k, query_abs.shape[0])
                 candidates = torch.unique(query_dist.topk(candidate_k, largest=False).indices.reshape(-1))
-                positive_mask = torch.zeros(query_abs.shape[0], dtype=torch.bool, device=device)
-                positive_mask[nearest] = True
                 negatives = candidates[~positive_mask[candidates]]
                 if negatives.numel() > 0:
                     person_margin_logits = logits[batch_idx, :, 1] - logits[batch_idx, :, 0]
@@ -1379,6 +1420,10 @@ class PET(nn.Module):
             loss = loss + self.apg_bg_coef * torch.stack(bg_losses).mean()
         if bg_offset_losses:
             loss = loss + self.apg_bg_coef * self.apg_bg_offset_coef * torch.stack(bg_offset_losses).mean()
+        if local_neg_losses:
+            loss = loss + self.apg_local_neg_coef * torch.stack(local_neg_losses).mean()
+        if local_neg_offset_losses:
+            loss = loss + self.apg_local_neg_coef * self.apg_local_neg_offset_coef * torch.stack(local_neg_offset_losses).mean()
         if contrastive_losses:
             loss = loss + positive_scale * self.apg_contrastive_coef * torch.stack(contrastive_losses).mean()
         if consistency_losses:

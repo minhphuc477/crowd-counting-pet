@@ -1095,6 +1095,16 @@ def get_args_parser():
                         help='minimum pixel distance from every GT for APG background samples')
     parser.add_argument('--apg_bg_offset_coef', default=0.0, type=float,
                         help='offset-to-zero coefficient for APG auxiliary negative points')
+    parser.add_argument('--apg_local_neg_coef', default=0.0, type=float,
+                        help='relative APGCC-style local negative CE weight inside APG; 0 disables it')
+    parser.add_argument('--apg_local_neg_k', default=0, type=int,
+                        help='local negative point queries per GT used by APGCC-style suppression')
+    parser.add_argument('--apg_local_neg_min_dist', default=2.0, type=float,
+                        help='minimum pixel distance from a GT for APGCC-style local negatives')
+    parser.add_argument('--apg_local_neg_max_dist', default=8.0, type=float,
+                        help='maximum pixel distance from a GT for APGCC-style local negatives; <=0 disables the upper bound')
+    parser.add_argument('--apg_local_neg_offset_coef', default=1.0, type=float,
+                        help='offset-to-zero coefficient for APGCC-style local negative points')
     parser.add_argument('--apg_start_epoch', default=0, type=int,
                         help='epoch when APG auxiliary supervision starts')
     parser.add_argument('--apg_warmup_epochs', default=0, type=int,
