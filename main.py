@@ -1753,6 +1753,13 @@ def should_skip_pretrained_backbone(args, checkpoint):
     if checkpoint is None:
         return bool(getattr(args, 'no_pretrained_backbone', False))
     explicit_args = set(getattr(args, '_explicit_args', set()))
+    if 'no_pretrained_backbone' in explicit_args and bool(getattr(args, 'no_pretrained_backbone', False)):
+        return True
+    if getattr(args, 'resume_model_only', False):
+        # Model-only fine-tuning can intentionally add or change heads/adapters.
+        # Keep ImageNet/pretrained initialization for any missing compatible
+        # modules, then let the checkpoint overwrite all matching weights.
+        return False
     requested_backbone = getattr(args, 'backbone', None)
     checkpoint_backbone = checkpoint_arg(checkpoint, 'backbone', requested_backbone)
     changed_backbone = (
