@@ -4,6 +4,7 @@ import datetime
 import json
 import math
 import random
+import shutil
 import sys
 import time
 from pathlib import Path
@@ -1111,6 +1112,8 @@ def get_args_parser():
                         help='epoch when APG auxiliary supervision starts')
     parser.add_argument('--apg_warmup_epochs', default=0, type=int,
                         help='linearly ramp APG loss weight for this many epochs after --apg_start_epoch')
+    parser.add_argument('--force_unsafe_apg_from_start', action='store_true',
+                        help='dangerous ablation only: allow APG weight >0.1 from epoch 0 without warmup')
     parser.add_argument('--apg_sparse_coef', default=1.0, type=float,
                         help='branch multiplier for sparse APG inside --apg_loss_coef')
     parser.add_argument('--apg_dense_coef', default=1.0, type=float,
@@ -1461,11 +1464,18 @@ def sanitize_unstable_training_args(args):
 
     apg_coef_for_guard = float(getattr(args, 'apg_loss_coef', 0.0))
     if fresh_train and apg_coef_for_guard > 0.1 and int(getattr(args, 'apg_warmup_epochs', 0)) <= 0:
-        if 'apg_loss_coef' in explicit_args:
+        if 'apg_loss_coef' in explicit_args and not bool(getattr(args, 'force_unsafe_apg_from_start', False)):
+            raise ValueError(
+                'Refusing fresh training with explicit --apg_loss_coef > 0.1 and no APG warmup. '
+                'This repo repeatedly produced severe SHA over-counting in that regime; the '
+                'verified vgg16_bn_drop700_apg_lc_seed42 checkpoint used apg_loss_coef=0.02. '
+                'Use --apg_loss_coef 0.02, add --apg_warmup_epochs, or pass '
+                '--force_unsafe_apg_from_start only for an isolated ablation.'
+            )
+        elif 'apg_loss_coef' in explicit_args:
             print(
-                'WARNING: explicit --apg_loss_coef > 0.1 with no APG warmup does not match the '
-                'verified vgg16_bn_drop700_apg_lc_seed42 checkpoint, which used apg_loss_coef=0.02. '
-                'Proceeding because you passed it explicitly.'
+                'WARNING: unsafe ablation accepted: explicit --apg_loss_coef > 0.1 with no APG warmup. '
+                'Expect severe SHA over-counting unless this is a controlled diagnostic run.'
             )
         else:
             print(
@@ -1720,6 +1730,16 @@ def resolve_output_dir(args):
     if parts and parts[0] == 'outputs':
         return output_arg
     return Path("./outputs") / args.dataset_file / output_arg
+
+
+def backup_existing_best_checkpoint(output_dir):
+    """Keep the first existing best checkpoint before a training run overwrites it."""
+    best_path = output_dir / 'best_checkpoint.pth'
+    backup_path = output_dir / 'best_checkpoint.before_overwrite.pth'
+    if not utils.is_main_process() or not best_path.exists() or backup_path.exists():
+        return
+    shutil.copy2(best_path, backup_path)
+    print(f'backed up existing best checkpoint to: {backup_path}')
 
 
 def checkpoint_args_snapshot(args):
@@ -2341,6 +2361,7 @@ def main(args):
                     encoding="utf-8",
                 )
                 best_model_state, include_raw = best_state_for_eval_model(model_without_ddp, model_ema, eval_model_name)
+                backup_existing_best_checkpoint(output_dir)
                 utils.save_on_master(
                     checkpoint_payload(
                         epoch,
