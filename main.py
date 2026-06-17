@@ -16,7 +16,7 @@ from torch.utils.data import DataLoader, DistributedSampler
 
 import util.misc as utils
 from datasets import build_dataset
-from engine import evaluate, evaluate_crowd_no_overlap, train_one_epoch
+from engine import evaluate, evaluate_crowd_no_overlap, format_localization_metrics, train_one_epoch
 from models import build_model
 from models.backbones import get_supported_timm_backbones, is_timm_backbone
 
@@ -2206,8 +2206,7 @@ def main(args):
             "mse:", test_stats['mse'],
             "pred_cnt:", test_stats.get('pred_cnt', 0.0),
             "gt_cnt:", test_stats.get('gt_cnt', 0.0),
-            "loc_f1_large:", test_stats.get('loc_f1_large', 'n/a'),
-            "loc_f1_small:", test_stats.get('loc_f1_small', 'n/a'),
+            format_localization_metrics(test_stats),
             "eval_model:", eval_model_name,
             "eval_time:", t2 - t1,
         )
@@ -2311,8 +2310,7 @@ def main(args):
                 "mse:", mse,
                 "pred_cnt:", test_stats.get('pred_cnt', 0.0),
                 "gt_cnt:", test_stats.get('gt_cnt', 0.0),
-                "loc_f1_large:", test_stats.get('loc_f1_large', 'n/a'),
-                "loc_f1_small:", test_stats.get('loc_f1_small', 'n/a'),
+                format_localization_metrics(test_stats),
                 "\n\nbest mae:", best_mae,
                 "best epoch:", best_epoch,
             )

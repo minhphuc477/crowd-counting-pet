@@ -167,9 +167,19 @@ def print_eval_record(label, record):
     if ratio is not None:
         parts.append(f"pred/gt={ratio:.3f}")
     if record.get('loc_f1_large') is not None:
-        parts.append(f"loc_f1_large={float(record['loc_f1_large']):.4f}")
+        parts.append(
+            "loc_sigma_l(F1/Prec/Rec)="
+            f"{float(record['loc_f1_large']):.4f}/"
+            f"{float(record.get('loc_prec_large', 0.0)):.4f}/"
+            f"{float(record.get('loc_rec_large', 0.0)):.4f}"
+        )
     if record.get('loc_f1_small') is not None:
-        parts.append(f"loc_f1_small={float(record['loc_f1_small']):.4f}")
+        parts.append(
+            "loc_sigma_s(F1/Prec/Rec)="
+            f"{float(record['loc_f1_small']):.4f}/"
+            f"{float(record.get('loc_prec_small', 0.0)):.4f}/"
+            f"{float(record.get('loc_rec_small', 0.0)):.4f}"
+        )
     print(f'{label}: ' + ', '.join(parts))
 
 

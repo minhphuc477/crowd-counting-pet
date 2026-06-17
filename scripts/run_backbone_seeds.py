@@ -30,6 +30,21 @@ from datetime import datetime
 import numpy as np
 
 
+def format_loc_metrics(record):
+    if "loc_f1_large" not in record or "loc_f1_small" not in record:
+        return ""
+    return (
+        f", Loc sigma_l F1/Prec/Rec = "
+        f"{float(record['loc_f1_large']):.4f}/"
+        f"{float(record.get('loc_prec_large', 0.0)):.4f}/"
+        f"{float(record.get('loc_rec_large', 0.0)):.4f}, "
+        f"Loc sigma_s F1/Prec/Rec = "
+        f"{float(record['loc_f1_small']):.4f}/"
+        f"{float(record.get('loc_prec_small', 0.0)):.4f}/"
+        f"{float(record.get('loc_rec_small', 0.0)):.4f}"
+    )
+
+
 ABLATION_PRESETS = {
     "crowd_dense": [
         "convnextv2_base",
@@ -281,12 +296,7 @@ def run_eval(backbone, seed, args):
             "eval_log": str(eval_log),
         }
     eval_result_path.write_text(json.dumps(eval_result, indent=2) + "\n", encoding="utf-8")
-    loc_text = ""
-    if "loc_f1_large" in eval_result and "loc_f1_small" in eval_result:
-        loc_text = (
-            f", LocF1-large = {eval_result['loc_f1_large']:.4f}, "
-            f"LocF1-small = {eval_result['loc_f1_small']:.4f}"
-        )
+    loc_text = format_loc_metrics(eval_result)
     print(f"  Eval MAE = {eval_result['eval_mae']:.4f}, MSE = {eval_result['eval_mse']:.4f}{loc_text}")
     return eval_result
 

@@ -13,7 +13,7 @@ from torch.utils.data import DataLoader, DistributedSampler
 import datasets
 from datasets import build_dataset
 import util.misc as utils
-from engine import evaluate, evaluate_crowd_no_overlap
+from engine import evaluate, evaluate_crowd_no_overlap, format_localization_metrics
 from models import build_model
 
 
@@ -572,7 +572,8 @@ def main(args):
             localization_small_threshold=args.localization_small_threshold,
         )
         mae, mse = test_stats['mae'], test_stats['mse']
-    line = f'\nepoch: {cur_epoch}, mae: {mae}, mse: {mse}' 
+    loc_text = format_localization_metrics(test_stats, prefix=', ')
+    line = f'\nepoch: {cur_epoch}, mae: {mae}, mse: {mse}{loc_text}'
     print(line)
     if utils.is_main_process():
         if args.results_file:

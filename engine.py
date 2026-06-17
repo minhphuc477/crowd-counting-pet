@@ -239,6 +239,51 @@ def _localization_summary(true_positive, false_positive, false_negative):
     return precision, recall, f1
 
 
+def _add_localization_result(results, name, threshold, true_positive, false_positive, false_negative):
+    """Store point-localization metrics under legacy and paper-style names."""
+    precision, recall, f1 = _localization_summary(true_positive, false_positive, false_negative)
+    results[f'loc_threshold_{name}'] = float(threshold)
+    results[f'loc_tp_{name}'] = float(true_positive)
+    results[f'loc_fp_{name}'] = float(false_positive)
+    results[f'loc_fn_{name}'] = float(false_negative)
+    results[f'loc_prec_{name}'] = precision
+    results[f'loc_rec_{name}'] = recall
+    results[f'loc_f1_{name}'] = f1
+
+    sigma_name = {'large': 'sigma_l', 'small': 'sigma_s'}.get(name)
+    if sigma_name is not None:
+        results[f'loc_threshold_{sigma_name}'] = float(threshold)
+        results[f'loc_tp_{sigma_name}'] = float(true_positive)
+        results[f'loc_fp_{sigma_name}'] = float(false_positive)
+        results[f'loc_fn_{sigma_name}'] = float(false_negative)
+        results[f'loc_prec_{sigma_name}'] = precision
+        results[f'loc_rec_{sigma_name}'] = recall
+        results[f'loc_f1_{sigma_name}'] = f1
+
+
+def format_localization_metrics(metrics, prefix=''):
+    """Compact F1/precision/recall text for crowd-localization result logs."""
+    if 'loc_f1_large' not in metrics or 'loc_f1_small' not in metrics:
+        return ''
+
+    def value(key):
+        raw = metrics.get(key, 0.0)
+        if torch.is_tensor(raw):
+            raw = raw.detach().cpu().item()
+        return float(raw)
+
+    return (
+        f"{prefix}loc_sigma_l(F1/Prec/Rec)="
+        f"{value('loc_f1_large'):.4f}/"
+        f"{value('loc_prec_large'):.4f}/"
+        f"{value('loc_rec_large'):.4f} "
+        f"loc_sigma_s(F1/Prec/Rec)="
+        f"{value('loc_f1_small'):.4f}/"
+        f"{value('loc_prec_small'):.4f}/"
+        f"{value('loc_rec_small'):.4f}"
+    )
+
+
 def _ceil_to_multiple(value, multiple=256):
     return max(multiple, int(math.ceil(float(value) / multiple)) * multiple)
 
@@ -426,12 +471,5 @@ def evaluate(
             tp = float(loc_reduce[f'loc_tp_{name}'].item())
             fp = float(loc_reduce[f'loc_fp_{name}'].item())
             fn = float(loc_reduce[f'loc_fn_{name}'].item())
-            precision, recall, f1 = _localization_summary(tp, fp, fn)
-            results[f'loc_threshold_{name}'] = float(threshold)
-            results[f'loc_tp_{name}'] = tp
-            results[f'loc_fp_{name}'] = fp
-            results[f'loc_fn_{name}'] = fn
-            results[f'loc_prec_{name}'] = precision
-            results[f'loc_rec_{name}'] = recall
-            results[f'loc_f1_{name}'] = f1
+            _add_localization_result(results, name, threshold, tp, fp, fn)
     return results

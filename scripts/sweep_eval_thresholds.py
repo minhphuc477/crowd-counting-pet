@@ -25,6 +25,21 @@ def _unique_sorted(values: list[float]) -> list[float]:
     return sorted({round(float(v), 6) for v in values})
 
 
+def _format_loc_metrics(record: dict, prefix: str = " ") -> str:
+    if "loc_f1_large" not in record or "loc_f1_small" not in record:
+        return ""
+    return (
+        f"{prefix}loc_sigma_l(F1/Prec/Rec)="
+        f"{float(record['loc_f1_large']):.4f}/"
+        f"{float(record.get('loc_prec_large', 0.0)):.4f}/"
+        f"{float(record.get('loc_rec_large', 0.0)):.4f} "
+        f"loc_sigma_s(F1/Prec/Rec)="
+        f"{float(record['loc_f1_small']):.4f}/"
+        f"{float(record.get('loc_prec_small', 0.0)):.4f}/"
+        f"{float(record.get('loc_rec_small', 0.0)):.4f}"
+    )
+
+
 def _load_checkpoint_args(checkpoint_path: Path):
     try:
         import torch
@@ -254,6 +269,13 @@ def write_outputs(records: list[dict], output_dir: Path) -> None:
         "loc_tp_large",
         "loc_fp_large",
         "loc_fn_large",
+        "loc_threshold_sigma_l",
+        "loc_f1_sigma_l",
+        "loc_prec_sigma_l",
+        "loc_rec_sigma_l",
+        "loc_tp_sigma_l",
+        "loc_fp_sigma_l",
+        "loc_fn_sigma_l",
         "loc_threshold_small",
         "loc_f1_small",
         "loc_prec_small",
@@ -261,6 +283,13 @@ def write_outputs(records: list[dict], output_dir: Path) -> None:
         "loc_tp_small",
         "loc_fp_small",
         "loc_fn_small",
+        "loc_threshold_sigma_s",
+        "loc_f1_sigma_s",
+        "loc_prec_sigma_s",
+        "loc_rec_sigma_s",
+        "loc_tp_sigma_s",
+        "loc_fp_sigma_s",
+        "loc_fn_sigma_s",
         "epoch",
         "returncode",
         "elapsed_sec",
@@ -483,12 +512,7 @@ def main() -> int:
                                                     pred_cnt = record.get("pred_cnt")
                                                     gt_cnt = record.get("gt_cnt")
                                                     if pred_cnt is not None and gt_cnt is not None:
-                                                        loc_text = ""
-                                                        if "loc_f1_large" in record and "loc_f1_small" in record:
-                                                            loc_text = (
-                                                                f" loc_f1_l={record['loc_f1_large']:.4f} "
-                                                                f"loc_f1_s={record['loc_f1_small']:.4f}"
-                                                            )
+                                                        loc_text = _format_loc_metrics(record)
                                                         print(
                                                             f"  mae={record['eval_mae']:.4f} "
                                                             f"mse={record['eval_mse']:.4f} "
@@ -517,8 +541,7 @@ def main() -> int:
         f"eval_branch_gate={best['eval_branch_gate']} "
         f"eval_soft_split_gate={best['eval_soft_split_gate']} "
         f"eval_score_calibration={best.get('eval_score_calibration', 'none')} "
-        f"loc_f1_large={best.get('loc_f1_large', 'n/a')} "
-        f"loc_f1_small={best.get('loc_f1_small', 'n/a')}"
+        f"{_format_loc_metrics(best, prefix='')}"
     )
     print(f"Results saved to: {output_dir}")
     return 0
