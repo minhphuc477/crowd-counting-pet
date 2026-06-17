@@ -231,6 +231,7 @@ def read_checkpoint_metadata(checkpoint_path):
 
 def run_eval(item, args, log_path):
     """Run eval.py for a single checkpoint and return parsed metrics."""
+    raw_results_path = log_path.with_name('eval_raw_results.json')
     cmd = [
         sys.executable,
         str(REPO_ROOT / 'eval.py'),
@@ -240,6 +241,7 @@ def run_eval(item, args, log_path):
         '--resume', str(item['checkpoint']),
         '--device', args.device,
         '--num_workers', str(args.num_workers),
+        '--results_file', str(raw_results_path),
     ]
     if args.override_score_threshold is not None:
         cmd.extend(['--override_score_threshold', str(args.override_score_threshold)])
@@ -304,7 +306,22 @@ def run_eval(item, args, log_path):
             }
 
     output_text = ''.join(output_lines)
-    metrics = parse_eval_metrics(output_text)
+    metrics = None
+    if raw_results_path.exists():
+        try:
+            raw_metrics = json.loads(raw_results_path.read_text(encoding='utf-8'))
+            metrics = {
+                'epoch': raw_metrics.get('epoch'),
+                'mae': raw_metrics.get('eval_mae'),
+                'mse': raw_metrics.get('eval_mse'),
+            }
+            for key, value in raw_metrics.items():
+                if isinstance(value, (int, float, bool)):
+                    metrics[key] = value
+        except Exception:
+            metrics = None
+    if metrics is None:
+        metrics = parse_eval_metrics(output_text)
     if return_code != 0:
         return {
             'ok': False,
@@ -451,6 +468,9 @@ def main():
             'log_path': eval_result['log_path'],
             'evaluated_at': datetime.now().isoformat(timespec='seconds'),
         }
+        for key, value in metrics.items():
+            if key not in result_doc and isinstance(value, (int, float, bool)):
+                result_doc[key] = value
         result_doc.update(checkpoint_metadata)
         result_path.write_text(json.dumps(result_doc, indent=2) + '\n', encoding='utf-8')
 

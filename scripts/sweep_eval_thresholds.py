@@ -144,6 +144,14 @@ def run_eval(
         cmd.append("--tta_flip")
     if args.tta_scales:
         cmd.extend(["--tta_scales", args.tta_scales])
+    if args.no_localization_metrics:
+        cmd.append("--no_localization_metrics")
+    cmd.extend([
+        "--localization_large_threshold",
+        str(args.localization_large_threshold),
+        "--localization_small_threshold",
+        str(args.localization_small_threshold),
+    ])
     if eval_foreground_gate is not None:
         cmd.extend(["--eval_foreground_gate", eval_foreground_gate])
     if eval_foreground_gate_mode is not None:
@@ -236,6 +244,23 @@ def write_outputs(records: list[dict], output_dir: Path) -> None:
         "eval_mse",
         "pred_cnt",
         "gt_cnt",
+        "localization_metrics",
+        "localization_large_threshold",
+        "localization_small_threshold",
+        "loc_threshold_large",
+        "loc_f1_large",
+        "loc_prec_large",
+        "loc_rec_large",
+        "loc_tp_large",
+        "loc_fp_large",
+        "loc_fn_large",
+        "loc_threshold_small",
+        "loc_f1_small",
+        "loc_prec_small",
+        "loc_rec_small",
+        "loc_tp_small",
+        "loc_fp_small",
+        "loc_fn_small",
         "epoch",
         "returncode",
         "elapsed_sec",
@@ -269,6 +294,9 @@ def get_args() -> argparse.Namespace:
     parser.add_argument("--output_dir", default="", help="Where to save sweep logs/results")
     parser.add_argument("--tta_flip", action="store_true", help="average original and horizontal-flip counts")
     parser.add_argument("--tta_scales", default="1.0", help="comma-separated eval scales passed to eval.py")
+    parser.add_argument("--no_localization_metrics", action="store_true", help="disable localization metrics in eval.py")
+    parser.add_argument("--localization_large_threshold", default=8.0, type=float)
+    parser.add_argument("--localization_small_threshold", default=4.0, type=float)
     parser.add_argument(
         "--eval_nms_radii",
         nargs="+",
@@ -455,11 +483,18 @@ def main() -> int:
                                                     pred_cnt = record.get("pred_cnt")
                                                     gt_cnt = record.get("gt_cnt")
                                                     if pred_cnt is not None and gt_cnt is not None:
+                                                        loc_text = ""
+                                                        if "loc_f1_large" in record and "loc_f1_small" in record:
+                                                            loc_text = (
+                                                                f" loc_f1_l={record['loc_f1_large']:.4f} "
+                                                                f"loc_f1_s={record['loc_f1_small']:.4f}"
+                                                            )
                                                         print(
                                                             f"  mae={record['eval_mae']:.4f} "
                                                             f"mse={record['eval_mse']:.4f} "
                                                             f"pred={float(pred_cnt):.4f} "
                                                             f"gt={float(gt_cnt):.4f}"
+                                                            f"{loc_text}"
                                                         )
                                                     else:
                                                         print(f"  mae={record['eval_mae']:.4f} mse={record['eval_mse']:.4f}")
@@ -481,7 +516,9 @@ def main() -> int:
         f"eval_nms_radius={best['eval_nms_radius']} "
         f"eval_branch_gate={best['eval_branch_gate']} "
         f"eval_soft_split_gate={best['eval_soft_split_gate']} "
-        f"eval_score_calibration={best.get('eval_score_calibration', 'none')}"
+        f"eval_score_calibration={best.get('eval_score_calibration', 'none')} "
+        f"loc_f1_large={best.get('loc_f1_large', 'n/a')} "
+        f"loc_f1_small={best.get('loc_f1_small', 'n/a')}"
     )
     print(f"Results saved to: {output_dir}")
     return 0

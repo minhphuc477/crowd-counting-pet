@@ -291,6 +291,12 @@ def get_args_parser():
     parser.add_argument('--eval_score_calibration_max_bias', default=8.0, type=float)
     parser.add_argument('--no_eval_filter_invalid_points', action='store_true')
     parser.add_argument('--eval_debug_counting', action='store_true')
+    parser.add_argument('--no_localization_metrics', action='store_true',
+                        help='disable localization F1/precision/recall metrics during evaluation')
+    parser.add_argument('--localization_large_threshold', default=8.0, type=float,
+                        help='large pixel-distance threshold for localization F1/precision/recall')
+    parser.add_argument('--localization_small_threshold', default=4.0, type=float,
+                        help='small pixel-distance threshold for localization F1/precision/recall')
 
     # dataset parameters
     parser.add_argument('--dataset_file', default="SHA")
@@ -363,6 +369,7 @@ def merge_checkpoint_args(args, checkpoint):
         'eval_score_calibration_start_epoch',
         'eval_score_calibration_min_bias', 'eval_score_calibration_max_bias',
         'no_eval_filter_invalid_points', 'eval_debug_counting',
+        'no_localization_metrics', 'localization_large_threshold', 'localization_small_threshold',
         'eval_protocol', 'resume_allow_arch_change',
         'amp_dtype', 'strict_model_checks',
     }
@@ -434,6 +441,17 @@ def parse_tta_scales(value):
             raise ValueError('tta_scales must contain positive values')
         scales.append(scale)
     return tuple(dict.fromkeys(scales)) or (1.0,)
+
+
+def scalar_eval_metrics(test_stats, skip=()):
+    skip = set(skip)
+    metrics = {}
+    for key, value in test_stats.items():
+        if key in skip:
+            continue
+        if isinstance(value, (int, float, np.integer, np.floating)):
+            metrics[key] = float(value)
+    return metrics
 
 
 def seed_worker(worker_id):
@@ -535,10 +553,24 @@ def main(args):
             vis_dir=vis_dir,
             tta_flip=args.tta_flip,
             tta_scales=tta_scales,
+            localization_metrics=not args.no_localization_metrics,
+            localization_large_threshold=args.localization_large_threshold,
+            localization_small_threshold=args.localization_small_threshold,
         )
         mae, mse = test_stats['mae'], test_stats['mse']
     else:
-        test_stats = evaluate(model, data_loader_val, device, epoch=cur_epoch, vis_dir=vis_dir, tta_flip=args.tta_flip, tta_scales=tta_scales)
+        test_stats = evaluate(
+            model,
+            data_loader_val,
+            device,
+            epoch=cur_epoch,
+            vis_dir=vis_dir,
+            tta_flip=args.tta_flip,
+            tta_scales=tta_scales,
+            localization_metrics=not args.no_localization_metrics,
+            localization_large_threshold=args.localization_large_threshold,
+            localization_small_threshold=args.localization_small_threshold,
+        )
         mae, mse = test_stats['mae'], test_stats['mse']
     line = f'\nepoch: {cur_epoch}, mae: {mae}, mse: {mse}' 
     print(line)
@@ -550,7 +582,7 @@ def main(args):
         else:
             results_file = Path('eval_results.json')
         results_file.parent.mkdir(parents=True, exist_ok=True)
-        results_file.write_text(json.dumps({
+        payload = {
             'epoch': int(cur_epoch),
             'eval_mae': float(mae),
             'eval_mse': float(mse),
@@ -572,7 +604,12 @@ def main(args):
             'eval_score_calibration_min_bias': float(getattr(args, 'eval_score_calibration_min_bias', -8.0)),
             'eval_score_calibration_max_bias': float(getattr(args, 'eval_score_calibration_max_bias', 8.0)),
             'eval_filter_invalid_points': not bool(getattr(args, 'no_eval_filter_invalid_points', False)),
-        }, indent=2) + "\n", encoding="utf-8")
+            'localization_metrics': not bool(getattr(args, 'no_localization_metrics', False)),
+            'localization_large_threshold': float(getattr(args, 'localization_large_threshold', 8.0)),
+            'localization_small_threshold': float(getattr(args, 'localization_small_threshold', 4.0)),
+        }
+        payload.update(scalar_eval_metrics(test_stats, skip={'mae', 'mse', 'pred_cnt', 'gt_cnt'}))
+        results_file.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
         print(f'eval results saved to: {results_file}')
 
 

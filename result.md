@@ -22,8 +22,10 @@ vgg16_bn_apglc_lowloss_count_feedback_seed42
 Best: mae=68.0879 mse=104.8842 score_threshold=0.52 split_threshold=0.47 eval_nms_radius=0.0 eval_branch_gate=none eval_soft_split_gate=pred eval_score_calibration=none
 Results saved to: eval_results/SHA/vgg16_bn_apglc_lowloss_count_feedback_seed42_sweep
 
-**d291d5e03cd351e559f28d8eac7df07137f0f501 commit result**
+**60c9065d5c3b641b7611179f0c373ab067bc658a commit result**
 
 ```
 vgg16_bn_apglc_apgccneg_late_countreg_seed42 
 ```
+
+Best: mae=50.9121 mse=82.1399 score_threshold=0.61 split_threshold=0.5 eval_nms_radius=0.0 eval_branch_gate=none eval_soft_split_gate=none eval_score_calibration=none

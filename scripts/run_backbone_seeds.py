@@ -262,21 +262,32 @@ def run_eval(backbone, seed, args):
         print(f"  Eval failed for {backbone} seed {seed}; see {eval_log}")
         return None
 
-    text = eval_log.read_text(encoding="utf-8", errors="replace")
-    match = re.search(r"epoch:\s*(\d+).*?mae:\s*([0-9.]+).*?mse:\s*([0-9.]+)", text, re.S)
-    if not match:
-        print(f"  Eval finished but metrics were not parsed from {eval_log}")
-        return None
-    eval_result = {
-        "epoch": int(match.group(1)),
-        "eval_mae": float(match.group(2)),
-        "eval_mse": float(match.group(3)),
-        "checkpoint": str(checkpoint),
-        "eval_log": str(eval_log),
-    }
     eval_result_path = actual_output_dir / "eval_results.json"
+    if eval_result_path.exists():
+        eval_result = json.loads(eval_result_path.read_text(encoding="utf-8"))
+        eval_result["checkpoint"] = str(checkpoint)
+        eval_result["eval_log"] = str(eval_log)
+    else:
+        text = eval_log.read_text(encoding="utf-8", errors="replace")
+        match = re.search(r"epoch:\s*(\d+).*?mae:\s*([0-9.]+).*?mse:\s*([0-9.]+)", text, re.S)
+        if not match:
+            print(f"  Eval finished but metrics were not parsed from {eval_log}")
+            return None
+        eval_result = {
+            "epoch": int(match.group(1)),
+            "eval_mae": float(match.group(2)),
+            "eval_mse": float(match.group(3)),
+            "checkpoint": str(checkpoint),
+            "eval_log": str(eval_log),
+        }
     eval_result_path.write_text(json.dumps(eval_result, indent=2) + "\n", encoding="utf-8")
-    print(f"  Eval MAE = {eval_result['eval_mae']:.4f}, MSE = {eval_result['eval_mse']:.4f}")
+    loc_text = ""
+    if "loc_f1_large" in eval_result and "loc_f1_small" in eval_result:
+        loc_text = (
+            f", LocF1-large = {eval_result['loc_f1_large']:.4f}, "
+            f"LocF1-small = {eval_result['loc_f1_small']:.4f}"
+        )
+    print(f"  Eval MAE = {eval_result['eval_mae']:.4f}, MSE = {eval_result['eval_mse']:.4f}{loc_text}")
     return eval_result
 
 

@@ -1277,6 +1277,12 @@ def get_args_parser():
                         help='disable eval filtering of predicted points outside the real non-padded image area')
     parser.add_argument('--eval_debug_counting', action='store_true',
                         help='log sparse/dense query counts after each eval counting filter')
+    parser.add_argument('--no_localization_metrics', action='store_true',
+                        help='disable localization F1/precision/recall metrics during evaluation')
+    parser.add_argument('--localization_large_threshold', default=8.0, type=float,
+                        help='large pixel-distance threshold for localization F1/precision/recall')
+    parser.add_argument('--localization_small_threshold', default=4.0, type=float,
+                        help='small pixel-distance threshold for localization F1/precision/recall')
     parser.add_argument('--eval_protocol', default='pet', choices=('pet', 'crowd_no_overlap'),
                         help='validation protocol used during training')
 
@@ -1617,6 +1623,7 @@ def merge_checkpoint_args(args, checkpoint):
         'eval_before_train', 'eval_protocol', 'data_path', 'eval_max_size',
         'bad_count_direction', 'bad_count_ratio_max', 'bad_count_mae_min', 'bad_count_start_epoch',
         'patch_size', 'patch_size_choices', 'crop_attempts', 'min_crop_points',
+        'no_localization_metrics', 'localization_large_threshold', 'localization_small_threshold',
     }
     if getattr(args, 'resume_model_only', False):
         runtime_keys.update({
@@ -1632,6 +1639,7 @@ def merge_checkpoint_args(args, checkpoint):
             'eval_score_calibration_start_epoch',
             'eval_score_calibration_min_bias', 'eval_score_calibration_max_bias',
             'no_eval_filter_invalid_points', 'eval_debug_counting',
+            'no_localization_metrics', 'localization_large_threshold', 'localization_small_threshold',
         })
         explicit_args = set(getattr(args, '_explicit_args', set()))
         if 'eval_dense_start_epoch' in explicit_args:
@@ -1728,6 +1736,17 @@ def checkpoint_arg(checkpoint, key, default=None):
     if isinstance(checkpoint_args, dict):
         return checkpoint_args.get(key, default)
     return getattr(checkpoint_args, key, default)
+
+
+def scalar_eval_metrics(test_stats, skip=()):
+    skip = set(skip)
+    metrics = {}
+    for key, value in test_stats.items():
+        if key in skip:
+            continue
+        if isinstance(value, (int, float, np.integer, np.floating)):
+            metrics[key] = float(value)
+    return metrics
 
 
 def should_skip_pretrained_backbone(args, checkpoint):
@@ -2081,9 +2100,27 @@ def main(args):
         t1 = time.time()
         eval_model, eval_model_name = select_eval_model(model, model_without_ddp, model_ema, args)
         if args.eval_protocol == 'crowd_no_overlap':
-            test_stats = evaluate_crowd_no_overlap(eval_model, data_loader_val, device, epoch=args.start_epoch, vis_dir=None)
+            test_stats = evaluate_crowd_no_overlap(
+                eval_model,
+                data_loader_val,
+                device,
+                epoch=args.start_epoch,
+                vis_dir=None,
+                localization_metrics=not args.no_localization_metrics,
+                localization_large_threshold=args.localization_large_threshold,
+                localization_small_threshold=args.localization_small_threshold,
+            )
         else:
-            test_stats = evaluate(eval_model, data_loader_val, device, args.start_epoch, None)
+            test_stats = evaluate(
+                eval_model,
+                data_loader_val,
+                device,
+                args.start_epoch,
+                None,
+                localization_metrics=not args.no_localization_metrics,
+                localization_large_threshold=args.localization_large_threshold,
+                localization_small_threshold=args.localization_small_threshold,
+            )
         t2 = time.time()
         print("\n==========================")
         print(
@@ -2092,6 +2129,8 @@ def main(args):
             "mse:", test_stats['mse'],
             "pred_cnt:", test_stats.get('pred_cnt', 0.0),
             "gt_cnt:", test_stats.get('gt_cnt', 0.0),
+            "loc_f1_large:", test_stats.get('loc_f1_large', 'n/a'),
+            "loc_f1_small:", test_stats.get('loc_f1_small', 'n/a'),
             "eval_model:", eval_model_name,
             "eval_time:", t2 - t1,
         )
@@ -2158,9 +2197,27 @@ def main(args):
             t1 = time.time()
             eval_model, eval_model_name = select_eval_model(model, model_without_ddp, model_ema, args)
             if args.eval_protocol == 'crowd_no_overlap':
-                test_stats = evaluate_crowd_no_overlap(eval_model, data_loader_val, device, epoch=epoch, vis_dir=None)
+                test_stats = evaluate_crowd_no_overlap(
+                    eval_model,
+                    data_loader_val,
+                    device,
+                    epoch=epoch,
+                    vis_dir=None,
+                    localization_metrics=not args.no_localization_metrics,
+                    localization_large_threshold=args.localization_large_threshold,
+                    localization_small_threshold=args.localization_small_threshold,
+                )
             else:
-                test_stats = evaluate(eval_model, data_loader_val, device, epoch, None)
+                test_stats = evaluate(
+                    eval_model,
+                    data_loader_val,
+                    device,
+                    epoch,
+                    None,
+                    localization_metrics=not args.no_localization_metrics,
+                    localization_large_threshold=args.localization_large_threshold,
+                    localization_small_threshold=args.localization_small_threshold,
+                )
             t2 = time.time()
 
             # output results
@@ -2177,6 +2234,8 @@ def main(args):
                 "mse:", mse,
                 "pred_cnt:", test_stats.get('pred_cnt', 0.0),
                 "gt_cnt:", test_stats.get('gt_cnt', 0.0),
+                "loc_f1_large:", test_stats.get('loc_f1_large', 'n/a'),
+                "loc_f1_small:", test_stats.get('loc_f1_small', 'n/a'),
                 "\n\nbest mae:", best_mae,
                 "best epoch:", best_epoch,
             )
@@ -2202,7 +2261,11 @@ def main(args):
                     'eval_score_calibration_min_bias': float(getattr(args, 'eval_score_calibration_min_bias', -8.0)),
                     'eval_score_calibration_max_bias': float(getattr(args, 'eval_score_calibration_max_bias', 8.0)),
                     'eval_filter_invalid_points': not bool(getattr(args, 'no_eval_filter_invalid_points', False)),
+                    'localization_metrics': not bool(getattr(args, 'no_localization_metrics', False)),
+                    'localization_large_threshold': float(getattr(args, 'localization_large_threshold', 8.0)),
+                    'localization_small_threshold': float(getattr(args, 'localization_small_threshold', 4.0)),
                 }
+                eval_record.update(scalar_eval_metrics(test_stats, skip={'mae', 'mse', 'pred_cnt', 'gt_cnt'}))
                 with open(run_log_name, "a", encoding="utf-8") as log_file:
                     log_file.write("epoch:{}, mae:{}, mse:{}, time{}, \n\nbest mae:{}, best epoch: {}\n".format(
                                                 epoch, mae, mse, t2 - t1, best_mae, best_epoch))

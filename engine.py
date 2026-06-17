@@ -12,6 +12,10 @@ import cv2
 import torch
 import torchvision.transforms as standard_transforms
 import torch.nn.functional as F
+try:
+    from scipy.optimize import linear_sum_assignment
+except Exception:  # pragma: no cover - scipy is already a project dependency via matcher.py
+    linear_sum_assignment = None
 
 import util.misc as utils
 from util.misc import NestedTensor
@@ -181,6 +185,60 @@ def _valid_hw(samples):
     return max(valid_h, 1), max(valid_w, 1)
 
 
+def _greedy_match_count(distances, threshold):
+    valid_pairs = torch.nonzero(distances <= threshold, as_tuple=False)
+    if valid_pairs.numel() == 0:
+        return 0
+    valid_distances = distances[valid_pairs[:, 0], valid_pairs[:, 1]]
+    order = torch.argsort(valid_distances)
+    pred_used = torch.zeros(distances.shape[0], dtype=torch.bool, device=distances.device)
+    gt_used = torch.zeros(distances.shape[1], dtype=torch.bool, device=distances.device)
+    true_positive = 0
+    for pair_index in order.tolist():
+        pred_index = int(valid_pairs[pair_index, 0].item())
+        gt_index = int(valid_pairs[pair_index, 1].item())
+        if pred_used[pred_index] or gt_used[gt_index]:
+            continue
+        pred_used[pred_index] = True
+        gt_used[gt_index] = True
+        true_positive += 1
+    return true_positive
+
+
+def _localization_match_counts(pred_points, gt_points, threshold):
+    """Return TP/FP/FN for point localization under a pixel-distance threshold."""
+    pred_count = int(pred_points.shape[0])
+    gt_count = int(gt_points.shape[0])
+    if pred_count == 0 or gt_count == 0:
+        return 0, pred_count, gt_count
+
+    distances = torch.cdist(pred_points.float(), gt_points.float(), p=2)
+    threshold = float(threshold)
+    if threshold <= 0:
+        true_positive = 0
+    elif linear_sum_assignment is None:
+        true_positive = _greedy_match_count(distances, threshold)
+    else:
+        cost = distances.detach().cpu().numpy()
+        invalid_cost = max(threshold + 1.0, 1.0) * 1_000_000.0
+        cost = np.where(cost <= threshold, cost, invalid_cost)
+        row_ind, col_ind = linear_sum_assignment(cost)
+        true_positive = int(np.sum(cost[row_ind, col_ind] < invalid_cost))
+    false_positive = pred_count - true_positive
+    false_negative = gt_count - true_positive
+    return true_positive, false_positive, false_negative
+
+
+def _localization_summary(true_positive, false_positive, false_negative):
+    precision_denom = true_positive + false_positive
+    recall_denom = true_positive + false_negative
+    precision = true_positive / precision_denom if precision_denom > 0 else 0.0
+    recall = true_positive / recall_denom if recall_denom > 0 else 0.0
+    f1_denom = precision + recall
+    f1 = (2.0 * precision * recall / f1_denom) if f1_denom > 0 else 0.0
+    return precision, recall, f1
+
+
 def _ceil_to_multiple(value, multiple=256):
     return max(multiple, int(math.ceil(float(value) / multiple)) * multiple)
 
@@ -216,19 +274,52 @@ def _resize_nested_tensor(samples, scale):
 
 
 @torch.no_grad()
-def evaluate_crowd_no_overlap(model, data_loader, device, epoch=0, vis_dir=None, tta_flip=False, tta_scales=None):
+def evaluate_crowd_no_overlap(
+    model,
+    data_loader,
+    device,
+    epoch=0,
+    vis_dir=None,
+    tta_flip=False,
+    tta_scales=None,
+    localization_metrics=True,
+    localization_large_threshold=8.0,
+    localization_small_threshold=4.0,
+):
     """P2PNet/APGCC-style full-image crowd evaluation without crop overlap.
 
     The APGCC issue #7 refers to P2PNet's evaluator. PET already evaluates full
     validation images, so this wrapper preserves that protocol while accepting
     PET targets (`points`) and its thresholded `test_forward()` output.
     """
-    return evaluate(model, data_loader, device, epoch=epoch, vis_dir=vis_dir, tta_flip=tta_flip, tta_scales=tta_scales)
+    return evaluate(
+        model,
+        data_loader,
+        device,
+        epoch=epoch,
+        vis_dir=vis_dir,
+        tta_flip=tta_flip,
+        tta_scales=tta_scales,
+        localization_metrics=localization_metrics,
+        localization_large_threshold=localization_large_threshold,
+        localization_small_threshold=localization_small_threshold,
+    )
 
 
 # evaluation
 @torch.no_grad()
-def evaluate(model, data_loader, device, epoch=0, vis_dir=None, tta_flip=False, tta_scales=None):
+def evaluate(
+    model,
+    data_loader,
+    device,
+    epoch=0,
+    vis_dir=None,
+    tta_flip=False,
+    tta_scales=None,
+    localization_metrics=True,
+    localization_large_threshold=8.0,
+    localization_small_threshold=4.0,
+):
     model.eval()
     if tta_scales is None:
         tta_scales = (1.0,)
@@ -243,6 +334,14 @@ def evaluate(model, data_loader, device, epoch=0, vis_dir=None, tta_flip=False, 
         os.makedirs(vis_dir, exist_ok=True)
 
     print_freq = 10
+    loc_thresholds = {
+        'large': float(localization_large_threshold),
+        'small': float(localization_small_threshold),
+    }
+    loc_totals = {
+        name: {'tp': 0.0, 'fp': 0.0, 'fn': 0.0}
+        for name in loc_thresholds
+    }
     for samples, targets in metric_logger.log_every(data_loader, print_freq, header):
         samples = samples.to(device)
         if len(targets) != 1 or samples.tensors.shape[0] != 1:
@@ -284,6 +383,20 @@ def evaluate(model, data_loader, device, epoch=0, vis_dir=None, tta_flip=False, 
         results_reduced = utils.reduce_dict(results)
         metric_logger.update(mae=results_reduced['mae'], mse_sq=results_reduced['mse_sq'])
         metric_logger.update(pred_cnt=results_reduced['pred_cnt'], gt_cnt=results_reduced['gt_cnt'])
+
+        if localization_metrics:
+            if outputs_points.numel() == 0:
+                pred_points_abs = outputs_points.detach().reshape(0, 2).to(device=device, dtype=torch.float32)
+            else:
+                pred_points_abs = outputs_points.detach().to(device=device, dtype=torch.float32)
+                pred_points_abs = pred_points_abs * pred_points_abs.new_tensor([float(img_h), float(img_w)])
+            gt_points_abs = targets[0]['points'].to(device=device, dtype=torch.float32)
+            for name, threshold in loc_thresholds.items():
+                tp, fp, fn = _localization_match_counts(pred_points_abs, gt_points_abs, threshold)
+                loc_totals[name]['tp'] += float(tp)
+                loc_totals[name]['fp'] += float(fp)
+                loc_totals[name]['fn'] += float(fn)
+
         if 'eval_count_debug' in outputs:
             metric_logger.update(**{
                 f'dbg_{key}': float(value)
@@ -303,4 +416,22 @@ def evaluate(model, data_loader, device, epoch=0, vis_dir=None, tta_flip=False, 
     metric_logger.synchronize_between_processes()
     results = {k: meter.global_avg for k, meter in metric_logger.meters.items()}
     results['mse'] = np.sqrt(results.pop('mse_sq'))
+    if localization_metrics:
+        loc_reduce = {}
+        for name, counts in loc_totals.items():
+            for count_name, value in counts.items():
+                loc_reduce[f'loc_{count_name}_{name}'] = torch.tensor(value, dtype=torch.float64, device=device)
+        loc_reduce = utils.reduce_dict(loc_reduce, average=False)
+        for name, threshold in loc_thresholds.items():
+            tp = float(loc_reduce[f'loc_tp_{name}'].item())
+            fp = float(loc_reduce[f'loc_fp_{name}'].item())
+            fn = float(loc_reduce[f'loc_fn_{name}'].item())
+            precision, recall, f1 = _localization_summary(tp, fp, fn)
+            results[f'loc_threshold_{name}'] = float(threshold)
+            results[f'loc_tp_{name}'] = tp
+            results[f'loc_fp_{name}'] = fp
+            results[f'loc_fn_{name}'] = fn
+            results[f'loc_prec_{name}'] = precision
+            results[f'loc_rec_{name}'] = recall
+            results[f'loc_f1_{name}'] = f1
     return results
