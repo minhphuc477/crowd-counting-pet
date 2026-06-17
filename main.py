@@ -470,10 +470,11 @@ MODEL_RECIPES = {
         'bad_count_direction': 'all',
     },
     # Publication-inspired scratch path:
-    # stable APG+LC + PANet-style dynamic receptive fields + late scalar count
-    # regularization. The DRF residual starts as identity, so early training
-    # remains the known stable APG+LC behavior rather than another count-head
-    # from-scratch failure mode.
+    # stable APG+LC + PANet/RCCFormer-style scale-aware local context + late
+    # scalar count regularization. The DRF residual starts as identity, so
+    # early training remains the known stable APG+LC behavior. Keep APG at the
+    # verified 0.02 strength; full-strength APG from scratch repeatedly caused
+    # SHA query-score explosions before the architecture could help.
     'vgg_apglc_drf_late_countreg': {
         'backbone': 'vgg16_bn',
         'timm_adapter': 'lite_fpn',
@@ -483,7 +484,7 @@ MODEL_RECIPES = {
         'perspective_mixer_dilations': '1,2,3',
         'perspective_mixer_mid_dim': 64,
         'perspective_mixer_activation': 'gelu',
-        'apg_loss_coef': 1.0,
+        'apg_loss_coef': 0.02,
         'apg_start_epoch': 0,
         'apg_warmup_epochs': 0,
         'apg_sparse_coef': 1.0,
@@ -699,7 +700,6 @@ EXPERIMENTAL_MODEL_RECIPES = {
     # catastrophic over/under-counting before they could improve on APG+LC.
     'vgg_apglc_cbme_late_countreg',
     'vgg_apglc_foreground',
-    'vgg_apglc_drf_late_countreg',
     'vgg_apglc_balanced_late_countreg',
     'vgg_apglc_budget_late_countreg',
     'vgg_apglc_count_feedback_late_countreg',
