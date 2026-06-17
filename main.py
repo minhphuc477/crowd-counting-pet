@@ -1773,6 +1773,46 @@ def should_skip_pretrained_backbone(args, checkpoint):
     return True
 
 
+def model_only_allowed_missing_prefixes(args):
+    prefixes = []
+    needs_count_head = (
+        float(getattr(args, 'count_head_loss_coef', 0.0)) > 0
+        or getattr(args, 'eval_count_mode', 'threshold') == 'count_head_topk'
+        or getattr(args, 'eval_score_calibration', 'none') == 'count_head_bias'
+        or getattr(args, 'eval_dense_residual_mode', 'none') == 'count_head'
+    )
+    if needs_count_head:
+        prefixes.append('count_head.')
+    needs_foreground_head = (
+        float(getattr(args, 'foreground_loss_coef', 0.0)) > 0
+        or getattr(args, 'eval_foreground_gate', 'none') != 'none'
+    )
+    if needs_foreground_head:
+        prefixes.append('foreground_head.')
+    return tuple(prefixes)
+
+
+def validate_model_only_incompatible(incompatible, allowed_missing_prefixes):
+    missing = list(getattr(incompatible, 'missing_keys', []))
+    unexpected = list(getattr(incompatible, 'unexpected_keys', []))
+    bad_missing = [
+        key for key in missing
+        if not any(key.startswith(prefix) for prefix in allowed_missing_prefixes)
+    ]
+    if bad_missing or unexpected:
+        details = []
+        if bad_missing:
+            details.append(f"unexpected missing keys: {bad_missing[:20]}")
+        if unexpected:
+            details.append(f"unexpected checkpoint keys: {unexpected[:20]}")
+        allowed_text = ', '.join(allowed_missing_prefixes) or 'none'
+        raise RuntimeError(
+            'Unsafe non-strict model-only resume; '
+            f'allowed missing prefixes: {allowed_text}; '
+            + '; '.join(details)
+        )
+
+
 def build_optimizer_param_groups(model_without_ddp, args):
     """Keep pretrained backbone weights on low LR while training new adapters at main LR."""
     use_timm = is_timm_backbone(getattr(args, 'backbone', ''))
@@ -2047,11 +2087,21 @@ def main(args):
         model_key = 'model'
         if model_ema is not None and 'model_raw' in checkpoint and not args.resume_model_only:
             model_key = 'model_raw'
+        allowed_missing_prefixes = model_only_allowed_missing_prefixes(args)
+        auto_non_strict_model_only = (
+            getattr(args, 'resume_model_only', False)
+            and bool(allowed_missing_prefixes)
+        )
         strict_load = not (
             getattr(args, 'resume_model_only', False)
-            and getattr(args, 'resume_allow_arch_change', False)
+            and (
+                getattr(args, 'resume_allow_arch_change', False)
+                or auto_non_strict_model_only
+            )
         )
         incompatible = model_without_ddp.load_state_dict(checkpoint[model_key], strict=strict_load)
+        if auto_non_strict_model_only and not getattr(args, 'resume_allow_arch_change', False):
+            validate_model_only_incompatible(incompatible, allowed_missing_prefixes)
         if not strict_load and utils.is_main_process():
             missing = getattr(incompatible, 'missing_keys', [])
             unexpected = getattr(incompatible, 'unexpected_keys', [])
