@@ -60,8 +60,10 @@ BACKBONE_RECIPES = {
 MODEL_RECIPES = {
     # Known stable scratch path from this repo/session:
     # PET + lite FPN + low-weight APG. The saved best checkpoint
-    # vgg16_bn_drop700_apg_lc_seed42 records apg_loss_coef=0.02; full-strength
-    # APG (1.0) repeatedly started in the high-loss over-count regime.
+    # vgg16_bn_drop700_apg_lc_seed42 records apg_loss_coef=0.02,
+    # apg_end_epoch=350, and apg_contrastive_coef=0.15. Keeping APG active
+    # for the full 1500 epochs reproduced worse 52-53 MAE runs, so this recipe
+    # intentionally matches the verified checkpoint schedule.
     # No scalar count head, no density map, no routed targets, and no
     # foreground gate.
     'vgg_apglc': {
@@ -72,6 +74,7 @@ MODEL_RECIPES = {
         'apg_loss_coef': 0.02,
         'apg_start_epoch': 0,
         'apg_warmup_epochs': 0,
+        'apg_end_epoch': 350,
         'apg_sparse_coef': 1.0,
         'apg_dense_coef': 1.0,
         'apg_dense_start_epoch': 0,
@@ -79,6 +82,9 @@ MODEL_RECIPES = {
         'apg_pos_k': 1,
         'apg_point_coef': 5.0,
         'apg_bg_coef': 0.0,
+        'apg_contrastive_coef': 0.15,
+        'apg_neg_k': 4,
+        'apg_margin': 1.0,
         'apg_count_calibration': 'none',
         'count_head_loss_coef': 0.0,
         'density_map_loss_coef': 0.0,
@@ -92,8 +98,8 @@ MODEL_RECIPES = {
         'eval_nms_radius': 0.0,
         'eval_branch_gate': 'none',
         'eval_soft_split_gate': 'none',
-        'score_threshold': 0.5,
-        'split_threshold': 0.5,
+        'score_threshold': 0.55,
+        'split_threshold': 0.45,
         'split_threshold_quantile': 0.5,
         'bad_count_start_epoch': 100,
         'bad_count_direction': 'all',
@@ -113,6 +119,7 @@ MODEL_RECIPES = {
         'apg_loss_coef': 0.02,
         'apg_start_epoch': 0,
         'apg_warmup_epochs': 0,
+        'apg_end_epoch': 350,
         'apg_sparse_coef': 1.0,
         'apg_dense_coef': 1.0,
         'apg_dense_start_epoch': 0,
@@ -120,6 +127,9 @@ MODEL_RECIPES = {
         'apg_pos_k': 1,
         'apg_point_coef': 5.0,
         'apg_bg_coef': 0.0,
+        'apg_contrastive_coef': 0.15,
+        'apg_neg_k': 4,
+        'apg_margin': 1.0,
         'apg_count_calibration': 'none',
         'count_head_loss_coef': 0.10,
         'count_head_loss_type': 'log_l1',
@@ -141,8 +151,8 @@ MODEL_RECIPES = {
         'eval_nms_radius': 0.0,
         'eval_branch_gate': 'none',
         'eval_soft_split_gate': 'none',
-        'score_threshold': 0.5,
-        'split_threshold': 0.5,
+        'score_threshold': 0.55,
+        'split_threshold': 0.45,
         'split_threshold_quantile': 0.5,
         'bad_count_start_epoch': 100,
         'bad_count_direction': 'all',
@@ -263,6 +273,7 @@ MODEL_RECIPES = {
         'apg_loss_coef': 1.0,
         'apg_start_epoch': 0,
         'apg_warmup_epochs': 0,
+        'apg_end_epoch': 350,
         'apg_sparse_coef': 1.0,
         'apg_dense_coef': 1.0,
         'apg_dense_start_epoch': 0,
@@ -323,6 +334,9 @@ MODEL_RECIPES = {
         'apg_pos_k': 1,
         'apg_point_coef': 5.0,
         'apg_bg_coef': 0.0,
+        'apg_contrastive_coef': 0.15,
+        'apg_neg_k': 4,
+        'apg_margin': 1.0,
         'apg_count_calibration': 'none',
         'count_loss_coef': 0.10,
         'count_loss_gate': 'none',
@@ -487,6 +501,7 @@ MODEL_RECIPES = {
         'apg_loss_coef': 0.02,
         'apg_start_epoch': 0,
         'apg_warmup_epochs': 0,
+        'apg_end_epoch': 350,
         'apg_sparse_coef': 1.0,
         'apg_dense_coef': 1.0,
         'apg_dense_start_epoch': 0,
@@ -494,6 +509,9 @@ MODEL_RECIPES = {
         'apg_pos_k': 1,
         'apg_point_coef': 5.0,
         'apg_bg_coef': 0.0,
+        'apg_contrastive_coef': 0.15,
+        'apg_neg_k': 4,
+        'apg_margin': 1.0,
         'apg_count_calibration': 'none',
         'count_head_loss_coef': 0.10,
         'count_head_loss_type': 'log_l1',
@@ -515,8 +533,8 @@ MODEL_RECIPES = {
         'eval_nms_radius': 0.0,
         'eval_branch_gate': 'none',
         'eval_soft_split_gate': 'none',
-        'score_threshold': 0.5,
-        'split_threshold': 0.5,
+        'score_threshold': 0.55,
+        'split_threshold': 0.45,
         'split_threshold_quantile': 0.5,
         'bad_count_start_epoch': 100,
         'bad_count_direction': 'all',
