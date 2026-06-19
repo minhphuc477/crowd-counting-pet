@@ -675,6 +675,7 @@ class PET(nn.Module):
             or self.density_map_loss_coef > 0
             or self.eval_count_mode == 'count_head_topk'
             or self.eval_score_calibration == 'count_head_bias'
+            or self.eval_dense_residual_mode == 'count_head'
         )
         self.count_head = (
             GlobalCountHead(hidden_dim, init_count=self.count_head_init_count, init_cells=self.count_head_init_cells)

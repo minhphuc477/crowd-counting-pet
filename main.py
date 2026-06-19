@@ -157,6 +157,59 @@ MODEL_RECIPES = {
         'bad_count_start_epoch': 100,
         'bad_count_direction': 'all',
     },
+    # Historical recovery path for the 48.8 MAE result.
+    #
+    # This is intentionally a checkpoint fine-tune recipe, not a fresh scratch
+    # recipe. The successful run was APG+LC first, then a short scalar
+    # density-sum count-head auxiliary fine-tune while inference stayed normal
+    # threshold PET. Later "safe" count-head recipes detach/delay this signal
+    # and reproduced only 52-55 MAE, so this recipe preserves the legacy
+    # behavior explicitly instead of hiding it in ad-hoc command flags.
+    'vgg_apglc_density_counthead_ft_legacy': {
+        'backbone': 'vgg16_bn',
+        'timm_adapter': 'lite_fpn',
+        'pet_loss_variant': 'paper',
+        'split_loss_variant': 'paper',
+        'apg_loss_coef': 0.02,
+        'apg_start_epoch': 0,
+        'apg_warmup_epochs': 0,
+        'apg_end_epoch': 350,
+        'apg_sparse_coef': 1.0,
+        'apg_dense_coef': 1.0,
+        'apg_dense_start_epoch': 0,
+        'apg_dense_warmup_epochs': 0,
+        'apg_pos_k': 1,
+        'apg_point_coef': 5.0,
+        'apg_bg_coef': 0.0,
+        'apg_contrastive_coef': 0.15,
+        'apg_neg_k': 4,
+        'apg_margin': 1.0,
+        'apg_count_calibration': 'none',
+        'count_head_loss_coef': 1.0,
+        'count_head_loss_type': 'log_l1',
+        'count_head_start_epoch': 0,
+        'count_head_end_epoch': -1,
+        'count_head_warmup_epochs': 0,
+        'count_head_feature_grad_scale': 1.0,
+        'count_head_feature_grad_start_epoch': 0,
+        'count_head_feature_grad_warmup_epochs': 0,
+        'density_map_loss_coef': 0.0,
+        'routed_apg_loss_coef': 0.0,
+        'foreground_loss_coef': 0.0,
+        'eval_foreground_gate': 'none',
+        'eval_count_mode': 'threshold',
+        'eval_score_calibration': 'none',
+        'eval_dense_start_epoch': 0,
+        'eval_dense_residual_mode': 'none',
+        'eval_nms_radius': 0.0,
+        'eval_branch_gate': 'none',
+        'eval_soft_split_gate': 'none',
+        'score_threshold': 0.55,
+        'split_threshold': 0.45,
+        'split_threshold_quantile': 0.5,
+        'bad_count_start_epoch': 8,
+        'bad_count_direction': 'over',
+    },
     # Same end-to-end architecture as APG+LC + late scalar count regularizer,
     # but with an explicit APG warmup so scratch training starts near PET's loss
     # scale. Unlike the failed count-feedback variants, this does not suppress
@@ -1036,6 +1089,8 @@ def get_args_parser():
                         help='deprecated: fresh count-head from epoch 0 is delayed unless --force_unsafe_count_head_from_start is also set')
     parser.add_argument('--force_unsafe_count_head_from_start', action='store_true',
                         help='dangerous ablation only: allow count-head auxiliary from epoch 0 during fresh training')
+    parser.add_argument('--no_auto_freeze_bn_on_count_head_resume', action='store_true',
+                        help='legacy reproduction only: do not auto-enable freeze_bn for count-head checkpoint fine-tuning')
     parser.add_argument('--safe_count_head_start_epoch', default=250, type=int,
                         help='auto-delay count-head auxiliary to this epoch for fresh training unless explicitly allowed')
     parser.add_argument('--count_head_init_count', default=40.0, type=float,
@@ -1431,6 +1486,7 @@ def is_safe_fresh_count_head(args):
 def sanitize_unstable_training_args(args):
     """Disable known-unstable experimental auxiliaries unless explicitly allowed."""
     explicit_args = set(getattr(args, '_explicit_args', set()))
+    recipe_name = getattr(args, 'model_recipe', 'none')
     density_coef = float(getattr(args, 'density_map_loss_coef', 0.0))
     if density_coef > 0 and not bool(getattr(args, 'allow_unstable_density_map_loss', False)):
         print(
@@ -1442,6 +1498,12 @@ def sanitize_unstable_training_args(args):
     count_coef = float(getattr(args, 'count_head_loss_coef', 0.0))
     count_start = int(getattr(args, 'count_head_start_epoch', 0))
     fresh_train = not bool(getattr(args, 'resume', ''))
+    if recipe_name == 'vgg_apglc_density_counthead_ft_legacy' and fresh_train:
+        raise ValueError(
+            'model_recipe=vgg_apglc_density_counthead_ft_legacy is a recovery fine-tune recipe and requires '
+            '--resume outputs/SHA/vgg16_bn_drop700_apg_lc_seed42/best_checkpoint.pth with --resume_model_only. '
+            'Do not use it for fresh scratch training; it can reproduce the old count-head over-count failure.'
+        )
     if count_coef > 0 and fresh_train and not bool(getattr(args, 'allow_count_head_fresh_train', False)):
         print(
             'WARNING: --count_head_loss_coef was requested for fresh training but is disabled by default. '
@@ -1473,6 +1535,7 @@ def sanitize_unstable_training_args(args):
         and bool(getattr(args, 'resume_model_only', False))
         and bool(getattr(args, 'resume', ''))
         and not bool(getattr(args, 'freeze_bn', False))
+        and not bool(getattr(args, 'no_auto_freeze_bn_on_count_head_resume', False))
     ):
         print(
             'WARNING: enabling --freeze_bn for count-head fine-tuning from a checkpoint. '
