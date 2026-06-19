@@ -262,7 +262,7 @@ def get_args_parser():
     parser.add_argument('--eos_coef', default=0.5, type=float,
                         help="Relative classification weight of the no-object class")   # cross-entropy weights
     parser.add_argument('--pet_loss_variant', default='paper', choices=('paper', 'balanced'))
-    parser.add_argument('--split_loss_variant', default='auto', choices=('auto', 'paper', 'gt', 'paper_gt'))
+    parser.add_argument('--split_loss_variant', default='auto', choices=('auto', 'none', 'paper', 'gt', 'paper_gt'))
     parser.add_argument('--negative_loss_coef', default=0.1, type=float)
     parser.add_argument('--non_div_loss_coef', default=0.25, type=float)
     parser.add_argument('--quadtree_loss_coef', default=0.1, type=float)

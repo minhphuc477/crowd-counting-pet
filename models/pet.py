@@ -613,8 +613,8 @@ class PET(nn.Module):
         self.split_loss_variant = getattr(args, 'split_loss_variant', 'auto')
         if self.split_loss_variant == 'auto':
             self.split_loss_variant = 'paper' if self.pet_loss_variant == 'paper' else 'paper_gt'
-        if self.split_loss_variant not in ('paper', 'gt', 'paper_gt'):
-            raise ValueError('split_loss_variant must be one of "auto", "paper", "gt", or "paper_gt"')
+        if self.split_loss_variant not in ('none', 'paper', 'gt', 'paper_gt'):
+            raise ValueError('split_loss_variant must be one of "auto", "none", "paper", "gt", or "paper_gt"')
         self.count_loss_coef = float(getattr(args, 'count_loss_coef', 0.0))
         self.count_loss_gate = getattr(args, 'count_loss_gate', 'detach')
         if self.count_loss_gate not in ('none', 'detach', 'soft', 'hard'):
@@ -1231,6 +1231,9 @@ class PET(nn.Module):
             loss_dict['loss_inheritance'] = loss_inheritance
             weight_dict['loss_inheritance'] = self.inheritance_loss_coef
             losses += loss_inheritance * self.inheritance_loss_coef
+
+        if self.split_loss_variant == 'none':
+            return {'loss_dict': loss_dict, 'weight_dict': weight_dict, 'losses': losses}
 
         if self.split_loss_variant == 'paper':
             weight_split = self.quadtree_loss_coef if epoch >= warmup_ep else 0.0

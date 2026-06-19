@@ -70,7 +70,7 @@ MODEL_RECIPES = {
         'backbone': 'vgg16_bn',
         'timm_adapter': 'lite_fpn',
         'pet_loss_variant': 'paper',
-        'split_loss_variant': 'auto',
+        'split_loss_variant': 'none',
         'apg_loss_coef': 0.02,
         'apg_start_epoch': 0,
         'apg_warmup_epochs': 0,
@@ -172,7 +172,7 @@ MODEL_RECIPES = {
         'backbone': 'vgg16_bn',
         'timm_adapter': 'lite_fpn',
         'pet_loss_variant': 'paper',
-        'split_loss_variant': 'auto',
+        'split_loss_variant': 'none',
         'apg_loss_coef': 0.0,
         'apg_start_epoch': 0,
         'apg_warmup_epochs': 0,
@@ -1298,8 +1298,8 @@ def get_args_parser():
                         help="Relative classification weight of the no-object class")
     parser.add_argument('--pet_loss_variant', default='paper', choices=('paper', 'balanced'),
                         help='paper matches official PET; balanced enables experimental zero/negative-region losses')
-    parser.add_argument('--split_loss_variant', default='auto', choices=('auto', 'paper', 'gt', 'paper_gt'),
-                        help='split-map supervision: auto follows pet_loss_variant, paper uses PET min/max, gt uses per-cell GT BCE, paper_gt combines both')
+    parser.add_argument('--split_loss_variant', default='auto', choices=('auto', 'none', 'paper', 'gt', 'paper_gt'),
+                        help='split-map supervision: auto follows pet_loss_variant, none disables explicit split loss, paper uses PET min/max, gt uses per-cell GT BCE, paper_gt combines both')
     parser.add_argument('--negative_loss_coef', default=0.1, type=float,
                         help='extra scale for all-negative classification and split-map regions')
     parser.add_argument('--non_div_loss_coef', default=0.25, type=float,
