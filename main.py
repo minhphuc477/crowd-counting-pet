@@ -164,13 +164,16 @@ MODEL_RECIPES = {
     # density-sum count-head auxiliary fine-tune while inference stayed normal
     # threshold PET. Later "safe" count-head recipes detach/delay this signal
     # and reproduced only 52-55 MAE, so this recipe preserves the legacy
-    # behavior explicitly instead of hiding it in ad-hoc command flags.
+    # behavior explicitly instead of hiding it in ad-hoc command flags. APG is
+    # disabled in this fine-tune because the archived 48-MAE train logs showed
+    # loss_count_head but no loss_apg_* terms; the checkpoint already carries
+    # the APG+LC representation.
     'vgg_apglc_density_counthead_ft_legacy': {
         'backbone': 'vgg16_bn',
         'timm_adapter': 'lite_fpn',
         'pet_loss_variant': 'paper',
         'split_loss_variant': 'paper',
-        'apg_loss_coef': 0.02,
+        'apg_loss_coef': 0.0,
         'apg_start_epoch': 0,
         'apg_warmup_epochs': 0,
         'apg_end_epoch': 350,
