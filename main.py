@@ -101,6 +101,9 @@ MODEL_RECIPES = {
         'score_threshold': 0.55,
         'split_threshold': 0.45,
         'split_threshold_quantile': 0.5,
+        # Decoder window pruning is an architectural PET constant. Keep it
+        # independent from the sweepable branch-routing threshold above.
+        'query_prune_threshold': 0.5,
         'bad_count_start_epoch': 100,
         'bad_count_direction': 'all',
     },
@@ -148,6 +151,7 @@ MODEL_RECIPES = {
         'score_threshold': 0.55,
         'split_threshold': 0.45,
         'split_threshold_quantile': 0.5,
+        'query_prune_threshold': 0.5,
         'bad_count_start_epoch': 100,
         'bad_count_direction': 'all',
     },
