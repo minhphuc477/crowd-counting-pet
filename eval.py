@@ -289,6 +289,9 @@ def get_args_parser():
     parser.add_argument('--eval_score_calibration_start_epoch', default=0, type=int)
     parser.add_argument('--eval_score_calibration_min_bias', default=-8.0, type=float)
     parser.add_argument('--eval_score_calibration_max_bias', default=8.0, type=float)
+    parser.add_argument('--eval_score_calibration_count_blend', default=1.0, type=float)
+    parser.add_argument('--eval_score_calibration_count_ratio_min', default=0.0, type=float)
+    parser.add_argument('--eval_score_calibration_count_ratio_max', default=1e6, type=float)
     parser.add_argument('--no_eval_filter_invalid_points', action='store_true')
     parser.add_argument('--eval_debug_counting', action='store_true')
     parser.add_argument('--no_localization_metrics', action='store_true',
@@ -368,6 +371,9 @@ def merge_checkpoint_args(args, checkpoint):
         'eval_score_calibration', 'eval_score_calibration_strength',
         'eval_score_calibration_start_epoch',
         'eval_score_calibration_min_bias', 'eval_score_calibration_max_bias',
+        'eval_score_calibration_count_blend',
+        'eval_score_calibration_count_ratio_min',
+        'eval_score_calibration_count_ratio_max',
         'no_eval_filter_invalid_points', 'eval_debug_counting',
         'no_localization_metrics', 'localization_large_threshold', 'localization_small_threshold',
         'eval_protocol', 'resume_allow_arch_change',
@@ -604,6 +610,9 @@ def main(args):
             'eval_score_calibration_start_epoch': int(getattr(args, 'eval_score_calibration_start_epoch', 0)),
             'eval_score_calibration_min_bias': float(getattr(args, 'eval_score_calibration_min_bias', -8.0)),
             'eval_score_calibration_max_bias': float(getattr(args, 'eval_score_calibration_max_bias', 8.0)),
+            'eval_score_calibration_count_blend': float(getattr(args, 'eval_score_calibration_count_blend', 1.0)),
+            'eval_score_calibration_count_ratio_min': float(getattr(args, 'eval_score_calibration_count_ratio_min', 0.0)),
+            'eval_score_calibration_count_ratio_max': float(getattr(args, 'eval_score_calibration_count_ratio_max', 1e6)),
             'eval_filter_invalid_points': not bool(getattr(args, 'no_eval_filter_invalid_points', False)),
             'localization_metrics': not bool(getattr(args, 'no_localization_metrics', False)),
             'localization_large_threshold': float(getattr(args, 'localization_large_threshold', 8.0)),

@@ -694,11 +694,14 @@ MODEL_RECIPES = {
         'allow_count_head_fresh_train': True,
         'density_map_loss_coef': 0.0,
         'eval_count_mode': 'threshold',
-        'eval_score_calibration': 'none',
-        'eval_score_calibration_strength': 1.0,
-        'eval_score_calibration_start_epoch': 0,
-        'eval_score_calibration_min_bias': -8.0,
-        'eval_score_calibration_max_bias': 8.0,
+        'eval_score_calibration': 'count_head_bias',
+        'eval_score_calibration_strength': 0.50,
+        'eval_score_calibration_start_epoch': 100,
+        'eval_score_calibration_min_bias': -1.0,
+        'eval_score_calibration_max_bias': 1.0,
+        'eval_score_calibration_count_blend': 0.50,
+        'eval_score_calibration_count_ratio_min': 0.85,
+        'eval_score_calibration_count_ratio_max': 1.15,
         'eval_dense_start_epoch': 700,
         'eval_dense_residual_mode': 'count_head',
         'eval_dense_residual_start_epoch': 150,
@@ -711,6 +714,69 @@ MODEL_RECIPES = {
         'eval_soft_split_gate': 'none',
         'bad_count_start_epoch': 100,
         'bad_count_direction': 'over',
+    },
+    # Count-Calibrated PET (CC-PET).
+    #
+    # This is the solid scratch architecture path: APG+LC remains the detector,
+    # a detached scalar density-sum count branch learns global crowd mass, and
+    # inference uses a bounded logit-bias solver to nudge PET's expected count
+    # within a small ratio band. The count branch cannot top-k the result and
+    # cannot force a large score shift, so it avoids the over-count failures
+    # caused by direct count losses and unbounded count-head calibration.
+    'vgg_apglc_ccpet': {
+        'backbone': 'vgg16_bn',
+        'timm_adapter': 'lite_fpn',
+        'pet_loss_variant': 'paper',
+        'split_loss_variant': 'auto',
+        'apg_loss_coef': 0.02,
+        'apg_start_epoch': 0,
+        'apg_warmup_epochs': 0,
+        'apg_end_epoch': 350,
+        'apg_sparse_coef': 1.0,
+        'apg_dense_coef': 1.0,
+        'apg_dense_start_epoch': 0,
+        'apg_dense_warmup_epochs': 0,
+        'apg_pos_k': 1,
+        'apg_point_coef': 5.0,
+        'apg_bg_coef': 0.0,
+        'apg_contrastive_coef': 0.15,
+        'apg_neg_k': 4,
+        'apg_margin': 1.0,
+        'apg_count_calibration': 'none',
+        'count_loss_coef': 0.0,
+        'count_head_loss_coef': 0.10,
+        'count_head_loss_type': 'log_l1',
+        'count_head_start_epoch': 0,
+        'count_head_end_epoch': -1,
+        'count_head_warmup_epochs': 0,
+        'count_head_feature_grad_scale': 0.0,
+        'count_head_feature_grad_start_epoch': 0,
+        'count_head_feature_grad_warmup_epochs': 0,
+        'allow_count_head_fresh_train': True,
+        'density_map_loss_coef': 0.0,
+        'routed_apg_loss_coef': 0.0,
+        'foreground_loss_coef': 0.0,
+        'eval_foreground_gate': 'none',
+        'eval_count_mode': 'threshold',
+        'eval_count_head_min_score': 0.0,
+        'eval_score_calibration': 'count_head_bias',
+        'eval_score_calibration_strength': 0.50,
+        'eval_score_calibration_start_epoch': 0,
+        'eval_score_calibration_min_bias': -1.0,
+        'eval_score_calibration_max_bias': 1.0,
+        'eval_score_calibration_count_blend': 0.50,
+        'eval_score_calibration_count_ratio_min': 0.85,
+        'eval_score_calibration_count_ratio_max': 1.15,
+        'eval_dense_start_epoch': 0,
+        'eval_dense_residual_mode': 'none',
+        'eval_nms_radius': 0.0,
+        'eval_branch_gate': 'none',
+        'eval_soft_split_gate': 'none',
+        'score_threshold': 0.55,
+        'split_threshold': 0.45,
+        'split_threshold_quantile': 0.55,
+        'bad_count_start_epoch': 100,
+        'bad_count_direction': 'all',
     },
     # PET-compatible routed APG plus detached scalar count calibration.
     #
@@ -1363,6 +1429,12 @@ def get_args_parser():
                         help='minimum person-logit bias used by eval score calibration')
     parser.add_argument('--eval_score_calibration_max_bias', default=8.0, type=float,
                         help='maximum absolute person-logit bias used by eval score calibration')
+    parser.add_argument('--eval_score_calibration_count_blend', default=1.0, type=float,
+                        help='blend between PET expected count and count-head target for score calibration; 1 uses count head only')
+    parser.add_argument('--eval_score_calibration_count_ratio_min', default=0.0, type=float,
+                        help='minimum calibrated target as a ratio of PET expected count')
+    parser.add_argument('--eval_score_calibration_count_ratio_max', default=1e6, type=float,
+                        help='maximum calibrated target as a ratio of PET expected count')
     parser.add_argument('--no_eval_filter_invalid_points', action='store_true',
                         help='disable eval filtering of predicted points outside the real non-padded image area')
     parser.add_argument('--eval_debug_counting', action='store_true',
@@ -1488,10 +1560,21 @@ def apply_model_recipe(args):
 
 def is_safe_fresh_count_head(args):
     """Count head can start at epoch 0 only when it cannot corrupt PET logits."""
+    bounded_count_bias = (
+        getattr(args, 'eval_score_calibration', 'none') != 'count_head_bias'
+        or (
+            0.0 <= float(getattr(args, 'eval_score_calibration_strength', 1.0)) <= 0.5
+            and -1.0 <= float(getattr(args, 'eval_score_calibration_min_bias', -8.0))
+            and float(getattr(args, 'eval_score_calibration_max_bias', 8.0)) <= 1.0
+            and 0.0 <= float(getattr(args, 'eval_score_calibration_count_blend', 1.0)) <= 0.5
+            and 0.75 <= float(getattr(args, 'eval_score_calibration_count_ratio_min', 0.0))
+            and float(getattr(args, 'eval_score_calibration_count_ratio_max', 1e6)) <= 1.25
+        )
+    )
     return (
         float(getattr(args, 'count_head_loss_coef', 0.0)) <= 0.25
         and float(getattr(args, 'count_head_feature_grad_scale', 1.0)) == 0.0
-        and int(getattr(args, 'count_head_warmup_epochs', 0)) >= 50
+        and (int(getattr(args, 'count_head_warmup_epochs', 0)) >= 50 or bounded_count_bias)
         and float(getattr(args, 'density_map_loss_coef', 0.0)) == 0.0
         and getattr(args, 'eval_count_mode', 'threshold') == 'threshold'
     )
@@ -1533,8 +1616,8 @@ def sanitize_unstable_training_args(args):
     ):
         if is_safe_fresh_count_head(args):
             print(
-                'Using detached warm-start count head: feature gradients are disabled, '
-                'loss is warmed up, and density-map supervision is off.'
+                'Using safe detached count head: feature gradients are disabled, '
+                'density-map supervision is off, and eval count calibration is bounded.'
             )
         else:
             delayed_start = max(1, int(getattr(args, 'safe_count_head_start_epoch', 250)))
@@ -1743,6 +1826,9 @@ def merge_checkpoint_args(args, checkpoint):
             'eval_score_calibration', 'eval_score_calibration_strength',
             'eval_score_calibration_start_epoch',
             'eval_score_calibration_min_bias', 'eval_score_calibration_max_bias',
+            'eval_score_calibration_count_blend',
+            'eval_score_calibration_count_ratio_min',
+            'eval_score_calibration_count_ratio_max',
             'no_eval_filter_invalid_points', 'eval_debug_counting',
             'no_localization_metrics', 'localization_large_threshold', 'localization_small_threshold',
         })
@@ -2430,6 +2516,9 @@ def main(args):
                     'eval_score_calibration_start_epoch': int(getattr(args, 'eval_score_calibration_start_epoch', 0)),
                     'eval_score_calibration_min_bias': float(getattr(args, 'eval_score_calibration_min_bias', -8.0)),
                     'eval_score_calibration_max_bias': float(getattr(args, 'eval_score_calibration_max_bias', 8.0)),
+                    'eval_score_calibration_count_blend': float(getattr(args, 'eval_score_calibration_count_blend', 1.0)),
+                    'eval_score_calibration_count_ratio_min': float(getattr(args, 'eval_score_calibration_count_ratio_min', 0.0)),
+                    'eval_score_calibration_count_ratio_max': float(getattr(args, 'eval_score_calibration_count_ratio_max', 1e6)),
                     'eval_filter_invalid_points': not bool(getattr(args, 'no_eval_filter_invalid_points', False)),
                     'localization_metrics': not bool(getattr(args, 'no_localization_metrics', False)),
                     'localization_large_threshold': float(getattr(args, 'localization_large_threshold', 8.0)),

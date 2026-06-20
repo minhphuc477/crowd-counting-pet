@@ -92,6 +92,9 @@ def run_eval(
     eval_score_calibration_start_epoch: int,
     eval_score_calibration_min_bias: float,
     eval_score_calibration_max_bias: float,
+    eval_score_calibration_count_blend: float,
+    eval_score_calibration_count_ratio_min: float,
+    eval_score_calibration_count_ratio_max: float,
     eval_foreground_gate: str | None,
     eval_foreground_gate_mode: str | None,
     eval_foreground_gate_strength: float | None,
@@ -150,6 +153,12 @@ def run_eval(
         str(eval_score_calibration_min_bias),
         "--eval_score_calibration_max_bias",
         str(eval_score_calibration_max_bias),
+        "--eval_score_calibration_count_blend",
+        str(eval_score_calibration_count_blend),
+        "--eval_score_calibration_count_ratio_min",
+        str(eval_score_calibration_count_ratio_min),
+        "--eval_score_calibration_count_ratio_max",
+        str(eval_score_calibration_count_ratio_max),
         "--eval_protocol",
         args.eval_protocol,
     ]
@@ -203,6 +212,9 @@ def run_eval(
         "eval_score_calibration_start_epoch": int(eval_score_calibration_start_epoch),
         "eval_score_calibration_min_bias": float(eval_score_calibration_min_bias),
         "eval_score_calibration_max_bias": float(eval_score_calibration_max_bias),
+        "eval_score_calibration_count_blend": float(eval_score_calibration_count_blend),
+        "eval_score_calibration_count_ratio_min": float(eval_score_calibration_count_ratio_min),
+        "eval_score_calibration_count_ratio_max": float(eval_score_calibration_count_ratio_max),
         "eval_foreground_gate": eval_foreground_gate if eval_foreground_gate is not None else "checkpoint",
         "eval_foreground_gate_mode": (
             eval_foreground_gate_mode if eval_foreground_gate_mode is not None else "checkpoint"
@@ -249,6 +261,9 @@ def write_outputs(records: list[dict], output_dir: Path) -> None:
         "eval_score_calibration_start_epoch",
         "eval_score_calibration_min_bias",
         "eval_score_calibration_max_bias",
+        "eval_score_calibration_count_blend",
+        "eval_score_calibration_count_ratio_min",
+        "eval_score_calibration_count_ratio_max",
         "eval_foreground_gate",
         "eval_foreground_gate_mode",
         "eval_foreground_gate_strength",
@@ -372,6 +387,9 @@ def get_args() -> argparse.Namespace:
     parser.add_argument("--eval_score_calibration_start_epoch", default=0, type=int)
     parser.add_argument("--eval_score_calibration_min_bias", default=-8.0, type=float)
     parser.add_argument("--eval_score_calibration_max_bias", default=8.0, type=float)
+    parser.add_argument("--eval_score_calibration_count_blend", default=1.0, type=float)
+    parser.add_argument("--eval_score_calibration_count_ratio_min", default=0.0, type=float)
+    parser.add_argument("--eval_score_calibration_count_ratio_max", default=1e6, type=float)
     parser.add_argument(
         "--eval_foreground_gates",
         nargs="+",
@@ -484,6 +502,10 @@ def main() -> int:
                                                     f"eval_count_mode={eval_count_mode} "
                                                     f"eval_count_head_min_score={eval_count_head_min_score} "
                                                     f"eval_score_calibration={eval_score_calibration} "
+                                                    f"eval_score_calibration_count_blend={args.eval_score_calibration_count_blend} "
+                                                    f"eval_score_calibration_count_ratio="
+                                                    f"{args.eval_score_calibration_count_ratio_min}:"
+                                                    f"{args.eval_score_calibration_count_ratio_max} "
                                                     f"eval_foreground_gate={fg_gate_text} "
                                                     f"eval_foreground_gate_mode={fg_mode_text} "
                                                     f"eval_foreground_gate_strength={fg_strength_text}"
@@ -502,6 +524,9 @@ def main() -> int:
                                                     args.eval_score_calibration_start_epoch,
                                                     args.eval_score_calibration_min_bias,
                                                     args.eval_score_calibration_max_bias,
+                                                    args.eval_score_calibration_count_blend,
+                                                    args.eval_score_calibration_count_ratio_min,
+                                                    args.eval_score_calibration_count_ratio_max,
                                                     eval_foreground_gate,
                                                     eval_foreground_gate_mode,
                                                     eval_foreground_gate_strength,

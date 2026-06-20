@@ -607,8 +607,23 @@ class PET(nn.Module):
         self.eval_score_calibration_start_epoch = int(getattr(args, 'eval_score_calibration_start_epoch', 0))
         self.eval_score_calibration_min_bias = float(getattr(args, 'eval_score_calibration_min_bias', -8.0))
         self.eval_score_calibration_max_bias = float(getattr(args, 'eval_score_calibration_max_bias', 8.0))
+        self.eval_score_calibration_count_blend = float(
+            getattr(args, 'eval_score_calibration_count_blend', 1.0)
+        )
+        self.eval_score_calibration_count_ratio_min = float(
+            getattr(args, 'eval_score_calibration_count_ratio_min', 0.0)
+        )
+        self.eval_score_calibration_count_ratio_max = float(
+            getattr(args, 'eval_score_calibration_count_ratio_max', 1e6)
+        )
         if self.eval_score_calibration_min_bias > self.eval_score_calibration_max_bias:
             raise ValueError('eval_score_calibration_min_bias must be <= eval_score_calibration_max_bias')
+        if not 0.0 <= self.eval_score_calibration_count_blend <= 1.0:
+            raise ValueError('eval_score_calibration_count_blend must be in [0, 1]')
+        if self.eval_score_calibration_count_ratio_min < 0.0:
+            raise ValueError('eval_score_calibration_count_ratio_min must be non-negative')
+        if self.eval_score_calibration_count_ratio_max < self.eval_score_calibration_count_ratio_min:
+            raise ValueError('eval_score_calibration_count_ratio_max must be >= eval_score_calibration_count_ratio_min')
         self.pet_loss_variant = getattr(args, 'pet_loss_variant', 'paper')
         self.split_loss_variant = getattr(args, 'split_loss_variant', 'auto')
         if self.split_loss_variant == 'auto':
@@ -2560,9 +2575,19 @@ class PET(nn.Module):
         if valid_weight <= 0:
             return None
 
+        raw_expected_count = (torch.sigmoid(margin) * weight).sum().detach().float()
         target_count = outputs['count_pred'][0].detach().float()
         if not torch.isfinite(target_count):
             return None
+        blend = float(self.eval_score_calibration_count_blend)
+        if blend < 1.0:
+            target_count = raw_expected_count * (1.0 - blend) + target_count * blend
+        ratio_min = float(self.eval_score_calibration_count_ratio_min)
+        ratio_max = float(self.eval_score_calibration_count_ratio_max)
+        target_count = target_count.clamp(
+            min=raw_expected_count * ratio_min,
+            max=raw_expected_count * ratio_max,
+        )
         target_count = target_count.clamp(min=0.0, max=float(valid_weight.item()))
 
         min_bias = float(self.eval_score_calibration_min_bias)
