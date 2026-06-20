@@ -905,6 +905,7 @@ EXPERIMENTAL_MODEL_RECIPES = {
     'vgg_apglc_warmapg_late_countreg',
     'vgg_apglc_countcal',
     'vgg_apglc_ccpet',
+    'vgg_apglc_bsf',
     'vgg_routed_apglc_countcal',
 }
 
@@ -1447,6 +1448,8 @@ def get_args_parser():
                         help='split-map threshold used to route sparse vs dense inference windows')
     parser.add_argument('--split_threshold_quantile', default=0.5, type=float,
                         help='legacy adaptive split-map quantile (unused when split_threshold is set)')
+    parser.add_argument('--query_prune_threshold', default=0.5, type=float,
+                        help='fixed PET decoder-window pruning threshold; independent from eval split threshold')
     parser.add_argument('--score_threshold', default=0.5, type=float,
                         help='point classification threshold; negative enables adaptive score thresholding')
     parser.add_argument('--eval_nms_radius', default=0.0, type=float,
@@ -1873,7 +1876,7 @@ def merge_checkpoint_args(args, checkpoint):
             'freeze_backbone_epochs', 'clip_max_norm',
             'lr_scheduler', 'lr_drop', 'lr_gamma', 'warmup_epochs', 'hold_epochs',
             'min_lr', 'ema_decay',
-            'score_threshold', 'split_threshold', 'split_threshold_quantile',
+            'score_threshold', 'split_threshold', 'split_threshold_quantile', 'query_prune_threshold',
             'eval_nms_radius', 'eval_branch_gate', 'eval_soft_split_gate',
             'eval_foreground_gate', 'eval_foreground_gate_mode', 'eval_foreground_gate_strength',
             'eval_count_mode', 'eval_count_head_min_score',

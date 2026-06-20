@@ -275,6 +275,7 @@ def get_args_parser():
     parser.add_argument('--split_pos_weight', default=1.0, type=float)
     parser.add_argument('--split_threshold', default=0.5, type=float)
     parser.add_argument('--split_threshold_quantile', default=0.5, type=float)
+    parser.add_argument('--query_prune_threshold', default=0.5, type=float)
     parser.add_argument('--score_threshold', default=0.5, type=float)
     parser.add_argument('--eval_nms_radius', default=4.0, type=float)
     parser.add_argument('--eval_branch_gate', default='pred', choices=('none', 'query', 'pred'))
@@ -332,6 +333,8 @@ def get_args_parser():
                         help='override the checkpoint split threshold at evaluation time')
     parser.add_argument('--override_split_threshold_quantile', default=None, type=float,
                         help='override the checkpoint split-threshold quantile at evaluation time')
+    parser.add_argument('--override_query_prune_threshold', default=None, type=float,
+                        help='override fixed PET decoder-window pruning threshold')
     parser.add_argument('--checkpoint_model_key', default='auto',
                         choices=('auto', 'model', 'model_ema', 'model_raw'),
                         help='checkpoint state to evaluate; auto prefers model_ema when present')
@@ -368,6 +371,7 @@ def merge_checkpoint_args(args, checkpoint):
         'resume', 'device', 'vis_dir', 'results_file', 'data_path', 'dataset_file',
         'eval_max_size', 'num_workers', 'seed',
         'override_score_threshold', 'override_split_threshold', 'override_split_threshold_quantile',
+        'override_query_prune_threshold',
         'checkpoint_model_key', 'deterministic', 'tta_flip', 'tta_scales',
         'eval_nms_radius', 'eval_branch_gate', 'eval_soft_split_gate',
         'eval_foreground_gate', 'eval_foreground_gate_mode', 'eval_foreground_gate_strength',
@@ -427,12 +431,15 @@ def apply_eval_overrides(args):
     override_score_threshold = getattr(args, 'override_score_threshold', None)
     override_split_threshold = getattr(args, 'override_split_threshold', None)
     override_split_threshold_quantile = getattr(args, 'override_split_threshold_quantile', None)
+    override_query_prune_threshold = getattr(args, 'override_query_prune_threshold', None)
     if override_score_threshold is not None:
         args.score_threshold = float(override_score_threshold)
     if override_split_threshold is not None:
         args.split_threshold = float(override_split_threshold)
     if override_split_threshold_quantile is not None:
         args.split_threshold_quantile = float(override_split_threshold_quantile)
+    if override_query_prune_threshold is not None:
+        args.query_prune_threshold = float(override_query_prune_threshold)
     return args
 
 
@@ -604,6 +611,9 @@ def main(args):
             'eval_protocol': args.eval_protocol,
             'tta_flip': bool(args.tta_flip),
             'tta_scales': list(tta_scales),
+            'score_threshold': float(getattr(args, 'score_threshold', 0.5)),
+            'split_threshold': float(getattr(args, 'split_threshold', 0.5)),
+            'query_prune_threshold': float(getattr(args, 'query_prune_threshold', 0.5)),
             'eval_nms_radius': float(getattr(args, 'eval_nms_radius', 4.0)),
             'eval_branch_gate': getattr(args, 'eval_branch_gate', 'pred'),
             'eval_soft_split_gate': getattr(args, 'eval_soft_split_gate', 'pred'),

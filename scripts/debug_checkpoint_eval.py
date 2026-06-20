@@ -31,6 +31,7 @@ def get_args():
     parser.add_argument("--timm_adapter", default="lite_fpn")
     parser.add_argument("--score_threshold", default=0.575, type=float)
     parser.add_argument("--split_threshold", default=0.47, type=float)
+    parser.add_argument("--query_prune_threshold", default=0.5, type=float)
     parser.add_argument("--eval_nms_radius", default=4.0, type=float)
     parser.add_argument("--eval_branch_gate", default="pred", choices=("none", "query", "pred"))
     parser.add_argument("--eval_soft_split_gate", default="pred", choices=("none", "query", "pred"))
@@ -69,6 +70,7 @@ def main():
     merged_args.data_path = args.data_path
     merged_args.score_threshold = args.score_threshold
     merged_args.split_threshold = args.split_threshold
+    merged_args.query_prune_threshold = args.query_prune_threshold
     merged_args.eval_nms_radius = args.eval_nms_radius
     merged_args.eval_branch_gate = args.eval_branch_gate
     merged_args.eval_soft_split_gate = args.eval_soft_split_gate
@@ -121,6 +123,7 @@ def main():
             "timm_adapter": getattr(merged_args, "timm_adapter", None),
             "score_threshold": float(getattr(merged_args, "score_threshold", -1)),
             "split_threshold": float(getattr(merged_args, "split_threshold", -1)),
+            "query_prune_threshold": float(getattr(merged_args, "query_prune_threshold", 0.5)),
             "eval_count_mode": getattr(merged_args, "eval_count_mode", None),
             "eval_score_calibration": getattr(merged_args, "eval_score_calibration", None),
         },

@@ -654,6 +654,9 @@ class PET(nn.Module):
         self.negative_loss_coef = float(getattr(args, 'negative_loss_coef', 0.1))
         self.split_threshold = float(getattr(args, 'split_threshold', -1.0))
         self.split_threshold_quantile = float(getattr(args, 'split_threshold_quantile', 0.5))
+        self.query_prune_threshold = float(getattr(args, 'query_prune_threshold', 0.5))
+        if not 0.0 <= self.query_prune_threshold <= 1.0:
+            raise ValueError('query_prune_threshold must be in [0, 1]')
         self.score_threshold = float(getattr(args, 'score_threshold', 0.5))
         self.eval_nms_radius = float(getattr(args, 'eval_nms_radius', 0.0))
         self.eval_branch_gate = getattr(args, 'eval_branch_gate', 'none')
@@ -2716,8 +2719,12 @@ class PET(nn.Module):
         if sparse_active:
             sparse_kwargs = dict(kwargs)
             sparse_kwargs['div'] = split_map_sparse.reshape(bs, sp_h, sp_w)
-            sparse_kwargs['div_threshold'] = 1.0 - split_threshold
-            sparse_kwargs['div_compare'] = 'ge'
+            # Keep decoder-window pruning independent from the branch/eval
+            # split threshold. Original PET always pruned both branches at
+            # 0.5; coupling this to a swept 0.45 split threshold changed the
+            # active query population and regressed the known-good model.
+            sparse_kwargs['div_threshold'] = 1.0 - self.query_prune_threshold
+            sparse_kwargs['div_compare'] = 'gt'
             sparse_kwargs['dec_win_size'] = list(self.sparse_dec_win_size)
             outputs_sparse = self.quadtree_sparse(samples, features, context_info, **sparse_kwargs)
         else:
@@ -2727,7 +2734,7 @@ class PET(nn.Module):
         if dense_active:
             dense_kwargs = dict(kwargs)
             dense_kwargs['div'] = split_map_dense.reshape(bs, ds_h, ds_w)
-            dense_kwargs['div_threshold'] = split_threshold
+            dense_kwargs['div_threshold'] = self.query_prune_threshold
             dense_kwargs['div_compare'] = 'gt'
             dense_kwargs['dec_win_size'] = list(self.dense_dec_win_size)
             outputs_dense = self.quadtree_dense(samples, features, context_info, **dense_kwargs)
@@ -2751,6 +2758,7 @@ class PET(nn.Module):
         outputs['split_mask_sparse'] = split_mask_sparse
         outputs['split_mask_dense'] = split_mask_dense
         outputs['split_threshold'] = split_threshold.detach()
+        outputs['query_prune_threshold'] = split_map.new_tensor(self.query_prune_threshold).detach()
         if self.count_head is not None:
             count_epoch = int(kwargs.get('epoch', 0))
             count_density = self.count_head.predict_density(self.count_head_features(encode_src, count_epoch), mask)
@@ -2933,6 +2941,7 @@ class PET(nn.Module):
             div_out['eval_count_debug'] = count_debug
         div_out['split_map_raw'] = outputs['split_map_raw']
         div_out['split_threshold'] = outputs['split_threshold']
+        div_out['query_prune_threshold'] = outputs['query_prune_threshold']
         if 'count_pred' in outputs:
             div_out['count_pred'] = outputs['count_pred']
         return div_out

@@ -40,6 +40,7 @@ KEY_ARGS = (
     'eval_branch_gate',
     'eval_soft_split_gate',
     'split_threshold',
+    'query_prune_threshold',
     'patch_size',
     'patch_size_choices',
     'crop_attempts',
