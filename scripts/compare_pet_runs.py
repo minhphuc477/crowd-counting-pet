@@ -20,6 +20,8 @@ ARG_KEYS = (
     "model_recipe",
     "backbone",
     "timm_adapter",
+    "scale_fusion",
+    "scale_fusion_activation",
     "no_pretrained_backbone",
     "resume",
     "resume_model_only",

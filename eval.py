@@ -23,6 +23,8 @@ ARCHITECTURE_OVERRIDE_KEYS = {
     'allow_random_backbone_fallback',
     'timm_adapter',
     'timm_output_norm',
+    'scale_fusion',
+    'scale_fusion_activation',
     'position_embedding',
     'dec_layers',
     'dim_feedforward',
@@ -83,6 +85,8 @@ def get_args_parser():
                         help='adapter used to map timm features into PET 4x/8x features')
     parser.add_argument('--timm_output_norm', default='gn', choices=('gn', 'none'),
                         help='normalization after timm feature adapter; gn preserves old timm behavior, none is VGG-like')
+    parser.add_argument('--scale_fusion', default='none', choices=('none', 'bidirectional'))
+    parser.add_argument('--scale_fusion_activation', default='gelu', choices=('relu', 'gelu'))
     parser.add_argument('--fusion_mhf_mode', default='none', choices=('none', 'cem', 'cem_msem', 'full'))
     parser.add_argument('--fusion_mhf_heads', default=1, type=int)
     parser.add_argument('--fusion_mhf_position', default='before', choices=('before', 'post'))
