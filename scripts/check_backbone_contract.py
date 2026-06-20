@@ -28,6 +28,8 @@ def make_args(
     device,
     timm_adapter,
     timm_output_norm,
+    scale_fusion,
+    scale_fusion_activation,
     decoder_attention,
     decoder_memory_halo,
     decoder_global_context,
@@ -48,6 +50,8 @@ def make_args(
         backbone=backbone,
         timm_adapter=timm_adapter,
         timm_output_norm=timm_output_norm,
+        scale_fusion=scale_fusion,
+        scale_fusion_activation=scale_fusion_activation,
         fusion_mhf_mode=fusion_mhf_mode,
         fusion_mhf_heads=fusion_mhf_heads,
         fusion_mhf_position=fusion_mhf_position,
@@ -113,6 +117,8 @@ def check_backbone(
     device,
     timm_adapter,
     timm_output_norm,
+    scale_fusion,
+    scale_fusion_activation,
     decoder_attention,
     decoder_memory_halo,
     decoder_global_context,
@@ -133,6 +139,8 @@ def check_backbone(
         device,
         timm_adapter,
         timm_output_norm,
+        scale_fusion,
+        scale_fusion_activation,
         decoder_attention,
         decoder_memory_halo,
         decoder_global_context,
@@ -172,6 +180,8 @@ def parse_args():
     parser.add_argument('--backbone', default='convnextv2_base')
     parser.add_argument('--timm_adapter', default='lite_fpn', choices=('pet_fpn', 'lite_fpn', 'rcc_fpn', 'direct', 'fpn'))
     parser.add_argument('--timm_output_norm', default='gn', choices=('gn', 'none'))
+    parser.add_argument('--scale_fusion', default='none', choices=('none', 'bidirectional'))
+    parser.add_argument('--scale_fusion_activation', default='gelu', choices=('relu', 'gelu'))
     parser.add_argument('--all', action='store_true', help='Check vgg16_bn and every supported timm backbone')
     parser.add_argument('--height', type=int, default=256)
     parser.add_argument('--width', type=int, default=256)
@@ -205,6 +215,8 @@ def main():
                 args.device,
                 args.timm_adapter,
                 args.timm_output_norm,
+                args.scale_fusion,
+                args.scale_fusion_activation,
                 args.decoder_attention,
                 args.decoder_memory_halo,
                 args.decoder_global_context,

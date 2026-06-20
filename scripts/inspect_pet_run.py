@@ -23,6 +23,8 @@ KEY_ARGS = (
     'amp',
     'freeze_bn',
     'freeze_backbone_epochs',
+    'scale_fusion',
+    'scale_fusion_activation',
     'fusion_mhf_mode',
     'fusion_mhf_heads',
     'fusion_mhf_position',

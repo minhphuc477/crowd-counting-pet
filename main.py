@@ -2044,6 +2044,8 @@ def model_only_allowed_missing_prefixes(args):
     )
     if needs_foreground_head:
         prefixes.append('foreground_head.')
+    if getattr(args, 'scale_fusion', 'none') != 'none':
+        prefixes.append('scale_fusion.')
     return tuple(prefixes)
 
 
