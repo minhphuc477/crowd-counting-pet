@@ -104,6 +104,53 @@ MODEL_RECIPES = {
         'bad_count_start_epoch': 100,
         'bad_count_direction': 'all',
     },
+    # Bidirectional Scale-Fusion PET (BSF-PET).
+    #
+    # This is a single-variable architecture ablation over the verified
+    # vgg_apglc scratch recipe. A zero-initialized residual block exchanges
+    # 4x localization detail and 8x context before PET's encoder/decoders. It
+    # uses the original PET counting path: no count head, density loss, score
+    # calibration, foreground gate, NMS, or branch gate.
+    'vgg_apglc_bsf': {
+        'backbone': 'vgg16_bn',
+        'timm_adapter': 'lite_fpn',
+        'scale_fusion': 'bidirectional',
+        'scale_fusion_activation': 'gelu',
+        'pet_loss_variant': 'paper',
+        'split_loss_variant': 'auto',
+        'apg_loss_coef': 0.02,
+        'apg_start_epoch': 0,
+        'apg_warmup_epochs': 0,
+        'apg_end_epoch': 350,
+        'apg_sparse_coef': 1.0,
+        'apg_dense_coef': 1.0,
+        'apg_dense_start_epoch': 0,
+        'apg_dense_warmup_epochs': 0,
+        'apg_pos_k': 1,
+        'apg_point_coef': 5.0,
+        'apg_bg_coef': 0.0,
+        'apg_contrastive_coef': 0.15,
+        'apg_neg_k': 4,
+        'apg_margin': 1.0,
+        'apg_count_calibration': 'none',
+        'count_head_loss_coef': 0.0,
+        'density_map_loss_coef': 0.0,
+        'routed_apg_loss_coef': 0.0,
+        'foreground_loss_coef': 0.0,
+        'eval_foreground_gate': 'none',
+        'eval_count_mode': 'threshold',
+        'eval_score_calibration': 'none',
+        'eval_dense_start_epoch': 0,
+        'eval_dense_residual_mode': 'none',
+        'eval_nms_radius': 0.0,
+        'eval_branch_gate': 'none',
+        'eval_soft_split_gate': 'none',
+        'score_threshold': 0.55,
+        'split_threshold': 0.45,
+        'split_threshold_quantile': 0.5,
+        'bad_count_start_epoch': 100,
+        'bad_count_direction': 'all',
+    },
     # Scratch version of the observed 50 -> 48 path.
     #
     # APG+LC is trained first. A small scalar density-sum count regularizer is
@@ -857,6 +904,7 @@ EXPERIMENTAL_MODEL_RECIPES = {
     'vgg_apglc_lowloss_count_feedback',
     'vgg_apglc_warmapg_late_countreg',
     'vgg_apglc_countcal',
+    'vgg_apglc_ccpet',
     'vgg_routed_apglc_countcal',
 }
 
@@ -914,6 +962,8 @@ ARCHITECTURE_OVERRIDE_KEYS = {
     'allow_random_backbone_fallback',
     'timm_adapter',
     'timm_output_norm',
+    'scale_fusion',
+    'scale_fusion_activation',
     'position_embedding',
     'dec_layers',
     'dim_feedforward',
@@ -1032,6 +1082,10 @@ def get_args_parser():
                         help='adapter used to map timm features into PET 4x/8x features')
     parser.add_argument('--timm_output_norm', default='gn', choices=('gn', 'none'),
                         help='normalization after timm feature adapter; gn preserves old timm behavior, none is VGG-like')
+    parser.add_argument('--scale_fusion', default='none', choices=('none', 'bidirectional'),
+                        help='identity-initialized exchange between PET 4x detail and 8x context features')
+    parser.add_argument('--scale_fusion_activation', default='gelu', choices=('relu', 'gelu'),
+                        help='activation used by bidirectional scale fusion')
     parser.add_argument('--fusion_mhf_mode', default='none', choices=('none', 'cem', 'cem_msem', 'full'),
                         help='VGG FPN high-level feature attention ablation inspired by VMambaCC MHF')
     parser.add_argument('--fusion_mhf_heads', default=1, type=int,

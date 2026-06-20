@@ -399,6 +399,68 @@ class DynamicReceptiveFieldMixer(nn.Module):
         return x + self.out_proj(branch_sum)
 
 
+class BidirectionalScaleFusion(nn.Module):
+    """Identity-initialized exchange between PET's 4x and 8x features.
+
+    PET's 8x branch receives contextual features while the 4x branch retains
+    localization detail. This block lets each scale borrow the complementary
+    signal without changing PET's tensor contract. Both residual projections
+    start at zero, so enabling the module is exactly equivalent to baseline PET
+    before the first optimizer step.
+    """
+
+    def __init__(self, hidden_dim, activation='gelu'):
+        super().__init__()
+        if activation == 'gelu':
+            act_factory = nn.GELU
+        elif activation == 'relu':
+            act_factory = lambda: nn.ReLU(inplace=True)
+        else:
+            raise ValueError(f'Unsupported scale fusion activation: {activation}. Use "gelu" or "relu".')
+
+        def make_exchange():
+            return nn.Sequential(
+                nn.Conv2d(hidden_dim, hidden_dim, 3, padding=1, groups=hidden_dim, bias=False),
+                _make_group_norm(hidden_dim),
+                act_factory(),
+                nn.Conv2d(hidden_dim, hidden_dim, 1, bias=False),
+            )
+
+        def make_gate():
+            mid_dim = max(16, hidden_dim // 4)
+            return nn.Sequential(
+                nn.Conv2d(hidden_dim, mid_dim, 1, bias=False),
+                act_factory(),
+                nn.Conv2d(mid_dim, hidden_dim, 1),
+                nn.Sigmoid(),
+            )
+
+        self.detail_to_context = make_exchange()
+        self.context_to_detail = make_exchange()
+        self.context_gate = make_gate()
+        self.detail_gate = make_gate()
+        self.out_context = nn.Conv2d(hidden_dim, hidden_dim, 1)
+        self.out_detail = nn.Conv2d(hidden_dim, hidden_dim, 1)
+        for layer in (self.out_context, self.out_detail):
+            nn.init.zeros_(layer.weight)
+            nn.init.zeros_(layer.bias)
+
+    def forward(self, detail_4x, context_8x):
+        detail_for_context = F.adaptive_avg_pool2d(detail_4x, context_8x.shape[-2:])
+        detail_for_context = self.detail_to_context(detail_for_context)
+        context_update = self.out_context(detail_for_context * self.context_gate(context_8x))
+
+        context_for_detail = F.interpolate(
+            context_8x,
+            size=detail_4x.shape[-2:],
+            mode='bilinear',
+            align_corners=False,
+        )
+        context_for_detail = self.context_to_detail(context_for_detail)
+        detail_update = self.out_detail(context_for_detail * self.detail_gate(detail_4x))
+        return detail_4x + detail_update, context_8x + context_update
+
+
 class QuadtreeSplitter(nn.Module):
     def __init__(self, hidden_dim, context_h, context_w, head='pool', mid_dim=128, activation='gelu'):
         super().__init__()
@@ -514,6 +576,18 @@ class PET(nn.Module):
             nn.Conv2d(backbone.num_channels, hidden_dim, kernel_size=1),
             ]
         )
+        scale_fusion = getattr(args, 'scale_fusion', 'none')
+        if scale_fusion == 'none':
+            self.scale_fusion = None
+        elif scale_fusion == 'bidirectional':
+            self.scale_fusion = BidirectionalScaleFusion(
+                hidden_dim,
+                activation=getattr(args, 'scale_fusion_activation', 'gelu'),
+            )
+        else:
+            raise ValueError(
+                f'Unsupported scale_fusion: {scale_fusion}. Use "none" or "bidirectional".'
+            )
 
         # context encoder
         self.encode_feats = '8x'
@@ -2289,6 +2363,10 @@ class PET(nn.Module):
         # feature projection
         features['4x'] = NestedTensor(self.input_proj[0](features['4x'].tensors), features['4x'].mask)
         features['8x'] = NestedTensor(self.input_proj[1](features['8x'].tensors), features['8x'].mask)
+        if self.scale_fusion is not None:
+            fused_4x, fused_8x = self.scale_fusion(features['4x'].tensors, features['8x'].tensors)
+            features['4x'] = NestedTensor(fused_4x, features['4x'].mask)
+            features['8x'] = NestedTensor(fused_8x, features['8x'].mask)
 
         # forward
         if 'train' in kwargs:
