@@ -40,6 +40,7 @@ ARG_KEYS = (
     "count_head_end_epoch",
     "count_head_feature_grad_scale",
     "count_head_warmup_epochs",
+    "train_count_head_only",
     "density_map_loss_coef",
     "lr",
     "lr_backbone",
