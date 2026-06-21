@@ -905,6 +905,10 @@ MODEL_RECIPES = {
 # low-weight interpolated GT/local-negative supervision directly to both PET
 # proposal heads. It is intentionally not a count-head, density-map, NMS, or
 # calibration recipe.
+#
+# Audit note: SHA runs did not improve over vgg_apglc (best observed 53.3 MAE
+# and later count drift), so this remains an experimental ablation rather than
+# a recommended recipe.
 MODEL_RECIPES['vgg_apglc_shared_ifi'] = {
     **MODEL_RECIPES['vgg_apglc'],
     'ifi_loss_coef': 0.02,
@@ -915,6 +919,20 @@ MODEL_RECIPES['vgg_apglc_shared_ifi'] = {
     'ifi_neg_min_dist': 2.0,
     'ifi_start_epoch': 0,
     'ifi_end_epoch': 350,
+}
+
+# Quality-Calibrated PET (QC-PET).
+#
+# Keeps the verified APG+LC representation and inference path, but trains the
+# person score to encode localization quality for matched point queries. This
+# follows the detector lesson from GFL/VFNet: candidate ranking should reflect
+# objectness and localization quality, not a binary label alone.
+MODEL_RECIPES['vgg_apglc_quality'] = {
+    **MODEL_RECIPES['vgg_apglc'],
+    'quality_loss_coef': 0.05,
+    'quality_loss_sigma': 16.0,
+    'quality_loss_pos_floor': 0.50,
+    'quality_loss_bg_weight': 0.05,
 }
 
 # Local Ordinal ZIP PET (LOZIP-PET): the verified APG+LC recipe plus a
@@ -950,6 +968,7 @@ EXPERIMENTAL_MODEL_RECIPES = {
     'vgg_apglc_countcal',
     'vgg_apglc_ccpet',
     'vgg_apglc_bsf',
+    'vgg_apglc_shared_ifi',
     'vgg_routed_apglc_countcal',
 }
 
@@ -1247,6 +1266,14 @@ def get_args_parser():
     # - loss coefficients
     parser.add_argument('--ce_loss_coef', default=1.0, type=float)
     parser.add_argument('--point_loss_coef', default=5.0, type=float)
+    parser.add_argument('--quality_loss_coef', default=0.0, type=float,
+                        help='quality-aware score calibration loss weight; 0 disables it')
+    parser.add_argument('--quality_loss_sigma', default=16.0, type=float,
+                        help='pixel sigma mapping matched localization error to score quality')
+    parser.add_argument('--quality_loss_pos_floor', default=0.5, type=float,
+                        help='minimum quality target assigned to matched positives')
+    parser.add_argument('--quality_loss_bg_weight', default=0.1, type=float,
+                        help='relative weight for unmatched-query quality negatives')
     parser.add_argument('--pq_sparse_coef', default=1.0, type=float,
                         help='branch multiplier for sparse base point-query CE/point losses')
     parser.add_argument('--pq_dense_coef', default=1.0, type=float,
@@ -1970,6 +1997,8 @@ def merge_checkpoint_args(args, checkpoint):
             'class_loss_type', 'focal_alpha', 'focal_gamma',
             'count_loss_coef', 'count_loss_gate', 'count_loss_type',
             'count_loss_budget_margin', 'count_loss_start_epoch',
+            'quality_loss_coef', 'quality_loss_sigma', 'quality_loss_pos_floor',
+            'quality_loss_bg_weight',
             'pq_sparse_coef', 'pq_dense_coef',
             'pq_dense_start_epoch', 'pq_dense_warmup_epochs',
             'branch_target_routing',

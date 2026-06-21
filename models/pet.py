@@ -3382,6 +3382,9 @@ class SetCriterion(nn.Module):
             raise ValueError('class_loss_type must be one of "ce" or "focal"')
         self.focal_alpha = float(getattr(args, 'focal_alpha', 0.25))
         self.focal_gamma = float(getattr(args, 'focal_gamma', 2.0))
+        self.quality_loss_sigma = max(1e-6, float(getattr(args, 'quality_loss_sigma', 16.0)))
+        self.quality_loss_pos_floor = min(max(float(getattr(args, 'quality_loss_pos_floor', 0.5)), 0.0), 1.0)
+        self.quality_loss_bg_weight = max(0.0, float(getattr(args, 'quality_loss_bg_weight', 0.1)))
         empty_weight = torch.ones(self.num_classes + 1)
         empty_weight[0] = self.eos_coef    # coefficient for non-object background points
         self.register_buffer('empty_weight', empty_weight)
@@ -3486,6 +3489,43 @@ class SetCriterion(nn.Module):
         losses = {'loss_ce': loss_ce}
         return losses
 
+    def loss_quality(self, outputs, targets, indices, num_points, **kwargs):
+        """Quality-aware person score calibration.
+
+        Matched point queries receive a continuous score target based on their
+        detached localization error; unmatched queries receive zero. This adapts
+        IoU-aware/quality-aware detection scoring to PET's point localization so
+        ranking at inference is tied to both person presence and point quality.
+        """
+        assert 'pred_logits' in outputs and 'pred_points' in outputs
+        src_logits = outputs['pred_logits']
+        pred_points = outputs['pred_points']
+        quality_targets = src_logits.new_zeros(src_logits.shape[:2])
+        weights = src_logits.new_full(src_logits.shape[:2], self.quality_loss_bg_weight)
+        idx = self._get_src_permutation_idx(indices)
+        idx = (idx[0].to(src_logits.device), idx[1].to(src_logits.device))
+        if idx[0].numel() > 0:
+            target_points = torch.cat([
+                t['points'][i.to(t['points'].device)] for t, (_, i) in zip(targets, indices)
+            ], dim=0).to(device=pred_points.device, dtype=pred_points.dtype)
+            img_h, img_w = outputs['img_shape']
+            pred_abs = pred_points[idx].clone()
+            pred_abs[:, 0] *= img_h
+            pred_abs[:, 1] *= img_w
+            point_dist = torch.linalg.vector_norm((pred_abs - target_points).float(), dim=-1)
+            loc_quality = torch.exp(-0.5 * (point_dist / self.quality_loss_sigma).pow(2)).to(src_logits.dtype)
+            loc_quality = self.quality_loss_pos_floor + (1.0 - self.quality_loss_pos_floor) * loc_quality
+            quality_targets[idx] = loc_quality.detach()
+            weights[idx] = 1.0
+
+        person_logit = src_logits[..., 1] - src_logits[..., 0]
+        raw_loss = F.binary_cross_entropy_with_logits(
+            person_logit,
+            quality_targets,
+            reduction='none',
+        )
+        return {'loss_quality': self.weighted_mean_loss(raw_loss, weights)}
+
     def loss_points(self, outputs, targets, indices, num_points, **kwargs):
         """
         SmoothL1 regression loss:
@@ -3570,6 +3610,7 @@ class SetCriterion(nn.Module):
     def get_loss(self, loss, outputs, targets, indices, num_points, **kwargs):
         loss_map = {
             'labels': self.loss_labels,
+            'quality': self.loss_quality,
             'points': self.loss_points,
         }
         assert loss in loss_map, f'{loss} loss is not defined'
@@ -3638,6 +3679,9 @@ def build_pet(args):
     matcher = build_matcher(args)
     weight_dict = {'loss_ce': args.ce_loss_coef, 'loss_points': args.point_loss_coef}
     losses = ['labels', 'points']
+    if getattr(args, 'quality_loss_coef', 0.0) > 0:
+        weight_dict['loss_quality'] = args.quality_loss_coef
+        losses.insert(1, 'quality')
     criterion = SetCriterion(num_classes, matcher=matcher, weight_dict=weight_dict,
                              eos_coef=args.eos_coef, losses=losses,
                              negative_loss_coef=getattr(args, 'negative_loss_coef', 0.1),
