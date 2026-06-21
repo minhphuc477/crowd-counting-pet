@@ -903,6 +903,10 @@ MODEL_RECIPES = {
 # injected only into the 8x encoder context through a zero-initialized residual
 # adapter. The dense 4x proposal branch, quadtree split path, APG schedule, and
 # evaluation protocol stay identical to vgg_apglc.
+#
+# Audit note: SHA scratch run did not improve over vgg_apglc (best observed
+# 54.28 MAE at epoch 450, then drifted to 63+), so this is kept only as a
+# negative multi-scale-fusion ablation.
 MODEL_RECIPES['vgg_apglc_ecfpn'] = {
     **MODEL_RECIPES['vgg_apglc'],
     'encoder_context_fusion': 'detail_to_context',
@@ -956,6 +960,10 @@ MODEL_RECIPES['vgg_apglc_quality'] = {
 # zero-initialized local-density representation module. Unlike the failed
 # scalar count-feedback experiments, this module never shifts point logits or
 # chooses the number of retained predictions.
+#
+# Audit note: this is not the full EBC-ZIP model from Ma et al.; it is only a
+# local auxiliary on PET's 8x encoder features. SHA sweep reached 50.58 MAE,
+# so keep it as a negative ablation rather than a recommended architecture.
 MODEL_RECIPES['vgg_apglc_localzip'] = {
     **MODEL_RECIPES['vgg_apglc'],
     'local_density_mixer': 'zip_ordinal',
@@ -972,6 +980,26 @@ MODEL_RECIPES['vgg_apglc_localzip'] = {
     'local_ordinal_max_per_level': 64,
 }
 
+# EBC-ZIP Count PET: PET/APG+LC remains the point-localization branch, while a
+# separate blockwise Zero-Inflated Poisson head supplies the MAE/RMSE count.
+# This is the paper-backed route from EBC-ZIP/ZIP, unlike the earlier scalar
+# count-head experiments that globally shifted PET logits and caused count
+# drift.
+MODEL_RECIPES['vgg_apglc_ebczip'] = {
+    **MODEL_RECIPES['vgg_apglc'],
+    'zip_count_loss_coef': 0.10,
+    'zip_count_block_size': 16,
+    'zip_count_bin_centers': '1,2,3,4,5,6,7,8,9,10,11.38,13.38,16.26',
+    'zip_count_zero_prior': 0.9,
+    'zip_count_ce_coef': 0.5,
+    'zip_count_count_coef': 1.0,
+    'zip_count_start_epoch': 0,
+    'zip_count_end_epoch': -1,
+    'zip_count_warmup_epochs': 20,
+    'zip_count_feature_grad_scale': 0.25,
+    'eval_count_source': 'zip',
+}
+
 EXPERIMENTAL_MODEL_RECIPES = {
     # These paths are kept for audit/reproduction only. Session runs showed
     # catastrophic over/under-counting before they could improve on APG+LC.
@@ -985,8 +1013,10 @@ EXPERIMENTAL_MODEL_RECIPES = {
     'vgg_apglc_countcal',
     'vgg_apglc_ccpet',
     'vgg_apglc_bsf',
+    'vgg_apglc_ecfpn',
     'vgg_apglc_shared_ifi',
     'vgg_apglc_quality',
+    'vgg_apglc_localzip',
     'vgg_routed_apglc_countcal',
 }
 
@@ -1093,6 +1123,16 @@ ARCHITECTURE_OVERRIDE_KEYS = {
     'foreground_sigma',
     'foreground_neg_shrink',
     'foreground_init_prior',
+    'zip_count_loss_coef',
+    'zip_count_block_size',
+    'zip_count_bin_centers',
+    'zip_count_zero_prior',
+    'zip_count_ce_coef',
+    'zip_count_count_coef',
+    'zip_count_start_epoch',
+    'zip_count_end_epoch',
+    'zip_count_warmup_epochs',
+    'zip_count_feature_grad_scale',
     'vgg_fpn_main_lr',
 }
 
@@ -1277,6 +1317,27 @@ def get_args_parser():
                         help='positive-count boundaries defining ordinal local-density levels')
     parser.add_argument('--local_ordinal_max_per_level', default=64, type=int,
                         help='maximum sampled blocks per density level and training batch')
+    parser.add_argument('--zip_count_loss_coef', default=0.0, type=float,
+                        help='weight for blockwise EBC-ZIP count supervision; 0 disables the ZIP count branch')
+    parser.add_argument('--zip_count_block_size', default=16, type=int,
+                        help='image-space block size for the EBC-ZIP count branch; must be divisible by encoder stride')
+    parser.add_argument('--zip_count_bin_centers',
+                        default='1,2,3,4,5,6,7,8,9,10,11.38,13.38,16.26', type=str,
+                        help='comma-separated positive block-count centers used by the ZIP count branch')
+    parser.add_argument('--zip_count_zero_prior', default=0.9, type=float,
+                        help='initial structural-zero probability for the ZIP count branch')
+    parser.add_argument('--zip_count_ce_coef', default=1.0, type=float,
+                        help='positive count-bin CE multiplier inside ZIP count supervision')
+    parser.add_argument('--zip_count_count_coef', default=1.0, type=float,
+                        help='global log-count consistency multiplier inside ZIP count supervision')
+    parser.add_argument('--zip_count_start_epoch', default=0, type=int,
+                        help='epoch when ZIP count supervision starts')
+    parser.add_argument('--zip_count_end_epoch', default=-1, type=int,
+                        help='epoch after which ZIP count supervision turns off; negative keeps it on')
+    parser.add_argument('--zip_count_warmup_epochs', default=0, type=int,
+                        help='linearly ramp ZIP count loss for this many epochs')
+    parser.add_argument('--zip_count_feature_grad_scale', default=1.0, type=float,
+                        help='scale gradients from ZIP count loss into PET encoder; 0 trains only the ZIP head')
     parser.add_argument('--splitter_head', default='pool', choices=('pool', 'conv'),
                         help='quadtree splitter head; pool matches official PET, conv adds local context')
     parser.add_argument('--splitter_hidden_dim', default=128, type=int,
@@ -1591,6 +1652,8 @@ def get_args_parser():
                         help='foreground gate strength during evaluation')
     parser.add_argument('--eval_count_mode', default='threshold', choices=('threshold', 'count_head_topk'),
                         help='threshold keeps PET behavior; count_head_topk keeps top-K APG candidates using the separate count head')
+    parser.add_argument('--eval_count_source', default='pet', choices=('pet', 'zip'),
+                        help='count used for MAE/RMSE: pet counts thresholded point predictions; zip sums the EBC-ZIP count branch')
     parser.add_argument('--eval_count_head_min_score', default=0.5, type=float,
                         help='minimum candidate score before count-head top-K selection')
     parser.add_argument('--eval_dense_start_epoch', default=0, type=int,
@@ -1994,6 +2057,7 @@ def merge_checkpoint_args(args, checkpoint):
         'bad_count_direction', 'bad_count_ratio_max', 'bad_count_mae_min', 'bad_count_start_epoch',
         'patch_size', 'patch_size_choices', 'crop_attempts', 'min_crop_points',
         'no_localization_metrics', 'localization_large_threshold', 'localization_small_threshold',
+        'eval_count_source',
     }
     if getattr(args, 'resume_model_only', False):
         runtime_keys.update({
@@ -2004,7 +2068,7 @@ def merge_checkpoint_args(args, checkpoint):
             'score_threshold', 'split_threshold', 'split_threshold_quantile', 'query_prune_threshold',
             'eval_nms_radius', 'eval_branch_gate', 'eval_soft_split_gate',
             'eval_foreground_gate', 'eval_foreground_gate_mode', 'eval_foreground_gate_strength',
-            'eval_count_mode', 'eval_count_head_min_score',
+            'eval_count_mode', 'eval_count_source', 'eval_count_head_min_score',
             'eval_score_calibration', 'eval_score_calibration_strength',
             'eval_score_calibration_start_epoch',
             'eval_score_calibration_min_bias', 'eval_score_calibration_max_bias',
@@ -2041,6 +2105,10 @@ def merge_checkpoint_args(args, checkpoint):
             'density_map_loss_type', 'density_map_pos_weight',
             'density_map_grad_scale',
             'density_map_start_epoch', 'density_map_end_epoch',
+            'zip_count_loss_coef', 'zip_count_block_size', 'zip_count_bin_centers',
+            'zip_count_zero_prior', 'zip_count_ce_coef', 'zip_count_count_coef',
+            'zip_count_start_epoch', 'zip_count_end_epoch', 'zip_count_warmup_epochs',
+            'zip_count_feature_grad_scale', 'eval_count_source',
             'foreground_loss_coef', 'foreground_sigma',
             'foreground_neg_shrink', 'foreground_init_prior',
             'eval_foreground_gate', 'eval_foreground_gate_mode', 'eval_foreground_gate_strength',
@@ -2168,6 +2236,12 @@ def model_only_allowed_missing_prefixes(args):
     )
     if needs_count_head:
         prefixes.append('count_head.')
+    needs_zip_count_head = (
+        float(getattr(args, 'zip_count_loss_coef', 0.0)) > 0
+        or getattr(args, 'eval_count_source', 'pet') == 'zip'
+    )
+    if needs_zip_count_head:
+        prefixes.append('zip_count_head.')
     needs_foreground_head = (
         float(getattr(args, 'foreground_loss_coef', 0.0)) > 0
         or getattr(args, 'eval_foreground_gate', 'none') != 'none'
@@ -2700,6 +2774,7 @@ def main(args):
                     'eval_time': float(t2 - t1),
                     'eval_model': eval_model_name,
                     'eval_count_mode': getattr(args, 'eval_count_mode', 'threshold'),
+                    'eval_count_source': getattr(args, 'eval_count_source', 'pet'),
                     'eval_count_head_min_score': float(getattr(args, 'eval_count_head_min_score', 0.5)),
                     'eval_score_calibration': getattr(args, 'eval_score_calibration', 'none'),
                     'eval_score_calibration_strength': float(getattr(args, 'eval_score_calibration_strength', 1.0)),

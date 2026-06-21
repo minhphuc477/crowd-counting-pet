@@ -67,6 +67,16 @@ ARCHITECTURE_OVERRIDE_KEYS = {
     'foreground_sigma',
     'foreground_neg_shrink',
     'foreground_init_prior',
+    'zip_count_loss_coef',
+    'zip_count_block_size',
+    'zip_count_bin_centers',
+    'zip_count_zero_prior',
+    'zip_count_ce_coef',
+    'zip_count_count_coef',
+    'zip_count_start_epoch',
+    'zip_count_end_epoch',
+    'zip_count_warmup_epochs',
+    'zip_count_feature_grad_scale',
 }
 
 
@@ -284,6 +294,7 @@ def get_args_parser():
     parser.add_argument('--eval_foreground_gate_mode', default='suppress', choices=('suppress', 'logit_add'))
     parser.add_argument('--eval_foreground_gate_strength', default=0.75, type=float)
     parser.add_argument('--eval_count_mode', default='threshold', choices=('threshold', 'count_head_topk'))
+    parser.add_argument('--eval_count_source', default='pet', choices=('pet', 'zip'))
     parser.add_argument('--eval_count_head_min_score', default=0.5, type=float)
     parser.add_argument('--eval_dense_start_epoch', default=0, type=int)
     parser.add_argument('--eval_dense_residual_mode', default='none', choices=('none', 'count_head'))
@@ -375,7 +386,7 @@ def merge_checkpoint_args(args, checkpoint):
         'checkpoint_model_key', 'deterministic', 'tta_flip', 'tta_scales',
         'eval_nms_radius', 'eval_branch_gate', 'eval_soft_split_gate',
         'eval_foreground_gate', 'eval_foreground_gate_mode', 'eval_foreground_gate_strength',
-        'eval_count_mode', 'eval_count_head_min_score',
+        'eval_count_mode', 'eval_count_source', 'eval_count_head_min_score',
         'eval_score_calibration', 'eval_score_calibration_strength',
         'eval_score_calibration_start_epoch',
         'eval_score_calibration_min_bias', 'eval_score_calibration_max_bias',
@@ -618,6 +629,7 @@ def main(args):
             'eval_branch_gate': getattr(args, 'eval_branch_gate', 'pred'),
             'eval_soft_split_gate': getattr(args, 'eval_soft_split_gate', 'pred'),
             'eval_count_mode': getattr(args, 'eval_count_mode', 'threshold'),
+            'eval_count_source': getattr(args, 'eval_count_source', 'pet'),
             'eval_count_head_min_score': float(getattr(args, 'eval_count_head_min_score', 0.5)),
             'eval_score_calibration': getattr(args, 'eval_score_calibration', 'none'),
             'eval_score_calibration_strength': float(getattr(args, 'eval_score_calibration_strength', 1.0)),

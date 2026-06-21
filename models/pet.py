@@ -613,6 +613,74 @@ class GlobalCountHead(nn.Module):
         return density.flatten(1).sum(dim=1)
 
 
+class EBCZipCountHead(nn.Module):
+    """Blockwise Zero-Inflated Poisson count head.
+
+    This head predicts a structural-zero probability and a positive-count
+    distribution for each image-space block. Its expected block counts can be
+    summed for MAE/RMSE while PET point predictions remain available for
+    localization metrics.
+    """
+
+    def __init__(
+        self,
+        hidden_dim,
+        block_stride=2,
+        count_bin_centers=(1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.38, 13.38, 16.26),
+        zero_prior=0.9,
+    ):
+        super().__init__()
+        self.block_stride = max(1, int(block_stride))
+        centers = torch.as_tensor(count_bin_centers, dtype=torch.float32)
+        if centers.ndim != 1 or centers.numel() < 2:
+            raise ValueError('zip count bin centers must contain at least two values')
+        if not bool(torch.all(centers[1:] > centers[:-1])):
+            raise ValueError('zip count bin centers must be strictly increasing')
+        if float(centers[0]) <= 0:
+            raise ValueError('zip count bin centers must be positive')
+        self.register_buffer('count_bin_centers', centers)
+
+        self.encoder = nn.Sequential(
+            nn.Conv2d(hidden_dim, hidden_dim, 3, padding=1, groups=hidden_dim, bias=False),
+            _make_group_norm(hidden_dim),
+            nn.GELU(),
+            nn.Conv2d(hidden_dim, hidden_dim, 1, bias=False),
+            _make_group_norm(hidden_dim),
+            nn.GELU(),
+        )
+        self.lambda_head = nn.Conv2d(hidden_dim, centers.numel(), 1)
+        self.zero_head = nn.Conv2d(hidden_dim, 1, 1)
+
+        zero_prior = min(max(float(zero_prior), 1e-4), 1.0 - 1e-4)
+        nn.init.zeros_(self.zero_head.weight)
+        nn.init.constant_(self.zero_head.bias, math.log(zero_prior / (1.0 - zero_prior)))
+        nn.init.zeros_(self.lambda_head.weight)
+        nn.init.zeros_(self.lambda_head.bias)
+        # Bias the positive component toward a single head per occupied block.
+        self.lambda_head.bias.data[0] = 4.0
+
+    def forward(self, x):
+        x = self.encoder(x.float())
+        block = F.avg_pool2d(
+            x,
+            kernel_size=self.block_stride,
+            stride=self.block_stride,
+            ceil_mode=True,
+            count_include_pad=False,
+        )
+        lambda_logits = self.lambda_head(block)
+        zero_logits = self.zero_head(block).squeeze(1)
+        centers = self.count_bin_centers.to(device=lambda_logits.device, dtype=lambda_logits.dtype)
+        positive_rate = (lambda_logits.softmax(dim=1) * centers[None, :, None, None]).sum(dim=1)
+        expected_count = (1.0 - zero_logits.sigmoid()) * positive_rate
+        return {
+            'lambda_logits': lambda_logits,
+            'zero_logits': zero_logits,
+            'positive_rate': positive_rate,
+            'expected_count': expected_count,
+        }
+
+
 class ForegroundConfidenceHead(nn.Module):
     """Spatial foreground prior for PET point-query scores.
 
@@ -850,6 +918,37 @@ class PET(nn.Module):
                 'local ZIP/ordinal losses require --local_density_mixer zip_ordinal'
             )
 
+        self.eval_count_source = getattr(args, 'eval_count_source', 'pet')
+        if self.eval_count_source not in ('pet', 'zip'):
+            raise ValueError('eval_count_source must be one of "pet" or "zip"')
+        self.zip_count_loss_coef = max(0.0, float(getattr(args, 'zip_count_loss_coef', 0.0)))
+        self.zip_count_ce_coef = max(0.0, float(getattr(args, 'zip_count_ce_coef', 1.0)))
+        self.zip_count_count_coef = max(0.0, float(getattr(args, 'zip_count_count_coef', 1.0)))
+        self.zip_count_start_epoch = max(0, int(getattr(args, 'zip_count_start_epoch', 0)))
+        self.zip_count_end_epoch = int(getattr(args, 'zip_count_end_epoch', -1))
+        self.zip_count_warmup_epochs = max(0, int(getattr(args, 'zip_count_warmup_epochs', 0)))
+        self.zip_count_feature_grad_scale = max(0.0, float(getattr(args, 'zip_count_feature_grad_scale', 1.0)))
+        zip_count_block_size = int(getattr(args, 'zip_count_block_size', 16))
+        encoder_stride = int(self.encode_feats[:-1])
+        if zip_count_block_size < encoder_stride or zip_count_block_size % encoder_stride != 0:
+            raise ValueError(
+                f'zip_count_block_size must be a multiple of encoder stride {encoder_stride}, got {zip_count_block_size}'
+            )
+        self._zip_count_config = {
+            'hidden_dim': hidden_dim,
+            'block_stride': zip_count_block_size // encoder_stride,
+            'count_bin_centers': _parse_float_list(
+                getattr(
+                    args,
+                    'zip_count_bin_centers',
+                    '1,2,3,4,5,6,7,8,9,10,11.38,13.38,16.26',
+                ),
+                (1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.38, 13.38, 16.26),
+                'zip_count_bin_centers',
+            ),
+            'zero_prior': getattr(args, 'zip_count_zero_prior', 0.9),
+        }
+
         # quadtree splitter
         context_patch = _parse_size_pair(getattr(args, 'context_patch_size', ''), (128, 64), 'context_patch_size')
         context_w, context_h = context_patch[0]//int(self.encode_feats[:-1]), context_patch[1]//int(self.encode_feats[:-1])
@@ -1010,6 +1109,11 @@ class PET(nn.Module):
         self.count_head = (
             GlobalCountHead(hidden_dim, init_count=self.count_head_init_count, init_cells=self.count_head_init_cells)
             if needs_count_head else None
+        )
+        needs_zip_count_head = self.zip_count_loss_coef > 0 or self.eval_count_source == 'zip'
+        self.zip_count_head = (
+            EBCZipCountHead(**self._zip_count_config)
+            if needs_zip_count_head else None
         )
         self.class_loss_type = getattr(args, 'class_loss_type', 'ce')
         if self.class_loss_type not in ('ce', 'focal'):
@@ -1232,6 +1336,17 @@ class PET(nn.Module):
             return encode_src.detach().float()
         return (encode_src.detach() + scale * (encode_src - encode_src.detach())).float()
 
+    def zip_count_features(self, encode_src):
+        """Return ZIP count features with optional encoder-gradient scaling."""
+        if not self.training:
+            return encode_src.float()
+        scale = self.zip_count_feature_grad_scale
+        if scale >= 1.0:
+            return encode_src.float()
+        if scale <= 0.0:
+            return encode_src.detach().float()
+        return (encode_src.detach() + scale * (encode_src - encode_src.detach())).float()
+
     @staticmethod
     def schedule_weight(epoch, start_epoch, warmup_epochs, coef=1.0):
         if int(epoch) < int(start_epoch):
@@ -1330,6 +1445,16 @@ class PET(nn.Module):
             valid = invalid < 0.5
         return counts, valid
 
+    def build_block_valid_mask(self, expected_count, samples):
+        bs, block_h, block_w = expected_count.shape
+        if samples.mask is None:
+            return torch.ones((bs, block_h, block_w), dtype=torch.bool, device=expected_count.device)
+        invalid = F.adaptive_max_pool2d(
+            samples.mask[:, None].float(),
+            output_size=(block_h, block_w),
+        ).squeeze(1)
+        return (invalid < 0.5).to(device=expected_count.device)
+
     def compute_local_density_losses(self, outputs, targets, samples):
         local_output = outputs.get('local_density')
         if local_output is None:
@@ -1382,6 +1507,54 @@ class PET(nn.Module):
             'loss_local_zip_ce': loss_ce,
             'loss_local_zip_count': loss_count,
             'loss_local_ordinal': loss_ordinal,
+        }
+
+    def compute_zip_count_losses(self, outputs, targets, samples):
+        zip_output = outputs.get('zip_count')
+        if zip_output is None:
+            zero = outputs['split_map_raw'].sum() * 0.0
+            return {
+                'loss_zip_nll': zero,
+                'loss_zip_ce': zero,
+                'loss_zip_count': zero,
+            }
+
+        counts, valid = self.build_local_block_targets(zip_output, targets, samples)
+        lambda_logits = zip_output['lambda_logits'].float()
+        zero_logits = zip_output['zero_logits'].float()
+        positive_rate = zip_output['positive_rate'].float().clamp(min=1e-4, max=1e4)
+
+        log_pi = -F.softplus(-zero_logits)
+        log_one_minus_pi = -F.softplus(zero_logits)
+        zero_log_prob = torch.logaddexp(log_pi, log_one_minus_pi - positive_rate)
+        positive_log_prob = (
+            log_one_minus_pi
+            - positive_rate
+            + counts * positive_rate.log()
+            - torch.lgamma(counts + 1.0)
+        )
+        log_prob = torch.where(counts > 0, positive_log_prob, zero_log_prob)
+        if valid.any():
+            loss_nll = -log_prob[valid].mean()
+        else:
+            loss_nll = lambda_logits.sum() * 0.0
+
+        positive = valid & (counts > 0)
+        if positive.any():
+            centers = self.zip_count_head.count_bin_centers.to(device=counts.device, dtype=counts.dtype)
+            bin_target = (counts[positive].unsqueeze(1) - centers.unsqueeze(0)).abs().argmin(dim=1)
+            positive_logits = lambda_logits.permute(0, 2, 3, 1)[positive]
+            loss_ce = F.cross_entropy(positive_logits, bin_target)
+        else:
+            loss_ce = lambda_logits.sum() * 0.0
+
+        pred_count = (zip_output['expected_count'].float() * valid).flatten(1).sum(dim=1)
+        gt_count = (counts * valid).flatten(1).sum(dim=1)
+        loss_count = F.smooth_l1_loss(torch.log1p(pred_count), torch.log1p(gt_count))
+        return {
+            'loss_zip_nll': loss_nll,
+            'loss_zip_ce': loss_ce,
+            'loss_zip_count': loss_count,
         }
 
     def compute_local_ordinal_loss(self, embeddings, counts, valid):
@@ -1497,6 +1670,34 @@ class PET(nn.Module):
             loss_dict.update(local_losses)
             weight_dict.update(local_weights)
             losses += sum(local_losses[name] * local_weights[name] for name in local_losses)
+
+        if self.zip_count_head is not None and self.zip_count_loss_coef > 0:
+            zip_count_active = epoch >= self.zip_count_start_epoch and (
+                self.zip_count_end_epoch < 0 or epoch <= self.zip_count_end_epoch
+            )
+            zip_weight = self.schedule_weight(
+                epoch,
+                self.zip_count_start_epoch,
+                self.zip_count_warmup_epochs,
+                self.zip_count_loss_coef,
+            ) if zip_count_active else 0.0
+            if zip_count_active:
+                zip_losses = self.compute_zip_count_losses(outputs, targets, samples)
+            else:
+                zero = outputs['split_map_raw'].sum() * 0.0
+                zip_losses = {
+                    'loss_zip_nll': zero,
+                    'loss_zip_ce': zero,
+                    'loss_zip_count': zero,
+                }
+            zip_weights = {
+                'loss_zip_nll': zip_weight,
+                'loss_zip_ce': zip_weight * self.zip_count_ce_coef,
+                'loss_zip_count': zip_weight * self.zip_count_count_coef,
+            }
+            loss_dict.update(zip_losses)
+            weight_dict.update(zip_weights)
+            losses += sum(zip_losses[name] * zip_weights[name] for name in zip_losses)
 
         # quadtree splitter loss
         den = torch.stack([target['density'].reshape(()) for target in targets]).to(outputs['split_map_raw'].device)
@@ -3242,6 +3443,13 @@ class PET(nn.Module):
             count_density = self.count_head.predict_density(self.count_head_features(encode_src, count_epoch), mask)
             outputs['count_density'] = count_density
             outputs['count_pred'] = count_density.flatten(1).sum(dim=1)
+        if self.zip_count_head is not None:
+            zip_count_output = self.zip_count_head(self.zip_count_features(encode_src))
+            zip_valid = self.build_block_valid_mask(zip_count_output['expected_count'], samples)
+            zip_count_output['valid'] = zip_valid
+            zip_count_pred = (zip_count_output['expected_count'].float() * zip_valid).flatten(1).sum(dim=1)
+            outputs['zip_count'] = zip_count_output
+            outputs['zip_count_pred'] = zip_count_pred
         if self.foreground_head is not None:
             outputs['foreground_logits'] = self.foreground_head(encode_src)
         if 'train' in kwargs:
@@ -3279,6 +3487,8 @@ class PET(nn.Module):
         sparse_selected_count = 0
         if 'count_pred' in outputs:
             count_debug['count_pred'] = float(outputs['count_pred'][0].detach().float().item())
+        if 'zip_count_pred' in outputs:
+            count_debug['zip_count_pred'] = float(outputs['zip_count_pred'][0].detach().float().item())
         if eval_score_bias is not None:
             count_debug['score_bias'] = float(eval_score_bias.detach().float().item())
         foreground_logits = outputs.get('foreground_logits')
@@ -3422,6 +3632,10 @@ class PET(nn.Module):
         div_out['query_prune_threshold'] = outputs['query_prune_threshold']
         if 'count_pred' in outputs:
             div_out['count_pred'] = outputs['count_pred']
+        if 'zip_count_pred' in outputs:
+            div_out['zip_count_pred'] = outputs['zip_count_pred']
+            if self.eval_count_source == 'zip':
+                div_out['count_for_mae'] = outputs['zip_count_pred']
         return div_out
 
 

@@ -87,6 +87,7 @@ def run_eval(
     eval_branch_gate: str,
     eval_soft_split_gate: str,
     eval_count_mode: str,
+    eval_count_source: str,
     eval_count_head_min_score: float,
     eval_score_calibration: str,
     eval_score_calibration_strength: float,
@@ -104,7 +105,7 @@ def run_eval(
     tag = (
         f"score_{score_threshold:.6g}_split_{split_threshold:.6g}_prune_{query_prune_threshold:.6g}_"
         f"nms_{eval_nms_radius:.6g}_gate_{eval_branch_gate}_soft_{eval_soft_split_gate}_"
-        f"count_{eval_count_mode}_min_{eval_count_head_min_score:.6g}_cal_{eval_score_calibration}"
+        f"count_{eval_count_mode}_source_{eval_count_source}_min_{eval_count_head_min_score:.6g}_cal_{eval_score_calibration}"
     ).replace(".", "p")
     if eval_foreground_gate is not None:
         tag += f"_fg_{eval_foreground_gate}"
@@ -144,6 +145,10 @@ def run_eval(
         eval_soft_split_gate,
         "--eval_count_mode",
         eval_count_mode,
+    ]
+    if eval_count_source != "checkpoint":
+        cmd.extend(["--eval_count_source", eval_count_source])
+    cmd.extend([
         "--eval_count_head_min_score",
         str(eval_count_head_min_score),
         "--eval_score_calibration",
@@ -164,7 +169,7 @@ def run_eval(
         str(eval_score_calibration_count_ratio_max),
         "--eval_protocol",
         args.eval_protocol,
-    ]
+    ])
     if args.data_path:
         cmd.extend(["--data_path", args.data_path])
     if args.tta_flip:
@@ -210,6 +215,7 @@ def run_eval(
         "eval_branch_gate": eval_branch_gate,
         "eval_soft_split_gate": eval_soft_split_gate,
         "eval_count_mode": eval_count_mode,
+        "eval_count_source": eval_count_source,
         "eval_count_head_min_score": float(eval_count_head_min_score),
         "eval_score_calibration": eval_score_calibration,
         "eval_score_calibration_strength": float(eval_score_calibration_strength),
@@ -260,6 +266,7 @@ def write_outputs(records: list[dict], output_dir: Path) -> None:
         "eval_branch_gate",
         "eval_soft_split_gate",
         "eval_count_mode",
+        "eval_count_source",
         "eval_count_head_min_score",
         "eval_score_calibration",
         "eval_score_calibration_strength",
@@ -375,6 +382,13 @@ def get_args() -> argparse.Namespace:
         help="count selection mode passed to eval.py",
     )
     parser.add_argument(
+        "--eval_count_sources",
+        nargs="+",
+        choices=("checkpoint", "pet", "zip"),
+        default=["checkpoint"],
+        help="count source passed to eval.py; checkpoint preserves the checkpoint args",
+    )
+    parser.add_argument(
         "--eval_count_head_min_scores",
         nargs="+",
         type=float,
@@ -461,6 +475,7 @@ def main() -> int:
     gates = list(dict.fromkeys(args.eval_branch_gates))
     soft_gates = list(dict.fromkeys(args.eval_soft_split_gates))
     count_modes = list(dict.fromkeys(args.eval_count_modes))
+    count_sources = list(dict.fromkeys(args.eval_count_sources))
     count_min_scores = _unique_sorted(args.eval_count_head_min_scores)
     score_calibrations = list(dict.fromkeys(args.eval_score_calibrations))
     foreground_gates = (
@@ -481,7 +496,7 @@ def main() -> int:
     records = []
     total = (
         len(score_prune_pairs) * len(splits) * len(radii) * len(gates) * len(soft_gates)
-        * len(count_modes) * len(count_min_scores) * len(score_calibrations)
+        * len(count_modes) * len(count_sources) * len(count_min_scores) * len(score_calibrations)
         * len(foreground_gates) * len(foreground_modes) * len(foreground_strengths)
     )
     index = 0
@@ -489,88 +504,91 @@ def main() -> int:
         for eval_branch_gate in gates:
             for eval_soft_split_gate in soft_gates:
                 for eval_count_mode in count_modes:
-                    for eval_count_head_min_score in count_min_scores:
-                        for eval_score_calibration in score_calibrations:
-                            for eval_foreground_gate in foreground_gates:
-                                for eval_foreground_gate_mode in foreground_modes:
-                                    for eval_foreground_gate_strength in foreground_strengths:
-                                        for eval_nms_radius in radii:
-                                            for score_threshold, query_prune_threshold in score_prune_pairs:
-                                                index += 1
-                                                fg_gate_text = (
-                                                    eval_foreground_gate
-                                                    if eval_foreground_gate is not None
-                                                    else "checkpoint"
-                                                )
-                                                fg_strength_text = (
-                                                    eval_foreground_gate_strength
-                                                    if eval_foreground_gate_strength is not None
-                                                    else "checkpoint"
-                                                )
-                                                fg_mode_text = (
-                                                    eval_foreground_gate_mode
-                                                    if eval_foreground_gate_mode is not None
-                                                    else "checkpoint"
-                                                )
-                                                print(
-                                                    f"[{index}/{total}] score_threshold={score_threshold} "
-                                                    f"split_threshold={split_threshold} "
-                                                    f"query_prune_threshold={query_prune_threshold} "
-                                                    f"eval_nms_radius={eval_nms_radius} "
-                                                    f"eval_branch_gate={eval_branch_gate} "
-                                                    f"eval_soft_split_gate={eval_soft_split_gate} "
-                                                    f"eval_count_mode={eval_count_mode} "
-                                                    f"eval_count_head_min_score={eval_count_head_min_score} "
-                                                    f"eval_score_calibration={eval_score_calibration} "
-                                                    f"eval_score_calibration_count_blend={args.eval_score_calibration_count_blend} "
-                                                    f"eval_score_calibration_count_ratio="
-                                                    f"{args.eval_score_calibration_count_ratio_min}:"
-                                                    f"{args.eval_score_calibration_count_ratio_max} "
-                                                    f"eval_foreground_gate={fg_gate_text} "
-                                                    f"eval_foreground_gate_mode={fg_mode_text} "
-                                                    f"eval_foreground_gate_strength={fg_strength_text}"
-                                                )
-                                                record = run_eval(
-                                                    args,
-                                                    score_threshold,
-                                                    split_threshold,
-                                                    query_prune_threshold,
-                                                    eval_nms_radius,
-                                                    eval_branch_gate,
-                                                    eval_soft_split_gate,
-                                                    eval_count_mode,
-                                                    eval_count_head_min_score,
-                                                    eval_score_calibration,
-                                                    args.eval_score_calibration_strength,
-                                                    args.eval_score_calibration_start_epoch,
-                                                    args.eval_score_calibration_min_bias,
-                                                    args.eval_score_calibration_max_bias,
-                                                    args.eval_score_calibration_count_blend,
-                                                    args.eval_score_calibration_count_ratio_min,
-                                                    args.eval_score_calibration_count_ratio_max,
-                                                    eval_foreground_gate,
-                                                    eval_foreground_gate_mode,
-                                                    eval_foreground_gate_strength,
-                                                    output_dir,
-                                                )
-                                                records.append(record)
-                                                if record.get("ok"):
-                                                    pred_cnt = record.get("pred_cnt")
-                                                    gt_cnt = record.get("gt_cnt")
-                                                    if pred_cnt is not None and gt_cnt is not None:
-                                                        loc_text = _format_loc_metrics(record)
-                                                        print(
-                                                            f"  mae={record['eval_mae']:.4f} "
-                                                            f"mse={record['eval_mse']:.4f} "
-                                                            f"pred={float(pred_cnt):.4f} "
-                                                            f"gt={float(gt_cnt):.4f}"
-                                                            f"{loc_text}"
-                                                        )
+                    for eval_count_source in count_sources:
+                        for eval_count_head_min_score in count_min_scores:
+                            for eval_score_calibration in score_calibrations:
+                                for eval_foreground_gate in foreground_gates:
+                                    for eval_foreground_gate_mode in foreground_modes:
+                                        for eval_foreground_gate_strength in foreground_strengths:
+                                            for eval_nms_radius in radii:
+                                                for score_threshold, query_prune_threshold in score_prune_pairs:
+                                                    index += 1
+                                                    fg_gate_text = (
+                                                        eval_foreground_gate
+                                                        if eval_foreground_gate is not None
+                                                        else "checkpoint"
+                                                    )
+                                                    fg_strength_text = (
+                                                        eval_foreground_gate_strength
+                                                        if eval_foreground_gate_strength is not None
+                                                        else "checkpoint"
+                                                    )
+                                                    fg_mode_text = (
+                                                        eval_foreground_gate_mode
+                                                        if eval_foreground_gate_mode is not None
+                                                        else "checkpoint"
+                                                    )
+                                                    print(
+                                                        f"[{index}/{total}] score_threshold={score_threshold} "
+                                                        f"split_threshold={split_threshold} "
+                                                        f"query_prune_threshold={query_prune_threshold} "
+                                                        f"eval_nms_radius={eval_nms_radius} "
+                                                        f"eval_branch_gate={eval_branch_gate} "
+                                                        f"eval_soft_split_gate={eval_soft_split_gate} "
+                                                        f"eval_count_mode={eval_count_mode} "
+                                                        f"eval_count_source={eval_count_source} "
+                                                        f"eval_count_head_min_score={eval_count_head_min_score} "
+                                                        f"eval_score_calibration={eval_score_calibration} "
+                                                        f"eval_score_calibration_count_blend={args.eval_score_calibration_count_blend} "
+                                                        f"eval_score_calibration_count_ratio="
+                                                        f"{args.eval_score_calibration_count_ratio_min}:"
+                                                        f"{args.eval_score_calibration_count_ratio_max} "
+                                                        f"eval_foreground_gate={fg_gate_text} "
+                                                        f"eval_foreground_gate_mode={fg_mode_text} "
+                                                        f"eval_foreground_gate_strength={fg_strength_text}"
+                                                    )
+                                                    record = run_eval(
+                                                        args,
+                                                        score_threshold,
+                                                        split_threshold,
+                                                        query_prune_threshold,
+                                                        eval_nms_radius,
+                                                        eval_branch_gate,
+                                                        eval_soft_split_gate,
+                                                        eval_count_mode,
+                                                        eval_count_source,
+                                                        eval_count_head_min_score,
+                                                        eval_score_calibration,
+                                                        args.eval_score_calibration_strength,
+                                                        args.eval_score_calibration_start_epoch,
+                                                        args.eval_score_calibration_min_bias,
+                                                        args.eval_score_calibration_max_bias,
+                                                        args.eval_score_calibration_count_blend,
+                                                        args.eval_score_calibration_count_ratio_min,
+                                                        args.eval_score_calibration_count_ratio_max,
+                                                        eval_foreground_gate,
+                                                        eval_foreground_gate_mode,
+                                                        eval_foreground_gate_strength,
+                                                        output_dir,
+                                                    )
+                                                    records.append(record)
+                                                    if record.get("ok"):
+                                                        pred_cnt = record.get("pred_cnt")
+                                                        gt_cnt = record.get("gt_cnt")
+                                                        if pred_cnt is not None and gt_cnt is not None:
+                                                            loc_text = _format_loc_metrics(record)
+                                                            print(
+                                                                f"  mae={record['eval_mae']:.4f} "
+                                                                f"mse={record['eval_mse']:.4f} "
+                                                                f"pred={float(pred_cnt):.4f} "
+                                                                f"gt={float(gt_cnt):.4f}"
+                                                                f"{loc_text}"
+                                                            )
+                                                        else:
+                                                            print(f"  mae={record['eval_mae']:.4f} mse={record['eval_mse']:.4f}")
                                                     else:
-                                                        print(f"  mae={record['eval_mae']:.4f} mse={record['eval_mse']:.4f}")
-                                                else:
-                                                    print(f"  failed; see {record['log_file']}")
-                                                write_outputs(records, output_dir)
+                                                        print(f"  failed; see {record['log_file']}")
+                                                    write_outputs(records, output_dir)
 
     ok_records = [record for record in records if record.get("ok") and "eval_mae" in record]
     if not ok_records:
@@ -587,6 +605,7 @@ def main() -> int:
         f"eval_nms_radius={best['eval_nms_radius']} "
         f"eval_branch_gate={best['eval_branch_gate']} "
         f"eval_soft_split_gate={best['eval_soft_split_gate']} "
+        f"eval_count_source={best.get('eval_count_source', 'checkpoint')} "
         f"eval_score_calibration={best.get('eval_score_calibration', 'none')} "
         f"{_format_loc_metrics(best, prefix='')}"
     )

@@ -173,6 +173,11 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
 
 def _predict_count(model, samples, targets, epoch=0):
     outputs = model(samples, test=True, targets=targets, epoch=epoch)
+    if 'count_for_mae' in outputs:
+        count_value = outputs['count_for_mae']
+        if torch.is_tensor(count_value):
+            count_value = count_value.detach().float().reshape(-1)[0].item()
+        return outputs, float(count_value)
     outputs_scores = torch.nn.functional.softmax(outputs['pred_logits'], -1)[:, :, 1][0]
     return outputs, float(len(outputs_scores))
 
