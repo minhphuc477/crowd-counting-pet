@@ -897,6 +897,19 @@ MODEL_RECIPES = {
     },
 }
 
+# Encoder Context-Fusion PET (ECF-PET).
+#
+# This is the PET-safe version of multi-level feature fusion: 4x detail is
+# injected only into the 8x encoder context through a zero-initialized residual
+# adapter. The dense 4x proposal branch, quadtree split path, APG schedule, and
+# evaluation protocol stay identical to vgg_apglc.
+MODEL_RECIPES['vgg_apglc_ecfpn'] = {
+    **MODEL_RECIPES['vgg_apglc'],
+    'encoder_context_fusion': 'detail_to_context',
+    'encoder_context_fusion_activation': 'gelu',
+    'encoder_context_fusion_gate': 'channel_spatial',
+}
+
 # APGCC-style shared IFI for PET.
 #
 # The older IFI-lite path used a separate auxiliary head, which improves
@@ -927,6 +940,10 @@ MODEL_RECIPES['vgg_apglc_shared_ifi'] = {
 # person score to encode localization quality for matched point queries. This
 # follows the detector lesson from GFL/VFNet: candidate ranking should reflect
 # objectness and localization quality, not a binary label alone.
+#
+# Audit note: SHA sweep reached only 51.23 MAE and reduced localization F1
+# relative to the verified APG+LC path, so this is kept as a reproducible
+# negative ablation rather than a recommended recipe.
 MODEL_RECIPES['vgg_apglc_quality'] = {
     **MODEL_RECIPES['vgg_apglc'],
     'quality_loss_coef': 0.05,
@@ -969,6 +986,7 @@ EXPERIMENTAL_MODEL_RECIPES = {
     'vgg_apglc_ccpet',
     'vgg_apglc_bsf',
     'vgg_apglc_shared_ifi',
+    'vgg_apglc_quality',
     'vgg_routed_apglc_countcal',
 }
 
@@ -1028,6 +1046,9 @@ ARCHITECTURE_OVERRIDE_KEYS = {
     'timm_output_norm',
     'scale_fusion',
     'scale_fusion_activation',
+    'encoder_context_fusion',
+    'encoder_context_fusion_activation',
+    'encoder_context_fusion_gate',
     'position_embedding',
     'dec_layers',
     'dim_feedforward',
@@ -1150,6 +1171,12 @@ def get_args_parser():
                         help='identity-initialized exchange between PET 4x detail and 8x context features')
     parser.add_argument('--scale_fusion_activation', default='gelu', choices=('relu', 'gelu'),
                         help='activation used by bidirectional scale fusion')
+    parser.add_argument('--encoder_context_fusion', default='none', choices=('none', 'detail_to_context'),
+                        help='zero-init 4x-detail to 8x-context fusion before PET encoder')
+    parser.add_argument('--encoder_context_fusion_activation', default='gelu', choices=('relu', 'gelu'),
+                        help='activation used by encoder context fusion')
+    parser.add_argument('--encoder_context_fusion_gate', default='channel_spatial', choices=('none', 'channel_spatial'),
+                        help='gating used by encoder context fusion residual')
     parser.add_argument('--fusion_mhf_mode', default='none', choices=('none', 'cem', 'cem_msem', 'full'),
                         help='VGG FPN high-level feature attention ablation inspired by VMambaCC MHF')
     parser.add_argument('--fusion_mhf_heads', default=1, type=int,
@@ -2149,6 +2176,8 @@ def model_only_allowed_missing_prefixes(args):
         prefixes.append('foreground_head.')
     if getattr(args, 'scale_fusion', 'none') != 'none':
         prefixes.append('scale_fusion.')
+    if getattr(args, 'encoder_context_fusion', 'none') != 'none':
+        prefixes.append('encoder_context_fusion.')
     if float(getattr(args, 'ifi_loss_coef', 0.0)) > 0 and getattr(args, 'ifi_head_source', 'separate') == 'separate':
         prefixes.extend(('ifi_cls_embed.', 'ifi_coord_embed.'))
     return tuple(prefixes)

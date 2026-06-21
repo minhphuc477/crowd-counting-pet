@@ -179,6 +179,9 @@ class WinDecoderTransformer(nn.Module):
         """ 
         decoder forward during inference
         """       
+        if query_feats.numel() == 0 or query_feats.shape[1] == 0:
+            return query_feats.new_empty((self.num_layer, 0, self.d_model))
+
         # decoder attention
         tgt = query_feats
         hs_win = self.decoder(tgt, memory_win, memory_key_padding_mask=mask_win, pos=pos_embed_win, 

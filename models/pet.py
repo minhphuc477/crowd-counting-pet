@@ -488,6 +488,59 @@ class BidirectionalScaleFusion(nn.Module):
         return detail_4x + detail_update, context_8x + context_update
 
 
+class EncoderContextFusion(nn.Module):
+    """Inject 4x detail into PET's 8x encoder context with zero-init residual.
+
+    Several crowd-counting backbones improve robustness by fusing lower-level
+    detail into the context stream, but PET is sensitive to perturbing the 4x
+    dense-query branch. This block only updates the encoder's 8x feature map,
+    leaving the dense decoder input unchanged. The last projection is zero
+    initialized, so enabling it is exactly baseline PET at initialization.
+    """
+
+    def __init__(self, hidden_dim, activation='gelu', gate='channel_spatial'):
+        super().__init__()
+        if activation == 'gelu':
+            act_factory = nn.GELU
+        elif activation == 'relu':
+            act_factory = lambda: nn.ReLU(inplace=True)
+        else:
+            raise ValueError(f'Unsupported encoder context fusion activation: {activation}. Use "gelu" or "relu".')
+        if gate not in ('none', 'channel_spatial'):
+            raise ValueError(f'Unsupported encoder context fusion gate: {gate}. Use "none" or "channel_spatial".')
+
+        self.gate_mode = gate
+        self.detail_proj = nn.Sequential(
+            nn.Conv2d(hidden_dim, hidden_dim, kernel_size=3, padding=1, groups=hidden_dim, bias=False),
+            _make_group_norm(hidden_dim),
+            act_factory(),
+            nn.Conv2d(hidden_dim, hidden_dim, kernel_size=1, bias=False),
+            _make_group_norm(hidden_dim),
+            act_factory(),
+        )
+        if gate == 'channel_spatial':
+            mid_dim = max(16, hidden_dim // 4)
+            self.gate = nn.Sequential(
+                nn.Conv2d(hidden_dim * 2, mid_dim, kernel_size=1, bias=False),
+                _make_group_norm(mid_dim),
+                act_factory(),
+                nn.Conv2d(mid_dim, hidden_dim, kernel_size=1),
+                nn.Sigmoid(),
+            )
+        else:
+            self.gate = None
+        self.out_proj = nn.Conv2d(hidden_dim, hidden_dim, kernel_size=1)
+        nn.init.zeros_(self.out_proj.weight)
+        nn.init.zeros_(self.out_proj.bias)
+
+    def forward(self, detail_4x, context_8x):
+        detail_context = F.adaptive_avg_pool2d(detail_4x, context_8x.shape[-2:])
+        detail_context = self.detail_proj(detail_context)
+        if self.gate is not None:
+            detail_context = detail_context * self.gate(torch.cat([context_8x, detail_context], dim=1))
+        return context_8x + self.out_proj(detail_context)
+
+
 class QuadtreeSplitter(nn.Module):
     def __init__(self, hidden_dim, context_h, context_w, head='pool', mid_dim=128, activation='gelu'):
         super().__init__()
@@ -704,6 +757,20 @@ class PET(nn.Module):
         else:
             raise ValueError(
                 f'Unsupported scale_fusion: {scale_fusion}. Use "none" or "bidirectional".'
+            )
+        encoder_context_fusion = getattr(args, 'encoder_context_fusion', 'none')
+        if encoder_context_fusion == 'none':
+            self.encoder_context_fusion = None
+        elif encoder_context_fusion == 'detail_to_context':
+            self.encoder_context_fusion = EncoderContextFusion(
+                hidden_dim,
+                activation=getattr(args, 'encoder_context_fusion_activation', 'gelu'),
+                gate=getattr(args, 'encoder_context_fusion_gate', 'channel_spatial'),
+            )
+        else:
+            raise ValueError(
+                'Unsupported encoder_context_fusion: '
+                f'{encoder_context_fusion}. Use "none" or "detail_to_context".'
             )
 
         # context encoder
@@ -2769,6 +2836,9 @@ class PET(nn.Module):
         if self.scale_fusion is not None:
             fused_4x, fused_8x = self.scale_fusion(features['4x'].tensors, features['8x'].tensors)
             features['4x'] = NestedTensor(fused_4x, features['4x'].mask)
+            features['8x'] = NestedTensor(fused_8x, features['8x'].mask)
+        if self.encoder_context_fusion is not None:
+            fused_8x = self.encoder_context_fusion(features['4x'].tensors, features['8x'].tensors)
             features['8x'] = NestedTensor(fused_8x, features['8x'].mask)
 
         # forward
