@@ -100,6 +100,7 @@ class BasePETCount(nn.Module):
     def __init__(self, backbone, num_classes, quadtree_layer='sparse', args=None, **kwargs):
         super().__init__()
         self.backbone = backbone
+        self.num_classes = num_classes
         self.transformer = kwargs['transformer']
         hidden_dim = args.hidden_dim
 
@@ -257,7 +258,19 @@ class BasePETCount(nn.Module):
 
         # get points queries for transformer
         pqs = self.get_point_query(samples, features, **kwargs)
-        
+        if 'train' not in kwargs and pqs[1].numel() == 0:
+            img_shape = samples.tensors.shape[-2:]
+            device = encode_src.device
+            dtype = encode_src.dtype
+            return {
+                'pred_logits': torch.empty((0, self.num_classes + 1), dtype=dtype, device=device),
+                'pred_points': torch.empty((0, 2), dtype=dtype, device=device),
+                'img_shape': img_shape,
+                'pred_offsets': torch.empty((0, 2), dtype=dtype, device=device),
+                'points_queries': torch.empty((0, 2), dtype=dtype, device=device),
+                'pq_stride': self.pq_stride,
+            }
+
         # point querying
         kwargs['pq_stride'] = self.pq_stride
         hs = self.transformer(encode_src, src_pos_embed, mask, pqs, img_shape=samples.tensors.shape[-2:], **kwargs)
