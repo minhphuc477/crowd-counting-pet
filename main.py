@@ -908,7 +908,7 @@ MODEL_RECIPES = {
 MODEL_RECIPES['vgg_apglc_shared_ifi'] = {
     **MODEL_RECIPES['vgg_apglc'],
     'ifi_loss_coef': 0.02,
-    'ifi_head_source': 'both',
+    'ifi_head_source': 'routed',
     'ifi_point_coef': 0.2,
     'ifi_neg_k': 4,
     'ifi_neg_radius': 8.0,
@@ -1433,8 +1433,8 @@ def get_args_parser():
                         help='point-regression coefficient inside Gaussian soft APG')
     parser.add_argument('--ifi_loss_coef', default=0.0, type=float,
                         help='Interpolated Feature Guidance auxiliary loss weight; 0 disables it')
-    parser.add_argument('--ifi_head_source', default='separate', choices=('separate', 'sparse', 'dense', 'both'),
-                        help='prediction head used by IFI: separate auxiliary head, sparse PET head, dense PET head, or both PET heads')
+    parser.add_argument('--ifi_head_source', default='separate', choices=('separate', 'sparse', 'dense', 'both', 'routed'),
+                        help='prediction head used by IFI: separate auxiliary head, sparse PET head, dense PET head, both PET heads, or one routed PET head per point')
     parser.add_argument('--ifi_point_coef', default=1.0, type=float,
                         help='zero-offset coefficient inside IFI-lite APG loss')
     parser.add_argument('--ifi_neg_k', default=4, type=int,

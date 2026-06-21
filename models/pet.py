@@ -802,8 +802,8 @@ class PET(nn.Module):
         self.quadtree_dense = BasePETCount(backbone, num_classes, quadtree_layer='dense', args=args, transformer=transformer)
         self.ifi_loss_coef = float(getattr(args, 'ifi_loss_coef', 0.0))
         self.ifi_head_source = getattr(args, 'ifi_head_source', 'separate')
-        if self.ifi_head_source not in ('separate', 'sparse', 'dense', 'both'):
-            raise ValueError('ifi_head_source must be one of "separate", "sparse", "dense", or "both"')
+        if self.ifi_head_source not in ('separate', 'sparse', 'dense', 'both', 'routed'):
+            raise ValueError('ifi_head_source must be one of "separate", "sparse", "dense", "both", or "routed"')
         if self.ifi_loss_coef > 0 and self.ifi_head_source == 'separate':
             self.ifi_cls_embed = nn.Linear(hidden_dim, num_classes + 1)
             self.ifi_coord_embed = MLP(hidden_dim, hidden_dim, 2, 3)
@@ -1947,22 +1947,31 @@ class PET(nn.Module):
             pos_feats = self._sample_ifi_features(encode_src, batch_idx, gt_points, img_h, img_w)
             pos_target = torch.ones(pos_feats.shape[0], dtype=torch.long, device=encode_src.device)
 
-            for pos_logits, pos_offsets in self._ifi_head_predictions(pos_feats):
-                cls_losses.append(self.point_classification_loss(pos_logits, pos_target))
-                point_losses.append(
-                    F.smooth_l1_loss(
-                        pos_offsets,
-                        torch.zeros_like(pos_offsets),
-                        reduction='none',
-                    ).sum(dim=-1).mean()
+            pos_dense_mask = None
+            if self.ifi_head_source == 'routed':
+                pos_dense_mask = self._ifi_dense_route_mask(
+                    gt_points,
+                    outputs['split_map_raw'],
+                    batch_idx,
+                    img_h,
+                    img_w,
                 )
+            self._append_ifi_losses(pos_feats, pos_target, cls_losses, point_losses, pos_dense_mask)
 
             neg_points = self._build_ifi_negatives(gt_points, img_h, img_w)
             if neg_points.numel() > 0:
                 neg_feats = self._sample_ifi_features(encode_src, batch_idx, neg_points, img_h, img_w)
                 neg_target = torch.zeros(neg_feats.shape[0], dtype=torch.long, device=encode_src.device)
-                for neg_logits, _ in self._ifi_head_predictions(neg_feats):
-                    cls_losses.append(self.point_classification_loss(neg_logits, neg_target))
+                neg_dense_mask = None
+                if self.ifi_head_source == 'routed':
+                    neg_dense_mask = self._ifi_dense_route_mask(
+                        neg_points,
+                        outputs['split_map_raw'],
+                        batch_idx,
+                        img_h,
+                        img_w,
+                    )
+                self._append_ifi_losses(neg_feats, neg_target, cls_losses, point_losses, neg_dense_mask)
 
         if not cls_losses:
             return outputs['split_map_raw'].sum() * 0.0
@@ -1971,22 +1980,70 @@ class PET(nn.Module):
             loss = loss + self.ifi_point_coef * torch.stack(point_losses).mean()
         return loss
 
-    def _ifi_head_predictions(self, feats):
+    def _append_ifi_losses(self, feats, target, cls_losses, point_losses, dense_mask=None):
+        if feats.numel() == 0:
+            return
+        if self.ifi_head_source != 'routed':
+            for logits, offsets in self._ifi_head_predictions(feats):
+                cls_losses.append(self.point_classification_loss(logits, target))
+                if target.numel() > 0 and target[0].item() == 1:
+                    point_losses.append(
+                        F.smooth_l1_loss(
+                            offsets,
+                            torch.zeros_like(offsets),
+                            reduction='none',
+                        ).sum(dim=-1).mean()
+                    )
+            return
+
+        if dense_mask is None:
+            dense_mask = torch.zeros(feats.shape[0], dtype=torch.bool, device=feats.device)
+        dense_mask = dense_mask.to(device=feats.device, dtype=torch.bool)
+        sparse_mask = ~dense_mask
+        for source, mask in (('sparse', sparse_mask), ('dense', dense_mask)):
+            if not mask.any():
+                continue
+            branch_feats = feats[mask]
+            branch_target = target[mask]
+            for logits, offsets in self._ifi_head_predictions(branch_feats, source):
+                cls_losses.append(self.point_classification_loss(logits, branch_target))
+                if branch_target.numel() > 0 and branch_target[0].item() == 1:
+                    point_losses.append(
+                        F.smooth_l1_loss(
+                            offsets,
+                            torch.zeros_like(offsets),
+                            reduction='none',
+                        ).sum(dim=-1).mean()
+                    )
+
+    def _ifi_dense_route_mask(self, points, split_map, batch_idx, img_h, img_w):
+        if points.numel() == 0:
+            return torch.zeros(0, dtype=torch.bool, device=split_map.device)
+        split_h, split_w = split_map.shape[-2:]
+        y = torch.clamp((points[:, 0] / max(float(img_h), 1.0) * split_h).long(), 0, split_h - 1)
+        x = torch.clamp((points[:, 1] / max(float(img_w), 1.0) * split_w).long(), 0, split_w - 1)
+        linear_idx = y * split_w + x
+        counts = torch.zeros(split_h * split_w, dtype=torch.long, device=split_map.device)
+        counts.scatter_add_(0, linear_idx.to(device=split_map.device), torch.ones_like(linear_idx, dtype=torch.long, device=split_map.device))
+        return counts[linear_idx.to(device=split_map.device)] >= self.split_count_threshold
+
+    def _ifi_head_predictions(self, feats, head_source=None):
         """Return logits and normalized offsets for the configured IFI heads."""
         predictions = []
-        if self.ifi_head_source == 'separate':
+        source = self.ifi_head_source if head_source is None else head_source
+        if source == 'separate':
             if self.ifi_cls_embed is None or self.ifi_coord_embed is None:
                 return predictions
             predictions.append((
                 self.ifi_cls_embed(feats),
                 (self.ifi_coord_embed(feats).sigmoid() - 0.5) * 2.0,
             ))
-        if self.ifi_head_source in ('sparse', 'both'):
+        if source in ('sparse', 'both'):
             predictions.append((
                 self.quadtree_sparse.class_embed(feats),
                 (self.quadtree_sparse.coord_embed(feats).sigmoid() - 0.5) * 2.0,
             ))
-        if self.ifi_head_source in ('dense', 'both'):
+        if source in ('dense', 'both'):
             predictions.append((
                 self.quadtree_dense.class_embed(feats),
                 (self.quadtree_dense.coord_embed(feats).sigmoid() - 0.5) * 2.0,
