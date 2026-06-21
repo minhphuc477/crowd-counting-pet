@@ -897,6 +897,26 @@ MODEL_RECIPES = {
     },
 }
 
+# Local Ordinal ZIP PET (LOZIP-PET): the verified APG+LC recipe plus a
+# zero-initialized local-density representation module. Unlike the failed
+# scalar count-feedback experiments, this module never shifts point logits or
+# chooses the number of retained predictions.
+MODEL_RECIPES['vgg_apglc_localzip'] = {
+    **MODEL_RECIPES['vgg_apglc'],
+    'local_density_mixer': 'zip_ordinal',
+    'local_density_block_size': 16,
+    'local_density_projection_dim': 64,
+    'local_density_bin_centers': '1,2,3,4,5,6,7,8,9,10,11.38,13.38,16.26',
+    'local_density_zero_prior': 0.9,
+    'local_zip_loss_coef': 0.02,
+    'local_zip_ce_coef': 1.0,
+    'local_zip_count_coef': 0.1,
+    'local_ordinal_loss_coef': 0.02,
+    'local_ordinal_temperature': 0.1,
+    'local_ordinal_edges': '1,2,4,8',
+    'local_ordinal_max_per_level': 64,
+}
+
 EXPERIMENTAL_MODEL_RECIPES = {
     # These paths are kept for audit/reproduction only. Session runs showed
     # catastrophic over/under-counting before they could improve on APG+LC.
@@ -1166,6 +1186,31 @@ def get_args_parser():
                         help='hidden channels for the dynamic receptive-field gate')
     parser.add_argument('--perspective_mixer_activation', default='gelu', choices=('relu', 'gelu'),
                         help='activation used by --perspective_mixer drf')
+    parser.add_argument('--local_density_mixer', default='none', choices=('none', 'zip_ordinal'),
+                        help='local ZIP count-distribution representation and zero-initialized PET feature residual')
+    parser.add_argument('--local_density_block_size', default=16, type=int,
+                        help='image-space block size for local density representation; must be divisible by encoder stride')
+    parser.add_argument('--local_density_projection_dim', default=64, type=int,
+                        help='embedding size for local ordinal density contrastive learning')
+    parser.add_argument('--local_density_bin_centers',
+                        default='1,2,3,4,5,6,7,8,9,10,11.38,13.38,16.26', type=str,
+                        help='comma-separated positive block-count centers used by the ZIP rate head')
+    parser.add_argument('--local_density_zero_prior', default=0.9, type=float,
+                        help='initial structural-zero probability for local ZIP blocks')
+    parser.add_argument('--local_zip_loss_coef', default=0.0, type=float,
+                        help='weight for local zero-inflated Poisson NLL; 0 disables ZIP supervision')
+    parser.add_argument('--local_zip_ce_coef', default=1.0, type=float,
+                        help='positive count-bin CE multiplier inside local ZIP supervision')
+    parser.add_argument('--local_zip_count_coef', default=0.1, type=float,
+                        help='log image-count consistency multiplier inside local ZIP supervision')
+    parser.add_argument('--local_ordinal_loss_coef', default=0.0, type=float,
+                        help='weight for balanced ordinal local-density contrastive learning')
+    parser.add_argument('--local_ordinal_temperature', default=0.1, type=float,
+                        help='temperature for local ordinal contrastive similarity')
+    parser.add_argument('--local_ordinal_edges', default='1,2,4,8', type=str,
+                        help='positive-count boundaries defining ordinal local-density levels')
+    parser.add_argument('--local_ordinal_max_per_level', default=64, type=int,
+                        help='maximum sampled blocks per density level and training batch')
     parser.add_argument('--splitter_head', default='pool', choices=('pool', 'conv'),
                         help='quadtree splitter head; pool matches official PET, conv adds local context')
     parser.add_argument('--splitter_hidden_dim', default=128, type=int,

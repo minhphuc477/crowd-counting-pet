@@ -56,6 +56,20 @@ def _parse_positive_int_list(value, default, name):
     return values
 
 
+def _parse_float_list(value, default, name):
+    if value is None or value == '':
+        values = list(default)
+    elif isinstance(value, str):
+        values = [float(part.strip()) for part in value.split(',') if part.strip()]
+    else:
+        values = [float(part) for part in value]
+    if not values:
+        raise ValueError(f'{name} must contain at least one number')
+    if not all(math.isfinite(part) for part in values):
+        raise ValueError(f'{name} values must be finite, got {values}')
+    return values
+
+
 def _valid_image_shape(samples, device=None):
     """Return [H, W] of the non-padded image area.
 
@@ -556,6 +570,96 @@ class ForegroundConfidenceHead(nn.Module):
         return self.net(x.float())
 
 
+class LocalDensityAwareMixer(nn.Module):
+    """Local count-distribution representation with a safe PET residual.
+
+    The auxiliary heads model positive block counts and structural zeros. The
+    feature residual is zero-initialized, so enabling this module preserves the
+    original PET forward pass at initialization while allowing local density
+    representations to improve the encoder during end-to-end training.
+    """
+
+    def __init__(
+        self,
+        hidden_dim,
+        block_stride=2,
+        projection_dim=64,
+        count_bin_centers=(1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.38, 13.38, 16.26),
+        zero_prior=0.9,
+    ):
+        super().__init__()
+        self.block_stride = max(1, int(block_stride))
+        projection_dim = int(projection_dim)
+        if projection_dim <= 0:
+            raise ValueError('local density projection_dim must be positive')
+        centers = torch.as_tensor(count_bin_centers, dtype=torch.float32)
+        if centers.ndim != 1 or centers.numel() < 2:
+            raise ValueError('local density count_bin_centers must contain at least two values')
+        if not bool(torch.all(centers[1:] > centers[:-1])):
+            raise ValueError('local density count_bin_centers must be strictly increasing')
+        if float(centers[0]) <= 0:
+            raise ValueError('local density count_bin_centers must be positive')
+        self.register_buffer('count_bin_centers', centers)
+
+        self.local_encoder = nn.Sequential(
+            nn.Conv2d(hidden_dim, hidden_dim, 3, padding=1, groups=hidden_dim, bias=False),
+            _make_group_norm(hidden_dim),
+            nn.GELU(),
+            nn.Conv2d(hidden_dim, hidden_dim, 1, bias=False),
+            _make_group_norm(hidden_dim),
+            nn.GELU(),
+        )
+        self.lambda_head = nn.Conv2d(hidden_dim, centers.numel(), 1)
+        self.zero_head = nn.Conv2d(hidden_dim, 1, 1)
+        self.projector = nn.Sequential(
+            nn.Conv2d(hidden_dim, hidden_dim // 2, 1, bias=False),
+            _make_group_norm(hidden_dim // 2),
+            nn.GELU(),
+            nn.Conv2d(hidden_dim // 2, projection_dim, 1),
+        )
+        self.residual_proj = nn.Conv2d(hidden_dim, hidden_dim, 1)
+
+        zero_prior = min(max(float(zero_prior), 1e-4), 1.0 - 1e-4)
+        nn.init.zeros_(self.zero_head.weight)
+        nn.init.constant_(self.zero_head.bias, math.log(zero_prior / (1.0 - zero_prior)))
+        nn.init.zeros_(self.lambda_head.weight)
+        nn.init.zeros_(self.lambda_head.bias)
+        # Most occupied 16x16 blocks contain one head. This prior prevents the
+        # auxiliary expected count from starting with a large positive bias.
+        self.lambda_head.bias.data[0] = 4.0
+        nn.init.zeros_(self.residual_proj.weight)
+        nn.init.zeros_(self.residual_proj.bias)
+
+    def forward(self, x):
+        local = self.local_encoder(x)
+        block = F.avg_pool2d(
+            local,
+            kernel_size=self.block_stride,
+            stride=self.block_stride,
+            ceil_mode=True,
+            count_include_pad=False,
+        )
+        lambda_logits = self.lambda_head(block)
+        zero_logits = self.zero_head(block).squeeze(1)
+        positive_rate = (
+            lambda_logits.softmax(dim=1)
+            * self.count_bin_centers.to(dtype=lambda_logits.dtype)[None, :, None, None]
+        ).sum(dim=1)
+        expected_count = (1.0 - zero_logits.sigmoid()) * positive_rate
+        embeddings = F.normalize(self.projector(block).float(), dim=1)
+
+        context = F.interpolate(block, size=x.shape[-2:], mode='bilinear', align_corners=False)
+        mixed = x + self.residual_proj(context.to(dtype=x.dtype))
+        auxiliary = {
+            'lambda_logits': lambda_logits,
+            'zero_logits': zero_logits,
+            'positive_rate': positive_rate,
+            'expected_count': expected_count,
+            'embeddings': embeddings,
+        }
+        return mixed, auxiliary
+
+
 class PET(nn.Module):
     """ 
     Point quEry Transformer
@@ -614,6 +718,57 @@ class PET(nn.Module):
             )
         else:
             raise ValueError(f'Unsupported perspective_mixer: {perspective_mixer}. Use "none" or "drf".')
+
+        local_density_mixer = getattr(args, 'local_density_mixer', 'none')
+        self.local_zip_loss_coef = max(0.0, float(getattr(args, 'local_zip_loss_coef', 0.0)))
+        self.local_ordinal_loss_coef = max(0.0, float(getattr(args, 'local_ordinal_loss_coef', 0.0)))
+        self.local_zip_ce_coef = max(0.0, float(getattr(args, 'local_zip_ce_coef', 1.0)))
+        self.local_zip_count_coef = max(0.0, float(getattr(args, 'local_zip_count_coef', 0.1)))
+        self.local_ordinal_temperature = float(getattr(args, 'local_ordinal_temperature', 0.1))
+        self.local_ordinal_max_per_level = max(1, int(getattr(args, 'local_ordinal_max_per_level', 64)))
+        self.local_ordinal_edges = _parse_float_list(
+            getattr(args, 'local_ordinal_edges', '1,2,4,8'),
+            (1.0, 2.0, 4.0, 8.0),
+            'local_ordinal_edges',
+        )
+        if any(edge <= 0 for edge in self.local_ordinal_edges):
+            raise ValueError('local_ordinal_edges values must be positive')
+        if any(right <= left for left, right in zip(self.local_ordinal_edges, self.local_ordinal_edges[1:])):
+            raise ValueError('local_ordinal_edges must be strictly increasing')
+        if self.local_ordinal_temperature <= 0:
+            raise ValueError('local_ordinal_temperature must be positive')
+        self.local_density_mixer = None
+        self._local_density_config = None
+        if local_density_mixer == 'zip_ordinal':
+            block_size = int(getattr(args, 'local_density_block_size', 16))
+            encoder_stride = int(self.encode_feats[:-1])
+            if block_size < encoder_stride or block_size % encoder_stride != 0:
+                raise ValueError(
+                    f'local_density_block_size must be a multiple of encoder stride {encoder_stride}, got {block_size}'
+                )
+            self._local_density_config = {
+                'hidden_dim': hidden_dim,
+                'block_stride': block_size // encoder_stride,
+                'projection_dim': getattr(args, 'local_density_projection_dim', 64),
+                'count_bin_centers': _parse_float_list(
+                    getattr(
+                        args,
+                        'local_density_bin_centers',
+                        '1,2,3,4,5,6,7,8,9,10,11.38,13.38,16.26',
+                    ),
+                    (1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.38, 13.38, 16.26),
+                    'local_density_bin_centers',
+                ),
+                'zero_prior': getattr(args, 'local_density_zero_prior', 0.9),
+            }
+        elif local_density_mixer != 'none':
+            raise ValueError('local_density_mixer must be one of "none" or "zip_ordinal"')
+        if local_density_mixer == 'none' and (
+            self.local_zip_loss_coef > 0 or self.local_ordinal_loss_coef > 0
+        ):
+            raise ValueError(
+                'local ZIP/ordinal losses require --local_density_mixer zip_ordinal'
+            )
 
         # quadtree splitter
         context_patch = _parse_size_pair(getattr(args, 'context_patch_size', ''), (128, 64), 'context_patch_size')
@@ -908,6 +1063,11 @@ class PET(nn.Module):
         else:
             raise ValueError(f'Unsupported quad_context_mixer: {quad_context}. Use "none" or "lite".')
 
+        # Construct this last so enabling the module does not change random
+        # initialization of any original PET parameter.
+        if self._local_density_config is not None:
+            self.local_density_mixer = LocalDensityAwareMixer(**self._local_density_config)
+
     def _check_finite(self, name, tensor):
         if self.strict_model_checks and torch.is_floating_point(tensor):
             if not torch.isfinite(tensor).all():
@@ -1062,6 +1222,132 @@ class PET(nn.Module):
             dense_targets.extend(targets[bs:])
         return sparse_targets, dense_targets
 
+    def build_local_block_targets(self, local_output, targets, samples):
+        expected_count = local_output['expected_count']
+        bs, block_h, block_w = expected_count.shape
+        counts = expected_count.new_zeros((bs, block_h, block_w), dtype=torch.float32)
+        img_h, img_w = samples.tensors.shape[-2:]
+        for batch_idx, target in enumerate(targets[:bs]):
+            points = target['points'].to(device=counts.device, dtype=counts.dtype)
+            if points.numel() == 0:
+                continue
+            y = torch.clamp((points[:, 0] / max(float(img_h), 1.0) * block_h).long(), 0, block_h - 1)
+            x = torch.clamp((points[:, 1] / max(float(img_w), 1.0) * block_w).long(), 0, block_w - 1)
+            linear = y * block_w + x
+            flat = counts[batch_idx].view(-1)
+            flat.scatter_add_(0, linear, torch.ones_like(linear, dtype=flat.dtype))
+
+        if samples.mask is None:
+            valid = torch.ones_like(counts, dtype=torch.bool)
+        else:
+            invalid = F.adaptive_max_pool2d(
+                samples.mask[:, None].float(),
+                output_size=(block_h, block_w),
+            ).squeeze(1)
+            valid = invalid < 0.5
+        return counts, valid
+
+    def compute_local_density_losses(self, outputs, targets, samples):
+        local_output = outputs.get('local_density')
+        if local_output is None:
+            zero = outputs['split_map_raw'].sum() * 0.0
+            return {
+                'loss_local_zip_nll': zero,
+                'loss_local_zip_ce': zero,
+                'loss_local_zip_count': zero,
+                'loss_local_ordinal': zero,
+            }
+
+        counts, valid = self.build_local_block_targets(local_output, targets, samples)
+        lambda_logits = local_output['lambda_logits'].float()
+        zero_logits = local_output['zero_logits'].float()
+        positive_rate = local_output['positive_rate'].float().clamp(min=1e-4, max=1e4)
+
+        log_pi = -F.softplus(-zero_logits)
+        log_one_minus_pi = -F.softplus(zero_logits)
+        zero_log_prob = torch.logaddexp(log_pi, log_one_minus_pi - positive_rate)
+        positive_log_prob = (
+            log_one_minus_pi
+            - positive_rate
+            + counts * positive_rate.log()
+            - torch.lgamma(counts + 1.0)
+        )
+        log_prob = torch.where(counts > 0, positive_log_prob, zero_log_prob)
+        if valid.any():
+            loss_nll = -log_prob[valid].mean()
+        else:
+            loss_nll = lambda_logits.sum() * 0.0
+
+        positive = valid & (counts > 0)
+        if positive.any():
+            centers = self.local_density_mixer.count_bin_centers.to(
+                device=counts.device,
+                dtype=counts.dtype,
+            )
+            bin_target = (counts[positive].unsqueeze(1) - centers.unsqueeze(0)).abs().argmin(dim=1)
+            positive_logits = lambda_logits.permute(0, 2, 3, 1)[positive]
+            loss_ce = F.cross_entropy(positive_logits, bin_target)
+        else:
+            loss_ce = lambda_logits.sum() * 0.0
+
+        pred_count = (local_output['expected_count'].float() * valid).flatten(1).sum(dim=1)
+        gt_count = (counts * valid).flatten(1).sum(dim=1)
+        loss_count = F.smooth_l1_loss(torch.log1p(pred_count), torch.log1p(gt_count))
+        loss_ordinal = self.compute_local_ordinal_loss(local_output['embeddings'], counts, valid)
+        return {
+            'loss_local_zip_nll': loss_nll,
+            'loss_local_zip_ce': loss_ce,
+            'loss_local_zip_count': loss_count,
+            'loss_local_ordinal': loss_ordinal,
+        }
+
+    def compute_local_ordinal_loss(self, embeddings, counts, valid):
+        features = embeddings.permute(0, 2, 3, 1)[valid].float()
+        local_counts = counts[valid]
+        if features.shape[0] < 3:
+            return embeddings.sum() * 0.0
+
+        edges = local_counts.new_tensor(self.local_ordinal_edges)
+        levels = torch.bucketize(local_counts, edges, right=False) + 1
+        levels = torch.where(local_counts > 0, levels, torch.zeros_like(levels))
+
+        selected = []
+        for level in torch.unique(levels, sorted=True):
+            indices = torch.nonzero(levels == level, as_tuple=False).flatten()
+            if indices.numel() > self.local_ordinal_max_per_level:
+                order = torch.randperm(indices.numel(), device=indices.device)
+                indices = indices[order[:self.local_ordinal_max_per_level]]
+            selected.append(indices)
+        if not selected:
+            return embeddings.sum() * 0.0
+        selected = torch.cat(selected)
+        features = F.normalize(features[selected], dim=1)
+        levels = levels[selected]
+        if features.shape[0] < 3 or torch.unique(levels).numel() < 2:
+            return embeddings.sum() * 0.0
+
+        similarity = features @ features.transpose(0, 1)
+        similarity = similarity / self.local_ordinal_temperature
+        diagonal = torch.eye(similarity.shape[0], dtype=torch.bool, device=similarity.device)
+        class_distance = (levels[:, None] - levels[None, :]).abs().to(similarity.dtype)
+        denominator_weight = torch.where(
+            class_distance > 0,
+            2.0 * class_distance,
+            torch.ones_like(class_distance),
+        )
+        weighted_logits = similarity + denominator_weight.log()
+        weighted_logits = weighted_logits.masked_fill(diagonal, float('-inf'))
+        log_denominator = torch.logsumexp(weighted_logits, dim=1)
+
+        positive_mask = (levels[:, None] == levels[None, :]) & (~diagonal)
+        positive_count = positive_mask.sum(dim=1)
+        valid_anchor = positive_count > 0
+        if not valid_anchor.any():
+            return embeddings.sum() * 0.0
+        log_probability = similarity - log_denominator[:, None]
+        per_anchor = -(log_probability * positive_mask).sum(dim=1) / positive_count.clamp(min=1)
+        return per_anchor[valid_anchor].mean()
+
     def compute_loss(self, outputs, criterion, targets, epoch, samples):
         """
         Compute loss, including:
@@ -1116,6 +1402,18 @@ class PET(nn.Module):
         weight_dict = dict()
         weight_dict.update(weight_dict_sparse)
         weight_dict.update(weight_dict_dense)
+
+        if self.local_density_mixer is not None:
+            local_losses = self.compute_local_density_losses(outputs, targets, samples)
+            local_weights = {
+                'loss_local_zip_nll': self.local_zip_loss_coef,
+                'loss_local_zip_ce': self.local_zip_loss_coef * self.local_zip_ce_coef,
+                'loss_local_zip_count': self.local_zip_loss_coef * self.local_zip_count_coef,
+                'loss_local_ordinal': self.local_ordinal_loss_coef,
+            }
+            loss_dict.update(local_losses)
+            weight_dict.update(local_weights)
+            losses += sum(local_losses[name] * local_weights[name] for name in local_losses)
 
         # quadtree splitter loss
         den = torch.stack([target['density'].reshape(()) for target in targets]).to(outputs['split_map_raw'].device)
@@ -2696,6 +2994,12 @@ class PET(nn.Module):
         encode_src = self.context_encoder(src, src_pos_embed, mask)
         encode_src = self.perspective_mixer(encode_src)
         encode_src = self.quad_context_mixer(encode_src)
+        local_density_output = None
+        if self.local_density_mixer is not None:
+            encode_src, local_density_output = self.local_density_mixer(encode_src)
+            self._check_finite('local_density_mixer.output', encode_src)
+            for name, tensor in local_density_output.items():
+                self._check_finite(f'local_density_mixer.{name}', tensor)
         context_info = (encode_src, src_pos_embed, mask)
         
         # apply quadtree splitter
@@ -2759,6 +3063,8 @@ class PET(nn.Module):
         outputs['split_mask_dense'] = split_mask_dense
         outputs['split_threshold'] = split_threshold.detach()
         outputs['query_prune_threshold'] = split_map.new_tensor(self.query_prune_threshold).detach()
+        if local_density_output is not None and 'train' in kwargs:
+            outputs['local_density'] = local_density_output
         if self.count_head is not None:
             count_epoch = int(kwargs.get('epoch', 0))
             count_density = self.count_head.predict_density(self.count_head_features(encode_src, count_epoch), mask)
