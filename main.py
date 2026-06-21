@@ -897,6 +897,26 @@ MODEL_RECIPES = {
     },
 }
 
+# APGCC-style shared IFI for PET.
+#
+# The older IFI-lite path used a separate auxiliary head, which improves
+# feature supervision but does not directly train the sparse/dense heads used
+# at inference. This recipe keeps the verified vgg_apglc scratch path and adds
+# low-weight interpolated GT/local-negative supervision directly to both PET
+# proposal heads. It is intentionally not a count-head, density-map, NMS, or
+# calibration recipe.
+MODEL_RECIPES['vgg_apglc_shared_ifi'] = {
+    **MODEL_RECIPES['vgg_apglc'],
+    'ifi_loss_coef': 0.02,
+    'ifi_head_source': 'both',
+    'ifi_point_coef': 0.2,
+    'ifi_neg_k': 4,
+    'ifi_neg_radius': 8.0,
+    'ifi_neg_min_dist': 2.0,
+    'ifi_start_epoch': 0,
+    'ifi_end_epoch': 350,
+}
+
 # Local Ordinal ZIP PET (LOZIP-PET): the verified APG+LC recipe plus a
 # zero-initialized local-density representation module. Unlike the failed
 # scalar count-feedback experiments, this module never shifts point logits or
@@ -1413,6 +1433,8 @@ def get_args_parser():
                         help='point-regression coefficient inside Gaussian soft APG')
     parser.add_argument('--ifi_loss_coef', default=0.0, type=float,
                         help='Interpolated Feature Guidance auxiliary loss weight; 0 disables it')
+    parser.add_argument('--ifi_head_source', default='separate', choices=('separate', 'sparse', 'dense', 'both'),
+                        help='prediction head used by IFI: separate auxiliary head, sparse PET head, dense PET head, or both PET heads')
     parser.add_argument('--ifi_point_coef', default=1.0, type=float,
                         help='zero-offset coefficient inside IFI-lite APG loss')
     parser.add_argument('--ifi_neg_k', default=4, type=int,
@@ -1985,7 +2007,7 @@ def merge_checkpoint_args(args, checkpoint):
             'apg_contrastive_coef', 'apg_neg_k', 'apg_margin',
             'apg_consistency_coef', 'apg_consistency_k', 'apg_consistency_sigma',
             'apg_soft_loss_coef', 'apg_soft_pos_k', 'apg_soft_sigma', 'apg_soft_point_coef',
-            'ifi_loss_coef', 'ifi_point_coef', 'ifi_neg_k', 'ifi_neg_radius',
+            'ifi_loss_coef', 'ifi_head_source', 'ifi_point_coef', 'ifi_neg_k', 'ifi_neg_radius',
             'ifi_neg_min_dist', 'ifi_start_epoch', 'ifi_end_epoch',
             'qd_apg_loss_coef', 'qd_apg_point_coef', 'qd_apg_suppress_coef',
             'qd_apg_start_epoch', 'qd_apg_end_epoch', 'qd_apg_route_source',
@@ -2098,6 +2120,8 @@ def model_only_allowed_missing_prefixes(args):
         prefixes.append('foreground_head.')
     if getattr(args, 'scale_fusion', 'none') != 'none':
         prefixes.append('scale_fusion.')
+    if float(getattr(args, 'ifi_loss_coef', 0.0)) > 0 and getattr(args, 'ifi_head_source', 'separate') == 'separate':
+        prefixes.extend(('ifi_cls_embed.', 'ifi_coord_embed.'))
     return tuple(prefixes)
 
 

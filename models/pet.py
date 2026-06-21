@@ -801,7 +801,10 @@ class PET(nn.Module):
         self.quadtree_sparse = BasePETCount(backbone, num_classes, quadtree_layer='sparse', args=args, transformer=transformer)
         self.quadtree_dense = BasePETCount(backbone, num_classes, quadtree_layer='dense', args=args, transformer=transformer)
         self.ifi_loss_coef = float(getattr(args, 'ifi_loss_coef', 0.0))
-        if self.ifi_loss_coef > 0:
+        self.ifi_head_source = getattr(args, 'ifi_head_source', 'separate')
+        if self.ifi_head_source not in ('separate', 'sparse', 'dense', 'both'):
+            raise ValueError('ifi_head_source must be one of "separate", "sparse", "dense", or "both"')
+        if self.ifi_loss_coef > 0 and self.ifi_head_source == 'separate':
             self.ifi_cls_embed = nn.Linear(hidden_dim, num_classes + 1)
             self.ifi_coord_embed = MLP(hidden_dim, hidden_dim, 2, 3)
         else:
@@ -1928,6 +1931,8 @@ class PET(nn.Module):
         APG-lite supervises nearest fixed grid queries. IFI-lite complements it
         by sampling PET's encoded feature map at arbitrary GT and local-negative
         positions, matching APGCC's core idea without changing PET inference.
+        The shared-head mode sends this supervision into PET's sparse/dense
+        prediction heads instead of a detached auxiliary-only head.
         """
         encode_src = outputs.get('encode_src')
         if encode_src is None:
@@ -1940,19 +1945,24 @@ class PET(nn.Module):
             if gt_points.numel() == 0:
                 continue
             pos_feats = self._sample_ifi_features(encode_src, batch_idx, gt_points, img_h, img_w)
-            pos_logits = self.ifi_cls_embed(pos_feats)
-            pos_target = torch.ones(pos_logits.shape[0], dtype=torch.long, device=encode_src.device)
-            cls_losses.append(self.point_classification_loss(pos_logits, pos_target))
+            pos_target = torch.ones(pos_feats.shape[0], dtype=torch.long, device=encode_src.device)
 
-            pos_offsets = (self.ifi_coord_embed(pos_feats).sigmoid() - 0.5) * 2.0
-            point_losses.append(F.smooth_l1_loss(pos_offsets, torch.zeros_like(pos_offsets), reduction='none').sum(dim=-1).mean())
+            for pos_logits, pos_offsets in self._ifi_head_predictions(pos_feats):
+                cls_losses.append(self.point_classification_loss(pos_logits, pos_target))
+                point_losses.append(
+                    F.smooth_l1_loss(
+                        pos_offsets,
+                        torch.zeros_like(pos_offsets),
+                        reduction='none',
+                    ).sum(dim=-1).mean()
+                )
 
             neg_points = self._build_ifi_negatives(gt_points, img_h, img_w)
             if neg_points.numel() > 0:
                 neg_feats = self._sample_ifi_features(encode_src, batch_idx, neg_points, img_h, img_w)
-                neg_logits = self.ifi_cls_embed(neg_feats)
-                neg_target = torch.zeros(neg_logits.shape[0], dtype=torch.long, device=encode_src.device)
-                cls_losses.append(self.point_classification_loss(neg_logits, neg_target))
+                neg_target = torch.zeros(neg_feats.shape[0], dtype=torch.long, device=encode_src.device)
+                for neg_logits, _ in self._ifi_head_predictions(neg_feats):
+                    cls_losses.append(self.point_classification_loss(neg_logits, neg_target))
 
         if not cls_losses:
             return outputs['split_map_raw'].sum() * 0.0
@@ -1960,6 +1970,28 @@ class PET(nn.Module):
         if point_losses:
             loss = loss + self.ifi_point_coef * torch.stack(point_losses).mean()
         return loss
+
+    def _ifi_head_predictions(self, feats):
+        """Return logits and normalized offsets for the configured IFI heads."""
+        predictions = []
+        if self.ifi_head_source == 'separate':
+            if self.ifi_cls_embed is None or self.ifi_coord_embed is None:
+                return predictions
+            predictions.append((
+                self.ifi_cls_embed(feats),
+                (self.ifi_coord_embed(feats).sigmoid() - 0.5) * 2.0,
+            ))
+        if self.ifi_head_source in ('sparse', 'both'):
+            predictions.append((
+                self.quadtree_sparse.class_embed(feats),
+                (self.quadtree_sparse.coord_embed(feats).sigmoid() - 0.5) * 2.0,
+            ))
+        if self.ifi_head_source in ('dense', 'both'):
+            predictions.append((
+                self.quadtree_dense.class_embed(feats),
+                (self.quadtree_dense.coord_embed(feats).sigmoid() - 0.5) * 2.0,
+            ))
+        return predictions
 
     def _nearest_query_index(self, output, gt_point, device, dtype):
         img_h, img_w = output['img_shape']
