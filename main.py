@@ -987,16 +987,19 @@ MODEL_RECIPES['vgg_apglc_localzip'] = {
 # drift.
 MODEL_RECIPES['vgg_apglc_ebczip'] = {
     **MODEL_RECIPES['vgg_apglc'],
-    'zip_count_loss_coef': 0.10,
+    'zip_count_loss_coef': 1.0,
     'zip_count_block_size': 16,
     'zip_count_bin_centers': '1,2,3,4,5,6,7,8,9,10,11.38,13.38,16.26',
     'zip_count_zero_prior': 0.9,
-    'zip_count_ce_coef': 0.5,
+    'zip_count_ce_coef': 1.0,
     'zip_count_count_coef': 1.0,
     'zip_count_start_epoch': 0,
     'zip_count_end_epoch': -1,
     'zip_count_warmup_epochs': 20,
-    'zip_count_feature_grad_scale': 0.25,
+    # Keep the verified PET/APG+LC representation intact. The ZIP branch is a
+    # count model trained on PET features; allowing its loss into the encoder
+    # regressed the point branch to ~56 MAE in the first scratch run.
+    'zip_count_feature_grad_scale': 0.0,
     'eval_count_source': 'zip',
 }
 
