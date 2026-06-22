@@ -211,27 +211,86 @@ def _greedy_match_count(distances, threshold):
 
 
 def _localization_match_counts(pred_points, gt_points, threshold):
-    """Return TP/FP/FN for point localization under a pixel-distance threshold."""
+    """Return TP/FP/FN for point localization under a fixed or per-GT threshold."""
     pred_count = int(pred_points.shape[0])
     gt_count = int(gt_points.shape[0])
     if pred_count == 0 or gt_count == 0:
         return 0, pred_count, gt_count
 
     distances = torch.cdist(pred_points.float(), gt_points.float(), p=2)
-    threshold = float(threshold)
-    if threshold <= 0:
+    if torch.is_tensor(threshold):
+        threshold_tensor = threshold.to(device=distances.device, dtype=distances.dtype).reshape(1, -1)
+        if threshold_tensor.numel() != gt_count:
+            raise ValueError(f'per-GT localization threshold has {threshold_tensor.numel()} values for {gt_count} GT points')
+        valid_pairs_mask = distances <= threshold_tensor
+        invalid_cost = max(float(threshold_tensor.max().detach().cpu().item()) + 1.0, 1.0) * 1_000_000.0
+    else:
+        threshold = float(threshold)
+        if threshold <= 0:
+            true_positive = 0
+            false_positive = pred_count - true_positive
+            false_negative = gt_count - true_positive
+            return true_positive, false_positive, false_negative
+        valid_pairs_mask = distances <= threshold
+        invalid_cost = max(threshold + 1.0, 1.0) * 1_000_000.0
+
+    if not bool(valid_pairs_mask.any().item()):
         true_positive = 0
     elif linear_sum_assignment is None:
-        true_positive = _greedy_match_count(distances, threshold)
+        valid_pairs = torch.nonzero(valid_pairs_mask, as_tuple=False)
+        valid_distances = distances[valid_pairs[:, 0], valid_pairs[:, 1]]
+        order = torch.argsort(valid_distances)
+        pred_used = torch.zeros(pred_count, dtype=torch.bool, device=distances.device)
+        gt_used = torch.zeros(gt_count, dtype=torch.bool, device=distances.device)
+        true_positive = 0
+        for pair_index in order.tolist():
+            pred_index = int(valid_pairs[pair_index, 0].item())
+            gt_index = int(valid_pairs[pair_index, 1].item())
+            if pred_used[pred_index] or gt_used[gt_index]:
+                continue
+            pred_used[pred_index] = True
+            gt_used[gt_index] = True
+            true_positive += 1
     else:
         cost = distances.detach().cpu().numpy()
-        invalid_cost = max(threshold + 1.0, 1.0) * 1_000_000.0
-        cost = np.where(cost <= threshold, cost, invalid_cost)
+        cost = np.where(valid_pairs_mask.detach().cpu().numpy(), cost, invalid_cost)
         row_ind, col_ind = linear_sum_assignment(cost)
         true_positive = int(np.sum(cost[row_ind, col_ind] < invalid_cost))
     false_positive = pred_count - true_positive
     false_negative = gt_count - true_positive
     return true_positive, false_positive, false_negative
+
+
+def _nearest_neighbor_sigma(gt_points, scale, fallback, min_value=1.0):
+    gt_count = int(gt_points.shape[0])
+    if gt_count <= 1:
+        return gt_points.new_full((gt_count,), float(fallback))
+    distances = torch.cdist(gt_points.float(), gt_points.float(), p=2)
+    eye = torch.eye(gt_count, dtype=torch.bool, device=gt_points.device)
+    distances = distances.masked_fill(eye, float('inf'))
+    nearest = distances.min(dim=1).values
+    sigma = nearest * float(scale)
+    return sigma.clamp_min(float(min_value))
+
+
+def _target_sigma(target, name, device, fallback_threshold, gt_points_abs, large_scale=1.0, small_scale=0.5):
+    """Return threshold descriptor and tensor/scalar for localization matching.
+
+    Official NWPU-style localization uses per-GT small/large sigma. SHA only
+    ships point annotations, so `adaptive_nn` is a transparent fallback for
+    point-only datasets and must not be reported as the official NWPU metric.
+    """
+    if 'sigma' in target:
+        sigma = target['sigma'].to(device=device, dtype=torch.float32)
+        if sigma.ndim == 2 and sigma.shape[1] >= 2:
+            return 'target_sigma', sigma[:, 1 if name == 'large' else 0]
+        if sigma.ndim == 1:
+            return 'target_sigma', sigma
+    return 'adaptive_nn', _nearest_neighbor_sigma(
+        gt_points_abs,
+        large_scale if name == 'large' else small_scale,
+        fallback_threshold,
+    )
 
 
 def _localization_summary(true_positive, false_positive, false_negative):
@@ -247,7 +306,11 @@ def _localization_summary(true_positive, false_positive, false_negative):
 def _add_localization_result(results, name, threshold, true_positive, false_positive, false_negative):
     """Store point-localization metrics under legacy and paper-style names."""
     precision, recall, f1 = _localization_summary(true_positive, false_positive, false_negative)
-    results[f'loc_threshold_{name}'] = float(threshold)
+    if torch.is_tensor(threshold):
+        threshold_value = float(threshold.detach().float().mean().cpu().item()) if threshold.numel() else 0.0
+    else:
+        threshold_value = float(threshold)
+    results[f'loc_threshold_{name}'] = threshold_value
     results[f'loc_tp_{name}'] = float(true_positive)
     results[f'loc_fp_{name}'] = float(false_positive)
     results[f'loc_fn_{name}'] = float(false_negative)
@@ -257,7 +320,7 @@ def _add_localization_result(results, name, threshold, true_positive, false_posi
 
     sigma_name = {'large': 'sigma_l', 'small': 'sigma_s'}.get(name)
     if sigma_name is not None:
-        results[f'loc_threshold_{sigma_name}'] = float(threshold)
+        results[f'loc_threshold_{sigma_name}'] = threshold_value
         results[f'loc_tp_{sigma_name}'] = float(true_positive)
         results[f'loc_fp_{sigma_name}'] = float(false_positive)
         results[f'loc_fn_{sigma_name}'] = float(false_negative)
@@ -335,6 +398,9 @@ def evaluate_crowd_no_overlap(
     localization_metrics=True,
     localization_large_threshold=8.0,
     localization_small_threshold=4.0,
+    localization_protocol='fixed',
+    localization_large_scale=1.0,
+    localization_small_scale=0.5,
 ):
     """P2PNet/APGCC-style full-image crowd evaluation without crop overlap.
 
@@ -353,6 +419,9 @@ def evaluate_crowd_no_overlap(
         localization_metrics=localization_metrics,
         localization_large_threshold=localization_large_threshold,
         localization_small_threshold=localization_small_threshold,
+        localization_protocol=localization_protocol,
+        localization_large_scale=localization_large_scale,
+        localization_small_scale=localization_small_scale,
     )
 
 
@@ -369,6 +438,9 @@ def evaluate(
     localization_metrics=True,
     localization_large_threshold=8.0,
     localization_small_threshold=4.0,
+    localization_protocol='fixed',
+    localization_large_scale=1.0,
+    localization_small_scale=0.5,
 ):
     model.eval()
     if tta_scales is None:
@@ -388,10 +460,16 @@ def evaluate(
         'large': float(localization_large_threshold),
         'small': float(localization_small_threshold),
     }
+    localization_protocol = str(localization_protocol)
+    if localization_protocol not in ('fixed', 'target_sigma', 'adaptive_nn'):
+        raise ValueError("localization_protocol must be one of fixed, target_sigma, adaptive_nn")
     loc_totals = {
         name: {'tp': 0.0, 'fp': 0.0, 'fn': 0.0}
         for name in loc_thresholds
     }
+    loc_threshold_sums = {name: 0.0 for name in loc_thresholds}
+    loc_threshold_counts = {name: 0.0 for name in loc_thresholds}
+    loc_protocol_used = {name: localization_protocol for name in loc_thresholds}
     for samples, targets in metric_logger.log_every(data_loader, print_freq, header):
         samples = samples.to(device)
         if len(targets) != 1 or samples.tensors.shape[0] != 1:
@@ -442,7 +520,32 @@ def evaluate(
                 pred_points_abs = pred_points_abs * pred_points_abs.new_tensor([float(img_h), float(img_w)])
             gt_points_abs = targets[0]['points'].to(device=device, dtype=torch.float32)
             for name, threshold in loc_thresholds.items():
-                tp, fp, fn = _localization_match_counts(pred_points_abs, gt_points_abs, threshold)
+                match_threshold = threshold
+                protocol_used = localization_protocol
+                if localization_protocol == 'target_sigma':
+                    protocol_used, match_threshold = _target_sigma(
+                        targets[0],
+                        name,
+                        device,
+                        threshold,
+                        gt_points_abs,
+                        large_scale=localization_large_scale,
+                        small_scale=localization_small_scale,
+                    )
+                elif localization_protocol == 'adaptive_nn':
+                    match_threshold = _nearest_neighbor_sigma(
+                        gt_points_abs,
+                        localization_large_scale if name == 'large' else localization_small_scale,
+                        threshold,
+                    )
+                loc_protocol_used[name] = protocol_used
+                if torch.is_tensor(match_threshold):
+                    loc_threshold_sums[name] += float(match_threshold.detach().float().sum().cpu().item())
+                    loc_threshold_counts[name] += float(match_threshold.numel())
+                else:
+                    loc_threshold_sums[name] += float(match_threshold)
+                    loc_threshold_counts[name] += 1.0
+                tp, fp, fn = _localization_match_counts(pred_points_abs, gt_points_abs, match_threshold)
                 loc_totals[name]['tp'] += float(tp)
                 loc_totals[name]['fp'] += float(fp)
                 loc_totals[name]['fn'] += float(fn)
@@ -471,10 +574,17 @@ def evaluate(
         for name, counts in loc_totals.items():
             for count_name, value in counts.items():
                 loc_reduce[f'loc_{count_name}_{name}'] = torch.tensor(value, dtype=torch.float64, device=device)
+            loc_reduce[f'loc_threshold_sum_{name}'] = torch.tensor(loc_threshold_sums[name], dtype=torch.float64, device=device)
+            loc_reduce[f'loc_threshold_count_{name}'] = torch.tensor(loc_threshold_counts[name], dtype=torch.float64, device=device)
         loc_reduce = utils.reduce_dict(loc_reduce, average=False)
-        for name, threshold in loc_thresholds.items():
+        results['loc_protocol'] = localization_protocol
+        for name in loc_thresholds:
             tp = float(loc_reduce[f'loc_tp_{name}'].item())
             fp = float(loc_reduce[f'loc_fp_{name}'].item())
             fn = float(loc_reduce[f'loc_fn_{name}'].item())
+            threshold_sum = float(loc_reduce[f'loc_threshold_sum_{name}'].item())
+            threshold_count = float(loc_reduce[f'loc_threshold_count_{name}'].item())
+            threshold = threshold_sum / threshold_count if threshold_count > 0 else loc_thresholds[name]
             _add_localization_result(results, name, threshold, tp, fp, fn)
+            results[f'loc_protocol_{name}'] = loc_protocol_used[name]
     return results

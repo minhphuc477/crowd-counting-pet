@@ -331,6 +331,13 @@ def get_args_parser():
                         help='large pixel-distance threshold for localization F1/precision/recall')
     parser.add_argument('--localization_small_threshold', default=4.0, type=float,
                         help='small pixel-distance threshold for localization F1/precision/recall')
+    parser.add_argument('--localization_protocol', default='fixed',
+                        choices=('fixed', 'target_sigma', 'adaptive_nn'),
+                        help='fixed uses pixel radii; target_sigma uses dataset per-GT sigma; adaptive_nn derives sigma from nearest GT distance')
+    parser.add_argument('--localization_large_scale', default=1.0, type=float,
+                        help='nearest-neighbor multiplier for adaptive large-threshold localization')
+    parser.add_argument('--localization_small_scale', default=0.5, type=float,
+                        help='nearest-neighbor multiplier for adaptive small-threshold localization')
 
     # dataset parameters
     parser.add_argument('--dataset_file', default="SHA")
@@ -410,6 +417,7 @@ def merge_checkpoint_args(args, checkpoint):
         'eval_score_calibration_count_ratio_max',
         'no_eval_filter_invalid_points', 'eval_debug_counting',
         'no_localization_metrics', 'localization_large_threshold', 'localization_small_threshold',
+        'localization_protocol', 'localization_large_scale', 'localization_small_scale',
         'eval_protocol', 'resume_allow_arch_change',
         'amp_dtype', 'strict_model_checks',
     }
@@ -599,6 +607,9 @@ def main(args):
             localization_metrics=not args.no_localization_metrics,
             localization_large_threshold=args.localization_large_threshold,
             localization_small_threshold=args.localization_small_threshold,
+            localization_protocol=args.localization_protocol,
+            localization_large_scale=args.localization_large_scale,
+            localization_small_scale=args.localization_small_scale,
         )
         mae, mse = test_stats['mae'], test_stats['mse']
     else:
@@ -613,6 +624,9 @@ def main(args):
             localization_metrics=not args.no_localization_metrics,
             localization_large_threshold=args.localization_large_threshold,
             localization_small_threshold=args.localization_small_threshold,
+            localization_protocol=args.localization_protocol,
+            localization_large_scale=args.localization_large_scale,
+            localization_small_scale=args.localization_small_scale,
         )
         mae, mse = test_stats['mae'], test_stats['mse']
     loc_text = format_localization_metrics(test_stats, prefix=', ')
@@ -659,6 +673,12 @@ def main(args):
             'localization_metrics': not bool(getattr(args, 'no_localization_metrics', False)),
             'localization_large_threshold': float(getattr(args, 'localization_large_threshold', 8.0)),
             'localization_small_threshold': float(getattr(args, 'localization_small_threshold', 4.0)),
+            'localization_protocol': getattr(args, 'localization_protocol', 'fixed'),
+            'localization_large_scale': float(getattr(args, 'localization_large_scale', 1.0)),
+            'localization_small_scale': float(getattr(args, 'localization_small_scale', 0.5)),
+            'loc_protocol': test_stats.get('loc_protocol', getattr(args, 'localization_protocol', 'fixed')),
+            'loc_protocol_large': test_stats.get('loc_protocol_large', ''),
+            'loc_protocol_small': test_stats.get('loc_protocol_small', ''),
         }
         payload.update(scalar_eval_metrics(test_stats, skip={'mae', 'mse', 'pred_cnt', 'gt_cnt'}))
         results_file.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")

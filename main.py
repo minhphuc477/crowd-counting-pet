@@ -1701,6 +1701,13 @@ def get_args_parser():
                         help='large pixel-distance threshold for localization F1/precision/recall')
     parser.add_argument('--localization_small_threshold', default=4.0, type=float,
                         help='small pixel-distance threshold for localization F1/precision/recall')
+    parser.add_argument('--localization_protocol', default='fixed',
+                        choices=('fixed', 'target_sigma', 'adaptive_nn'),
+                        help='fixed uses pixel radii; target_sigma uses dataset per-GT sigma; adaptive_nn derives sigma from nearest GT distance')
+    parser.add_argument('--localization_large_scale', default=1.0, type=float,
+                        help='nearest-neighbor multiplier for adaptive large-threshold localization')
+    parser.add_argument('--localization_small_scale', default=0.5, type=float,
+                        help='nearest-neighbor multiplier for adaptive small-threshold localization')
     parser.add_argument('--eval_protocol', default='pet', choices=('pet', 'crowd_no_overlap'),
                         help='validation protocol used during training')
 
@@ -2068,6 +2075,7 @@ def merge_checkpoint_args(args, checkpoint):
         'bad_count_direction', 'bad_count_ratio_max', 'bad_count_mae_min', 'bad_count_start_epoch',
         'patch_size', 'patch_size_choices', 'crop_attempts', 'min_crop_points',
         'no_localization_metrics', 'localization_large_threshold', 'localization_small_threshold',
+        'localization_protocol', 'localization_large_scale', 'localization_small_scale',
         'eval_count_source', 'eval_count_blend_alpha',
     }
     if getattr(args, 'resume_model_only', False):
@@ -2088,6 +2096,7 @@ def merge_checkpoint_args(args, checkpoint):
             'eval_score_calibration_count_ratio_max',
             'no_eval_filter_invalid_points', 'eval_debug_counting',
             'no_localization_metrics', 'localization_large_threshold', 'localization_small_threshold',
+            'localization_protocol', 'localization_large_scale', 'localization_small_scale',
         })
         explicit_args = set(getattr(args, '_explicit_args', set()))
         if 'eval_dense_start_epoch' in explicit_args:
@@ -2642,6 +2651,9 @@ def main(args):
                 localization_metrics=not args.no_localization_metrics,
                 localization_large_threshold=args.localization_large_threshold,
                 localization_small_threshold=args.localization_small_threshold,
+                localization_protocol=args.localization_protocol,
+                localization_large_scale=args.localization_large_scale,
+                localization_small_scale=args.localization_small_scale,
             )
         else:
             test_stats = evaluate(
@@ -2653,6 +2665,9 @@ def main(args):
                 localization_metrics=not args.no_localization_metrics,
                 localization_large_threshold=args.localization_large_threshold,
                 localization_small_threshold=args.localization_small_threshold,
+                localization_protocol=args.localization_protocol,
+                localization_large_scale=args.localization_large_scale,
+                localization_small_scale=args.localization_small_scale,
             )
         t2 = time.time()
         print("\n==========================")
@@ -2738,6 +2753,9 @@ def main(args):
                     localization_metrics=not args.no_localization_metrics,
                     localization_large_threshold=args.localization_large_threshold,
                     localization_small_threshold=args.localization_small_threshold,
+                    localization_protocol=args.localization_protocol,
+                    localization_large_scale=args.localization_large_scale,
+                    localization_small_scale=args.localization_small_scale,
                 )
             else:
                 test_stats = evaluate(
@@ -2749,6 +2767,9 @@ def main(args):
                     localization_metrics=not args.no_localization_metrics,
                     localization_large_threshold=args.localization_large_threshold,
                     localization_small_threshold=args.localization_small_threshold,
+                    localization_protocol=args.localization_protocol,
+                    localization_large_scale=args.localization_large_scale,
+                    localization_small_scale=args.localization_small_scale,
                 )
             t2 = time.time()
 
@@ -2800,6 +2821,12 @@ def main(args):
                     'localization_metrics': not bool(getattr(args, 'no_localization_metrics', False)),
                     'localization_large_threshold': float(getattr(args, 'localization_large_threshold', 8.0)),
                     'localization_small_threshold': float(getattr(args, 'localization_small_threshold', 4.0)),
+                    'localization_protocol': getattr(args, 'localization_protocol', 'fixed'),
+                    'localization_large_scale': float(getattr(args, 'localization_large_scale', 1.0)),
+                    'localization_small_scale': float(getattr(args, 'localization_small_scale', 0.5)),
+                    'loc_protocol': test_stats.get('loc_protocol', getattr(args, 'localization_protocol', 'fixed')),
+                    'loc_protocol_large': test_stats.get('loc_protocol_large', ''),
+                    'loc_protocol_small': test_stats.get('loc_protocol_small', ''),
                 }
                 eval_record.update(scalar_eval_metrics(test_stats, skip={'mae', 'mse', 'pred_cnt', 'gt_cnt'}))
                 with open(run_log_name, "a", encoding="utf-8") as log_file:

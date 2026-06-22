@@ -186,6 +186,12 @@ def run_eval(
         str(args.localization_large_threshold),
         "--localization_small_threshold",
         str(args.localization_small_threshold),
+        "--localization_protocol",
+        args.localization_protocol,
+        "--localization_large_scale",
+        str(args.localization_large_scale),
+        "--localization_small_scale",
+        str(args.localization_small_scale),
     ])
     if eval_foreground_gate is not None:
         cmd.extend(["--eval_foreground_gate", eval_foreground_gate])
@@ -294,6 +300,12 @@ def write_outputs(records: list[dict], output_dir: Path) -> None:
         "localization_metrics",
         "localization_large_threshold",
         "localization_small_threshold",
+        "localization_protocol",
+        "localization_large_scale",
+        "localization_small_scale",
+        "loc_protocol",
+        "loc_protocol_large",
+        "loc_protocol_small",
         "loc_threshold_large",
         "loc_f1_large",
         "loc_prec_large",
@@ -358,6 +370,9 @@ def get_args() -> argparse.Namespace:
     parser.add_argument("--no_localization_metrics", action="store_true", help="disable localization metrics in eval.py")
     parser.add_argument("--localization_large_threshold", default=8.0, type=float)
     parser.add_argument("--localization_small_threshold", default=4.0, type=float)
+    parser.add_argument("--localization_protocol", default="fixed", choices=("fixed", "target_sigma", "adaptive_nn"))
+    parser.add_argument("--localization_large_scale", default=1.0, type=float)
+    parser.add_argument("--localization_small_scale", default=0.5, type=float)
     parser.add_argument(
         "--eval_nms_radii",
         nargs="+",
