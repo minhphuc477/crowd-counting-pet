@@ -1,0 +1,153 @@
+#!/usr/bin/env python3
+import argparse
+import json
+import re
+import shutil
+import sys
+import time
+import urllib.parse
+import zipfile
+from pathlib import Path
+
+import requests
+
+
+SHARE_URL = (
+    'https://mailnwpueducn-my.sharepoint.com/:f:/g/personal/'
+    'gjy3035_mail_nwpu_edu_cn/EsubMp48wwJDiH0YlT82NYYBmY9L0s-FprrBcoaAJkI1rw?e=e2JLgD'
+)
+SERVER_RELATIVE_FOLDER = (
+    '/personal/gjy3035_mail_nwpu_edu_cn/Documents/'
+    '\u8bba\u6587\u5f00\u6e90\u6570\u636e/NWPU-Crowd'
+)
+DEFAULT_FILES = ('jsons.zip', 'mats.zip', 'train.txt', 'val.txt', 'test.txt', 'readme.md')
+IMAGE_FILES = (
+    'images_part1.zip',
+    'images_part2.zip',
+    'images_part3.zip',
+    'images_part4.zip',
+    'images_part5.zip',
+)
+
+
+def checked_get(session, url, **kwargs):
+    last_error = None
+    for attempt in range(5):
+        try:
+            response = session.get(url, timeout=kwargs.pop('timeout', 60), **kwargs)
+            if response.status_code in (429, 500, 502, 503, 504):
+                time.sleep(2 + attempt * 2)
+                last_error = RuntimeError(f'HTTP {response.status_code}: {url}')
+                continue
+            response.raise_for_status()
+            return response
+        except Exception as exc:
+            last_error = exc
+            time.sleep(2 + attempt * 2)
+    raise last_error
+
+
+def open_text(session, url):
+    return checked_get(session, url, timeout=60).text
+
+
+def parse_page_context(html):
+    match = re.search(r'_spPageContextInfo=(\{.*?\});_spPageContextInfo', html)
+    if not match:
+        raise RuntimeError('Could not find _spPageContextInfo in SharePoint page')
+    return json.loads(match.group(1))
+
+
+def list_files(session, ctx):
+    base = ctx['siteAbsoluteUrl']
+    folder = urllib.parse.quote(SERVER_RELATIVE_FOLDER, safe='/')
+    url = (
+        f"{base}/_api/web/GetFolderByServerRelativeUrl(@v)/Files"
+        f"?@v='{folder}'"
+    )
+    response = checked_get(
+        session,
+        url,
+        headers={
+            'Accept': 'application/json;odata=verbose',
+            'User-Agent': 'Mozilla/5.0',
+        },
+        timeout=60,
+    )
+    payload = response.json()
+    return {item['Name']: item for item in payload['d']['results']}
+
+
+def download_file(session, ctx, server_relative_url, output_path):
+    base = ctx['siteAbsoluteUrl']
+    encoded = urllib.parse.quote(server_relative_url, safe='/')
+    url = (
+        f"{base}/_api/web/GetFileByServerRelativeUrl(@v)/$value"
+        f"?@v='{encoded}'"
+    )
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    response = checked_get(session, url, stream=True, timeout=600)
+    with open(output_path, 'wb') as handle:
+        for chunk in response.iter_content(chunk_size=1024 * 1024):
+            if chunk:
+                handle.write(chunk)
+    return output_path.stat().st_size
+
+
+def unzip_to(zip_path, target_dir):
+    target_dir.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(zip_path) as zf:
+        zf.extractall(target_dir)
+
+
+def main():
+    parser = argparse.ArgumentParser(description='Download NWPU-Crowd files from the official public SharePoint mirror.')
+    parser.add_argument('--data_root', default='data/NWPU-Crowd')
+    parser.add_argument('--download_dir', default='data/downloads/NWPU-Crowd')
+    parser.add_argument('--include_images', action='store_true',
+                        help='also download images_part*.zip; these files are very large')
+    parser.add_argument('--no_extract', action='store_true')
+    args = parser.parse_args()
+
+    session = requests.Session()
+    session.headers.update({'User-Agent': 'Mozilla/5.0'})
+    html = open_text(session, SHARE_URL)
+    ctx = parse_page_context(html)
+    files = list_files(session, ctx)
+
+    wanted = list(DEFAULT_FILES)
+    if args.include_images:
+        wanted.extend(IMAGE_FILES)
+
+    download_dir = Path(args.download_dir)
+    data_root = Path(args.data_root)
+    for name in wanted:
+        if name not in files:
+            print(f'WARNING: {name} not found in public mirror', file=sys.stderr)
+            continue
+        output = download_dir / name
+        if output.exists() and output.stat().st_size == int(files[name].get('Length', 0)):
+            print(f'{name}: already downloaded')
+        else:
+            print(f'Downloading {name} ...')
+            size = download_file(session, ctx, files[name]['ServerRelativeUrl'], output)
+            print(f'  saved {output} ({size} bytes)')
+
+        if args.no_extract:
+            continue
+        if name == 'jsons.zip':
+            unzip_to(output, data_root / 'jsons')
+        elif name == 'mats.zip':
+            unzip_to(output, data_root / 'mats')
+        elif name.startswith('images_part') and name.endswith('.zip'):
+            unzip_to(output, data_root / 'images')
+        elif name.endswith('.txt') or name == 'readme.md':
+            data_root.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(output, data_root / name)
+
+    print('Done.')
+    print(f'Dataset root: {data_root}')
+
+
+if __name__ == '__main__':
+    main()
