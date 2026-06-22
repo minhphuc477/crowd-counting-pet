@@ -207,6 +207,8 @@ def main():
     parser.add_argument('--skip_extract', action='store_true')
     parser.add_argument('--run_eval', action='store_true')
     parser.add_argument('--eval_split', default='val', choices=('val', 'test', 'train'))
+    parser.add_argument('--check_splits', default='train,val',
+                        help='comma-separated splits to validate; use val when train annotations are unavailable')
     args = parser.parse_args()
 
     data_root = Path(args.data_root)
@@ -242,6 +244,8 @@ def main():
         data_root,
         '--nwpu_eval_split',
         args.eval_split,
+        '--splits',
+        args.check_splits,
     ])
 
     print('\nDataset ready.')
