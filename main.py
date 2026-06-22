@@ -989,6 +989,7 @@ MODEL_RECIPES['vgg_apglc_ebczip'] = {
     **MODEL_RECIPES['vgg_apglc'],
     'zip_count_loss_coef': 1.0,
     'zip_count_block_size': 16,
+    'zip_count_feature_source': 'fpn4x8x',
     'zip_count_bin_centers': '1,2,3,4,5,6,7,8,9,10,11.38,13.38,16.26',
     'zip_count_zero_prior': 0.9,
     'zip_count_ce_coef': 1.0,
@@ -1128,6 +1129,7 @@ ARCHITECTURE_OVERRIDE_KEYS = {
     'foreground_init_prior',
     'zip_count_loss_coef',
     'zip_count_block_size',
+    'zip_count_feature_source',
     'zip_count_bin_centers',
     'zip_count_zero_prior',
     'zip_count_ce_coef',
@@ -1324,6 +1326,8 @@ def get_args_parser():
                         help='weight for blockwise EBC-ZIP count supervision; 0 disables the ZIP count branch')
     parser.add_argument('--zip_count_block_size', default=16, type=int,
                         help='image-space block size for the EBC-ZIP count branch; must be divisible by encoder stride')
+    parser.add_argument('--zip_count_feature_source', default='encoder8x', choices=('encoder8x', 'fpn4x8x'),
+                        help='features used by the EBC-ZIP branch: encoder8x or fused 4x-detail/8x-context')
     parser.add_argument('--zip_count_bin_centers',
                         default='1,2,3,4,5,6,7,8,9,10,11.38,13.38,16.26', type=str,
                         help='comma-separated positive block-count centers used by the ZIP count branch')
@@ -2108,7 +2112,7 @@ def merge_checkpoint_args(args, checkpoint):
             'density_map_loss_type', 'density_map_pos_weight',
             'density_map_grad_scale',
             'density_map_start_epoch', 'density_map_end_epoch',
-            'zip_count_loss_coef', 'zip_count_block_size', 'zip_count_bin_centers',
+            'zip_count_loss_coef', 'zip_count_block_size', 'zip_count_feature_source', 'zip_count_bin_centers',
             'zip_count_zero_prior', 'zip_count_ce_coef', 'zip_count_count_coef',
             'zip_count_start_epoch', 'zip_count_end_epoch', 'zip_count_warmup_epochs',
             'zip_count_feature_grad_scale', 'eval_count_source',

@@ -628,9 +628,11 @@ class EBCZipCountHead(nn.Module):
         block_stride=2,
         count_bin_centers=(1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.38, 13.38, 16.26),
         zero_prior=0.9,
+        use_detail=False,
     ):
         super().__init__()
         self.block_stride = max(1, int(block_stride))
+        self.use_detail = bool(use_detail)
         centers = torch.as_tensor(count_bin_centers, dtype=torch.float32)
         if centers.ndim != 1 or centers.numel() < 2:
             raise ValueError('zip count bin centers must contain at least two values')
@@ -640,6 +642,12 @@ class EBCZipCountHead(nn.Module):
             raise ValueError('zip count bin centers must be positive')
         self.register_buffer('count_bin_centers', centers)
 
+        in_channels = hidden_dim * 2 if self.use_detail else hidden_dim
+        self.fusion = nn.Sequential(
+            nn.Conv2d(in_channels, hidden_dim, 1, bias=False),
+            _make_group_norm(hidden_dim),
+            nn.GELU(),
+        )
         self.encoder = nn.Sequential(
             nn.Conv2d(hidden_dim, hidden_dim, 3, padding=1, groups=hidden_dim, bias=False),
             _make_group_norm(hidden_dim),
@@ -659,7 +667,15 @@ class EBCZipCountHead(nn.Module):
         # Bias the positive component toward a single head per occupied block.
         self.lambda_head.bias.data[0] = 4.0
 
-    def forward(self, x):
+    def forward(self, x, detail=None):
+        if self.use_detail:
+            if detail is None:
+                raise ValueError('EBCZipCountHead with use_detail=True requires detail features')
+            x = F.interpolate(x, size=detail.shape[-2:], mode='bilinear', align_corners=False)
+            x = torch.cat([detail.float(), x.float()], dim=1)
+        else:
+            x = x.float()
+        x = self.fusion(x)
         x = self.encoder(x.float())
         block = F.avg_pool2d(
             x,
@@ -928,15 +944,18 @@ class PET(nn.Module):
         self.zip_count_end_epoch = int(getattr(args, 'zip_count_end_epoch', -1))
         self.zip_count_warmup_epochs = max(0, int(getattr(args, 'zip_count_warmup_epochs', 0)))
         self.zip_count_feature_grad_scale = max(0.0, float(getattr(args, 'zip_count_feature_grad_scale', 1.0)))
+        self.zip_count_feature_source = getattr(args, 'zip_count_feature_source', 'encoder8x')
+        if self.zip_count_feature_source not in ('encoder8x', 'fpn4x8x'):
+            raise ValueError('zip_count_feature_source must be one of "encoder8x" or "fpn4x8x"')
         zip_count_block_size = int(getattr(args, 'zip_count_block_size', 16))
-        encoder_stride = int(self.encode_feats[:-1])
-        if zip_count_block_size < encoder_stride or zip_count_block_size % encoder_stride != 0:
+        zip_feature_stride = 4 if self.zip_count_feature_source == 'fpn4x8x' else int(self.encode_feats[:-1])
+        if zip_count_block_size < zip_feature_stride or zip_count_block_size % zip_feature_stride != 0:
             raise ValueError(
-                f'zip_count_block_size must be a multiple of encoder stride {encoder_stride}, got {zip_count_block_size}'
+                f'zip_count_block_size must be a multiple of ZIP feature stride {zip_feature_stride}, got {zip_count_block_size}'
             )
         self._zip_count_config = {
             'hidden_dim': hidden_dim,
-            'block_stride': zip_count_block_size // encoder_stride,
+            'block_stride': zip_count_block_size // zip_feature_stride,
             'count_bin_centers': _parse_float_list(
                 getattr(
                     args,
@@ -947,6 +966,7 @@ class PET(nn.Module):
                 'zip_count_bin_centers',
             ),
             'zero_prior': getattr(args, 'zip_count_zero_prior', 0.9),
+            'use_detail': self.zip_count_feature_source == 'fpn4x8x',
         }
 
         # quadtree splitter
@@ -3444,7 +3464,16 @@ class PET(nn.Module):
             outputs['count_density'] = count_density
             outputs['count_pred'] = count_density.flatten(1).sum(dim=1)
         if self.zip_count_head is not None:
-            zip_count_output = self.zip_count_head(self.zip_count_features(encode_src))
+            zip_detail = features['4x'].tensors if self.zip_count_feature_source == 'fpn4x8x' else None
+            if zip_detail is not None and self.training:
+                scale = self.zip_count_feature_grad_scale
+                if scale >= 1.0:
+                    zip_detail = zip_detail.float()
+                elif scale <= 0.0:
+                    zip_detail = zip_detail.detach().float()
+                else:
+                    zip_detail = (zip_detail.detach() + scale * (zip_detail - zip_detail.detach())).float()
+            zip_count_output = self.zip_count_head(self.zip_count_features(encode_src), detail=zip_detail)
             zip_valid = self.build_block_valid_mask(zip_count_output['expected_count'], samples)
             zip_count_output['valid'] = zip_valid
             zip_count_pred = (zip_count_output['expected_count'].float() * zip_valid).flatten(1).sum(dim=1)

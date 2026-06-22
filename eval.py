@@ -69,6 +69,7 @@ ARCHITECTURE_OVERRIDE_KEYS = {
     'foreground_init_prior',
     'zip_count_loss_coef',
     'zip_count_block_size',
+    'zip_count_feature_source',
     'zip_count_bin_centers',
     'zip_count_zero_prior',
     'zip_count_ce_coef',
@@ -273,6 +274,18 @@ def get_args_parser():
     parser.add_argument('--inheritance_start_epoch', default=0, type=int)
     parser.add_argument('--inheritance_end_epoch', default=-1, type=int)
     parser.add_argument('--inheritance_gate', default='gt_count', choices=('gt_count', 'split_map'))
+    parser.add_argument('--zip_count_loss_coef', default=0.0, type=float)
+    parser.add_argument('--zip_count_block_size', default=16, type=int)
+    parser.add_argument('--zip_count_feature_source', default='encoder8x', choices=('encoder8x', 'fpn4x8x'))
+    parser.add_argument('--zip_count_bin_centers',
+                        default='1,2,3,4,5,6,7,8,9,10,11.38,13.38,16.26', type=str)
+    parser.add_argument('--zip_count_zero_prior', default=0.9, type=float)
+    parser.add_argument('--zip_count_ce_coef', default=1.0, type=float)
+    parser.add_argument('--zip_count_count_coef', default=1.0, type=float)
+    parser.add_argument('--zip_count_start_epoch', default=0, type=int)
+    parser.add_argument('--zip_count_end_epoch', default=-1, type=int)
+    parser.add_argument('--zip_count_warmup_epochs', default=0, type=int)
+    parser.add_argument('--zip_count_feature_grad_scale', default=1.0, type=float)
     parser.add_argument('--eos_coef', default=0.5, type=float,
                         help="Relative classification weight of the no-object class")   # cross-entropy weights
     parser.add_argument('--pet_loss_variant', default='paper', choices=('paper', 'balanced'))
