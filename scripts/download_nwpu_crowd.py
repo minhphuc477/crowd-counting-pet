@@ -78,7 +78,7 @@ def list_files(session, ctx):
     return {item['Name']: item for item in payload['d']['results']}
 
 
-def download_file(session, ctx, server_relative_url, output_path):
+def download_file(session, ctx, server_relative_url, output_path, expected_size=0):
     base = ctx['siteAbsoluteUrl']
     encoded = urllib.parse.quote(server_relative_url, safe='/')
     url = (
@@ -87,10 +87,43 @@ def download_file(session, ctx, server_relative_url, output_path):
     )
     output_path.parent.mkdir(parents=True, exist_ok=True)
     response = checked_get(session, url, stream=True, timeout=600)
+    downloaded = 0
+    start_time = time.time()
+    last_print = 0.0
+    total = int(expected_size or response.headers.get('content-length') or 0)
     with open(output_path, 'wb') as handle:
         for chunk in response.iter_content(chunk_size=1024 * 1024):
             if chunk:
                 handle.write(chunk)
+                downloaded += len(chunk)
+                now = time.time()
+                if now - last_print >= 2.0:
+                    elapsed = max(now - start_time, 1e-6)
+                    speed = downloaded / elapsed / (1024 * 1024)
+                    if total > 0:
+                        pct = downloaded * 100.0 / total
+                        print(
+                            f'  {downloaded / (1024 * 1024):.1f}/'
+                            f'{total / (1024 * 1024):.1f} MB '
+                            f'({pct:.1f}%) {speed:.2f} MB/s',
+                            flush=True,
+                        )
+                    else:
+                        print(
+                            f'  {downloaded / (1024 * 1024):.1f} MB '
+                            f'{speed:.2f} MB/s',
+                            flush=True,
+                        )
+                    last_print = now
+    if total > 0:
+        elapsed = max(time.time() - start_time, 1e-6)
+        speed = downloaded / elapsed / (1024 * 1024)
+        print(
+            f'  {downloaded / (1024 * 1024):.1f}/'
+            f'{total / (1024 * 1024):.1f} MB '
+            f'(100.0%) {speed:.2f} MB/s',
+            flush=True,
+        )
     return output_path.stat().st_size
 
 
@@ -130,7 +163,13 @@ def main():
             print(f'{name}: already downloaded')
         else:
             print(f'Downloading {name} ...')
-            size = download_file(session, ctx, files[name]['ServerRelativeUrl'], output)
+            size = download_file(
+                session,
+                ctx,
+                files[name]['ServerRelativeUrl'],
+                output,
+                expected_size=int(files[name].get('Length', 0) or 0),
+            )
             print(f'  saved {output} ({size} bytes)')
 
         if args.no_extract:
