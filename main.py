@@ -1138,6 +1138,7 @@ ARCHITECTURE_OVERRIDE_KEYS = {
     'zip_count_end_epoch',
     'zip_count_warmup_epochs',
     'zip_count_feature_grad_scale',
+    'eval_count_blend_alpha',
     'vgg_fpn_main_lr',
 }
 
@@ -1659,8 +1660,10 @@ def get_args_parser():
                         help='foreground gate strength during evaluation')
     parser.add_argument('--eval_count_mode', default='threshold', choices=('threshold', 'count_head_topk'),
                         help='threshold keeps PET behavior; count_head_topk keeps top-K APG candidates using the separate count head')
-    parser.add_argument('--eval_count_source', default='pet', choices=('pet', 'zip'),
-                        help='count used for MAE/RMSE: pet counts thresholded point predictions; zip sums the EBC-ZIP count branch')
+    parser.add_argument('--eval_count_source', default='pet', choices=('pet', 'zip', 'zip_pet_blend'),
+                        help='count used for MAE/RMSE: pet counts thresholded point predictions; zip sums the EBC-ZIP count branch; zip_pet_blend mixes both')
+    parser.add_argument('--eval_count_blend_alpha', default=0.5, type=float,
+                        help='ZIP weight for --eval_count_source zip_pet_blend; 0=PET count, 1=ZIP count')
     parser.add_argument('--eval_count_head_min_score', default=0.5, type=float,
                         help='minimum candidate score before count-head top-K selection')
     parser.add_argument('--eval_dense_start_epoch', default=0, type=int,
@@ -2064,7 +2067,7 @@ def merge_checkpoint_args(args, checkpoint):
         'bad_count_direction', 'bad_count_ratio_max', 'bad_count_mae_min', 'bad_count_start_epoch',
         'patch_size', 'patch_size_choices', 'crop_attempts', 'min_crop_points',
         'no_localization_metrics', 'localization_large_threshold', 'localization_small_threshold',
-        'eval_count_source',
+        'eval_count_source', 'eval_count_blend_alpha',
     }
     if getattr(args, 'resume_model_only', False):
         runtime_keys.update({
@@ -2075,7 +2078,7 @@ def merge_checkpoint_args(args, checkpoint):
             'score_threshold', 'split_threshold', 'split_threshold_quantile', 'query_prune_threshold',
             'eval_nms_radius', 'eval_branch_gate', 'eval_soft_split_gate',
             'eval_foreground_gate', 'eval_foreground_gate_mode', 'eval_foreground_gate_strength',
-            'eval_count_mode', 'eval_count_source', 'eval_count_head_min_score',
+            'eval_count_mode', 'eval_count_source', 'eval_count_blend_alpha', 'eval_count_head_min_score',
             'eval_score_calibration', 'eval_score_calibration_strength',
             'eval_score_calibration_start_epoch',
             'eval_score_calibration_min_bias', 'eval_score_calibration_max_bias',
@@ -2115,7 +2118,7 @@ def merge_checkpoint_args(args, checkpoint):
             'zip_count_loss_coef', 'zip_count_block_size', 'zip_count_feature_source', 'zip_count_bin_centers',
             'zip_count_zero_prior', 'zip_count_ce_coef', 'zip_count_count_coef',
             'zip_count_start_epoch', 'zip_count_end_epoch', 'zip_count_warmup_epochs',
-            'zip_count_feature_grad_scale', 'eval_count_source',
+            'zip_count_feature_grad_scale', 'eval_count_source', 'eval_count_blend_alpha',
             'foreground_loss_coef', 'foreground_sigma',
             'foreground_neg_shrink', 'foreground_init_prior',
             'eval_foreground_gate', 'eval_foreground_gate_mode', 'eval_foreground_gate_strength',
@@ -2245,7 +2248,7 @@ def model_only_allowed_missing_prefixes(args):
         prefixes.append('count_head.')
     needs_zip_count_head = (
         float(getattr(args, 'zip_count_loss_coef', 0.0)) > 0
-        or getattr(args, 'eval_count_source', 'pet') == 'zip'
+        or getattr(args, 'eval_count_source', 'pet') in ('zip', 'zip_pet_blend')
     )
     if needs_zip_count_head:
         prefixes.append('zip_count_head.')
@@ -2782,6 +2785,7 @@ def main(args):
                     'eval_model': eval_model_name,
                     'eval_count_mode': getattr(args, 'eval_count_mode', 'threshold'),
                     'eval_count_source': getattr(args, 'eval_count_source', 'pet'),
+                    'eval_count_blend_alpha': float(getattr(args, 'eval_count_blend_alpha', 0.5)),
                     'eval_count_head_min_score': float(getattr(args, 'eval_count_head_min_score', 0.5)),
                     'eval_score_calibration': getattr(args, 'eval_score_calibration', 'none'),
                     'eval_score_calibration_strength': float(getattr(args, 'eval_score_calibration_strength', 1.0)),
