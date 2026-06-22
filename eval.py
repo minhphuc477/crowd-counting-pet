@@ -349,6 +349,8 @@ def get_args_parser():
     parser.add_argument('--min_crop_points', default=0, type=int)
     parser.add_argument('--eval_max_size', default=1536, type=int,
                         help='QNRF/UCF validation long-side cap; non-positive disables resizing')
+    parser.add_argument('--nwpu_eval_split', default='val', choices=('val', 'test', 'train'),
+                        help='NWPU split used when --dataset_file NWPU is evaluated')
 
     # misc parameters
     parser.add_argument('--device', default='cuda',
@@ -402,7 +404,7 @@ def merge_checkpoint_args(args, checkpoint):
             setattr(merged, key, value)
     runtime_keys = {
         'resume', 'device', 'vis_dir', 'results_file', 'data_path', 'dataset_file',
-        'eval_max_size', 'num_workers', 'seed',
+        'eval_max_size', 'nwpu_eval_split', 'num_workers', 'seed',
         'override_score_threshold', 'override_split_threshold', 'override_split_threshold_quantile',
         'override_query_prune_threshold',
         'checkpoint_model_key', 'deterministic', 'tta_flip', 'tta_scales',

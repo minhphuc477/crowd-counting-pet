@@ -1724,6 +1724,8 @@ def get_args_parser():
                         help='minimum people desired in a positive training crop')
     parser.add_argument('--eval_max_size', default=1536, type=int,
                         help='QNRF/UCF validation long-side cap; non-positive disables resizing')
+    parser.add_argument('--nwpu_eval_split', default='val', choices=('val', 'test', 'train'),
+                        help='NWPU split used for validation/evaluation')
 
     # misc parameters
     parser.add_argument('--output_dir', default='',
@@ -2071,7 +2073,7 @@ def merge_checkpoint_args(args, checkpoint):
         'strict_model_checks',
         # allow overriding schedule/eval settings at resume time
         'epochs', 'batch_size', 'accum_iter', 'eval_freq', 'eval_start_epoch', 'eval_model',
-        'eval_before_train', 'eval_protocol', 'data_path', 'eval_max_size',
+        'eval_before_train', 'eval_protocol', 'data_path', 'eval_max_size', 'nwpu_eval_split',
         'bad_count_direction', 'bad_count_ratio_max', 'bad_count_mae_min', 'bad_count_start_epoch',
         'patch_size', 'patch_size_choices', 'crop_attempts', 'min_crop_points',
         'no_localization_metrics', 'localization_large_threshold', 'localization_small_threshold',

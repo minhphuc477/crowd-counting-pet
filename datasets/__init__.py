@@ -1,5 +1,6 @@
 from .SHA import build as build_sha
 from .QNRF import build as build_qnrf
+from .NWPU import build as build_nwpu
 from pathlib import Path
 
 data_paths = {
@@ -7,6 +8,9 @@ data_paths = {
     'SHB': ('./data/ShanghaiTech/part_B/', './data/ShanghaiTech/part_B_final/'),
     'QNRF': ('./data/UCF-QNRF_ECCV18/', './data/UCF-QNRF/', './data/QNRF/'),
     'UCF': ('./data/UCF-QNRF_ECCV18/', './data/UCF-QNRF/', './data/QNRF/'),
+    'NWPU': ('./data/NWPU-Crowd/', './data/NWPU/'),
+    'NWPU_Crowd': ('./data/NWPU-Crowd/', './data/NWPU/'),
+    'NWPU-Crowd': ('./data/NWPU-Crowd/', './data/NWPU/'),
 }
 
 dataset_dir_names = {
@@ -14,6 +18,9 @@ dataset_dir_names = {
     'SHB': ('part_B', 'part_B_final'),
     'QNRF': ('UCF-QNRF_ECCV18', 'UCF-QNRF', 'QNRF'),
     'UCF': ('UCF-QNRF_ECCV18', 'UCF-QNRF', 'QNRF'),
+    'NWPU': ('NWPU-Crowd', 'NWPU'),
+    'NWPU_Crowd': ('NWPU-Crowd', 'NWPU'),
+    'NWPU-Crowd': ('NWPU-Crowd', 'NWPU'),
 }
 
 
@@ -21,6 +28,8 @@ def _split_images_dir(data_root, image_set, dataset_file):
     if dataset_file in ('QNRF', 'UCF'):
         split = 'Train' if image_set == 'train' else 'Test'
         return Path(data_root) / split
+    if dataset_file in ('NWPU', 'NWPU_Crowd', 'NWPU-Crowd'):
+        return Path(data_root) / 'images'
     split = 'train_data' if image_set == 'train' else 'test_data'
     return Path(data_root) / split / 'images'
 
@@ -98,4 +107,7 @@ def build_dataset(image_set, args):
     if args.dataset_file in ('QNRF', 'UCF'):
         args.data_path = _resolve_data_path(args.dataset_file, getattr(args, 'data_path', None), image_set)
         return build_qnrf(image_set, args)
+    if args.dataset_file in ('NWPU', 'NWPU_Crowd', 'NWPU-Crowd'):
+        args.data_path = _resolve_data_path(args.dataset_file, getattr(args, 'data_path', None), image_set)
+        return build_nwpu(image_set, args)
     raise ValueError(f'dataset {args.dataset_file} not supported')
