@@ -63,6 +63,7 @@ class NWPU(Dataset):
         if not self.ids:
             raise FileNotFoundError(f'No NWPU image ids found for split={split} in {self.data_root}')
 
+        image_index = build_image_index(self.data_root)
         json_index = build_annotation_index(self.data_root, '.json')
         mat_index = build_annotation_index(self.data_root, '.mat')
 
@@ -70,6 +71,8 @@ class NWPU(Dataset):
         missing = []
         for image_id in self.ids:
             image_path = find_image_path(self.images_dir, image_id)
+            if image_path is None:
+                image_path = image_index.get(Path(str(image_id)).stem)
             if image_path is None:
                 missing.append(str(self.images_dir / f'{image_id}.jpg'))
                 continue
@@ -204,6 +207,17 @@ def find_image_path(images_dir, image_id):
         if candidate.suffix.lower() in IMAGE_EXTENSIONS:
             return candidate
     return None
+
+
+def build_image_index(root):
+    root = Path(root)
+    index = {}
+    if not root.exists():
+        return index
+    for path in root.rglob('*'):
+        if path.is_file() and path.suffix.lower() in IMAGE_EXTENSIONS:
+            index.setdefault(path.stem, path)
+    return index
 
 
 def find_annotation_file(base_dir, image_id, suffix):
