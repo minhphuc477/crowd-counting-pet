@@ -34,6 +34,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--num_workers", default=2, type=int)
     parser.add_argument("--cuda_visible_devices", default=None)
     parser.add_argument("--stage1_output", default="outputs/SHA/vgg16_bn_apglc_stage1_seed42")
+    parser.add_argument("--stage1_checkpoint", default=None,
+                        help="explicit APG+LC checkpoint for stage 2; overrides stage1_output/best_checkpoint.pth")
     parser.add_argument("--stage2_output", default="outputs/SHA/vgg16_bn_apglc_counthead_stage2_seed42")
     parser.add_argument("--seed", default=42, type=int)
     parser.add_argument("--stage1_epochs", default=1500, type=int)
@@ -63,8 +65,10 @@ def main() -> int:
     ]
 
     stage1_output = Path(args.stage1_output)
-    stage1_best = stage1_output / "best_checkpoint.pth"
+    stage1_best = Path(args.stage1_checkpoint) if args.stage1_checkpoint else stage1_output / "best_checkpoint.pth"
     if not args.skip_stage1:
+        if args.stage1_checkpoint:
+            raise ValueError("--stage1_checkpoint is only valid with --skip_stage1")
         run([
             python, "main.py",
             "--model_recipe", "vgg_apglc",
