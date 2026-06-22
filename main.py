@@ -1021,6 +1021,7 @@ EXPERIMENTAL_MODEL_RECIPES = {
     'vgg_apglc_shared_ifi',
     'vgg_apglc_quality',
     'vgg_apglc_localzip',
+    'vgg_apglc_ebczip',
     'vgg_routed_apglc_countcal',
 }
 
