@@ -66,22 +66,38 @@ def main():
     parser.add_argument('--min_crop_points', default=0, type=int)
     parser.add_argument('--eval_max_size', default=1536, type=int)
     parser.add_argument('--nwpu_eval_split', default='val', choices=('val', 'test', 'train'))
+    parser.add_argument('--splits', default='train,val',
+                        help='comma-separated logical splits to check; use val to skip train')
     parser.add_argument('--max_examples', default=5, type=int)
     args = parser.parse_args()
 
-    train = build_dataset('train', args)
-    val = build_dataset('val', args)
+    requested_splits = [split.strip() for split in args.splits.split(',') if split.strip()]
+    if not requested_splits:
+        requested_splits = ['val']
 
-    train_points, train_samples, train_sigma = inspect_split(train, 'train', args.max_examples)
-    val_points, val_samples, val_sigma = inspect_split(val, args.nwpu_eval_split, args.max_examples)
+    totals = {}
+    for split in requested_splits:
+        if split == 'train':
+            dataset = build_dataset('train', args)
+            display = 'train'
+        elif split in ('val', 'test'):
+            old_eval_split = args.nwpu_eval_split
+            args.nwpu_eval_split = split
+            dataset = build_dataset('val', args)
+            args.nwpu_eval_split = old_eval_split
+            display = split
+        else:
+            raise SystemExit(f'Unsupported split in --splits: {split}')
+        totals[split] = inspect_split(dataset, display, args.max_examples)
 
-    if train_samples == 0 or val_samples == 0:
-        raise SystemExit('Invalid NWPU dataset: train or validation split is empty.')
-    if train_points == 0 or val_points == 0:
-        print('WARNING: train or validation split has zero total points. NWPU test labels may be unavailable.')
-    if val_sigma == 0:
+    if any(sample_count == 0 for _points, sample_count, _sigma in totals.values()):
+        raise SystemExit('Invalid NWPU dataset: at least one requested split is empty.')
+    if any(point_count == 0 for point_count, _samples, _sigma in totals.values()):
+        print('WARNING: at least one requested split has zero total points. NWPU test labels may be unavailable.')
+    checked_sigma = sum(sigma_count for _points, _samples, sigma_count in totals.values())
+    if checked_sigma == 0:
         print(
-            'WARNING: no sigma thresholds found for validation. '
+            'WARNING: no sigma thresholds found for requested split(s). '
             'Use --localization_protocol adaptive_nn or prepare official NWPU localization GT.'
         )
     else:
