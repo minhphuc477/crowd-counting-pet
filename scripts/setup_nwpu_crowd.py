@@ -89,6 +89,112 @@ def maybe_merge_image_parts(data_root):
     print(f'Collected {moved} images from images_part* into {images_dir}')
 
 
+def copy_tree_contents(src, dst):
+    src = Path(src)
+    dst = Path(dst)
+    dst.mkdir(parents=True, exist_ok=True)
+    copied = 0
+    for path in src.rglob('*'):
+        if not path.is_file():
+            continue
+        rel = path.relative_to(src)
+        target = dst / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if not target.exists():
+            shutil.copy2(path, target)
+            copied += 1
+    return copied
+
+
+def find_first_dir(root, names):
+    names_lower = {name.lower() for name in names}
+    for path in sorted(Path(root).rglob('*')):
+        if path.is_dir() and path.name.lower() in names_lower:
+            return path
+    return None
+
+
+def find_first_file(root, names):
+    names_lower = {name.lower() for name in names}
+    for path in sorted(Path(root).rglob('*')):
+        if path.is_file() and path.name.lower() in names_lower:
+            return path
+    return None
+
+
+def extract_archives_in_place(data_root):
+    data_root = Path(data_root)
+    archives = sorted(
+        path for path in data_root.rglob('*')
+        if path.is_file() and ''.join(path.suffixes).lower().endswith(('.zip', '.tar', '.tar.gz', '.tgz'))
+    )
+    extracted = 0
+    for archive in archives:
+        marker = archive.with_name(f'.{archive.name}.extracted')
+        if marker.exists():
+            continue
+        try:
+            extract_archive(archive, archive.parent)
+        except Exception as exc:
+            print(f'WARNING: could not extract nested archive {archive}: {exc}')
+            continue
+        marker.write_text('ok\n', encoding='utf-8')
+        extracted += 1
+    if extracted:
+        print(f'Extracted {extracted} nested archive(s) under {data_root}')
+
+
+def organize_nwpu_layout(data_root):
+    data_root = Path(data_root)
+
+    if not (data_root / 'images').is_dir():
+        extract_archives_in_place(data_root)
+
+    images_dir = data_root / 'images'
+    if not images_dir.is_dir():
+        direct_images = find_first_dir(data_root, ('images',))
+        if direct_images is not None and direct_images != images_dir:
+            copied = copy_tree_contents(direct_images, images_dir)
+            print(f'Copied {copied} image files from {direct_images} -> {images_dir}')
+
+    if not images_dir.is_dir():
+        part_dirs = sorted(
+            path for path in data_root.rglob('*')
+            if path.is_dir() and path.name.lower().startswith('images_part')
+        )
+        if part_dirs:
+            images_dir.mkdir(parents=True, exist_ok=True)
+            copied = 0
+            for part_dir in part_dirs:
+                copied += copy_tree_contents(part_dir, images_dir)
+            print(f'Collected {copied} image files from {len(part_dirs)} images_part* folder(s)')
+
+    for dirname in ('jsons', 'mats'):
+        target = data_root / dirname
+        if target.is_dir():
+            continue
+        source = find_first_dir(data_root, (dirname,))
+        if source is not None and source != target:
+            copied = copy_tree_contents(source, target)
+            print(f'Copied {copied} {dirname} files from {source} -> {target}')
+
+    for filename in ('train.txt', 'val.txt', 'test.txt', 'readme.md'):
+        target = data_root / filename
+        if target.exists():
+            continue
+        source = find_first_file(data_root, (filename,))
+        if source is not None and source != target:
+            shutil.copy2(source, target)
+            print(f'Copied {source} -> {target}')
+
+    if not (data_root / 'images').is_dir():
+        found = '\n'.join(str(path) for path in sorted(data_root.rglob('*'))[:80])
+        raise SystemExit(
+            f'Could not organize NWPU layout: missing {data_root / "images"}.\n'
+            f'First files/directories found under data root:\n{found}'
+        )
+
+
 def main():
     parser = argparse.ArgumentParser(
         description='Download/extract/validate NWPU-Crowd for PET on Ubuntu.'
@@ -127,6 +233,7 @@ def main():
         data_root = normalize_layout(source_root, data_root)
 
     maybe_merge_image_parts(data_root)
+    organize_nwpu_layout(data_root)
 
     run([
         sys.executable,
