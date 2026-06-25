@@ -249,14 +249,36 @@ def run_eval(item, args, log_path):
         cmd.extend(['--override_split_threshold', str(args.override_split_threshold)])
     if args.override_split_threshold_quantile is not None:
         cmd.extend(['--override_split_threshold_quantile', str(args.override_split_threshold_quantile)])
+    if args.override_query_prune_threshold is not None:
+        cmd.extend(['--override_query_prune_threshold', str(args.override_query_prune_threshold)])
     if args.eval_max_size is not None:
         cmd.extend(['--eval_max_size', str(args.eval_max_size)])
     if args.nwpu_eval_split:
         cmd.extend(['--nwpu_eval_split', args.nwpu_eval_split])
     if args.localization_protocol:
         cmd.extend(['--localization_protocol', args.localization_protocol])
+    if args.eval_nms_radius is not None:
+        cmd.extend(['--eval_nms_radius', str(args.eval_nms_radius)])
+    if args.eval_branch_gate:
+        cmd.extend(['--eval_branch_gate', args.eval_branch_gate])
+    if args.eval_soft_split_gate:
+        cmd.extend(['--eval_soft_split_gate', args.eval_soft_split_gate])
     if args.eval_foreground_gate:
         cmd.extend(['--eval_foreground_gate', args.eval_foreground_gate])
+    if args.eval_foreground_gate_mode:
+        cmd.extend(['--eval_foreground_gate_mode', args.eval_foreground_gate_mode])
+    if args.eval_foreground_gate_strength is not None:
+        cmd.extend(['--eval_foreground_gate_strength', str(args.eval_foreground_gate_strength)])
+    if args.eval_count_mode:
+        cmd.extend(['--eval_count_mode', args.eval_count_mode])
+    if args.eval_count_source:
+        cmd.extend(['--eval_count_source', args.eval_count_source])
+    if args.eval_count_blend_alpha is not None:
+        cmd.extend(['--eval_count_blend_alpha', str(args.eval_count_blend_alpha)])
+    if args.eval_count_head_min_score is not None:
+        cmd.extend(['--eval_count_head_min_score', str(args.eval_count_head_min_score)])
+    if args.eval_score_calibration:
+        cmd.extend(['--eval_score_calibration', args.eval_score_calibration])
 
     started_at = datetime.now().isoformat(timespec='seconds')
     output_lines = []
@@ -390,10 +412,21 @@ def parse_args():
     parser.add_argument('--override_score_threshold', default=None, type=float)
     parser.add_argument('--override_split_threshold', default=None, type=float)
     parser.add_argument('--override_split_threshold_quantile', default=None, type=float)
+    parser.add_argument('--override_query_prune_threshold', default=None, type=float)
     parser.add_argument('--eval_max_size', default=None, type=int)
     parser.add_argument('--nwpu_eval_split', default='')
     parser.add_argument('--localization_protocol', default='')
+    parser.add_argument('--eval_nms_radius', default=None, type=float)
+    parser.add_argument('--eval_branch_gate', default='', choices=('', 'none', 'query', 'pred'))
+    parser.add_argument('--eval_soft_split_gate', default='', choices=('', 'none', 'query', 'pred'))
     parser.add_argument('--eval_foreground_gate', default='')
+    parser.add_argument('--eval_foreground_gate_mode', default='', choices=('', 'suppress', 'logit_add'))
+    parser.add_argument('--eval_foreground_gate_strength', default=None, type=float)
+    parser.add_argument('--eval_count_mode', default='', choices=('', 'threshold', 'count_head_topk'))
+    parser.add_argument('--eval_count_source', default='', choices=('', 'pet', 'zip', 'zip_pet_blend'))
+    parser.add_argument('--eval_count_blend_alpha', default=None, type=float)
+    parser.add_argument('--eval_count_head_min_score', default=None, type=float)
+    parser.add_argument('--eval_score_calibration', default='', choices=('', 'none', 'count_head_bias'))
     return parser.parse_args()
 
 
