@@ -547,6 +547,8 @@ def evaluate(
     eval_tile_size=0,
     eval_tile_overlap=0,
     eval_tile_nms_radius=0.0,
+    eval_tile_min_gt=0,
+    eval_tile_max_tiles=0,
 ):
     model.eval()
     if tta_scales is None:
@@ -588,6 +590,12 @@ def evaluate(
             int(eval_tile_size or 0) > 0
             and (img_h > int(eval_tile_size) or img_w > int(eval_tile_size))
         )
+        if use_tiled_eval and int(eval_tile_min_gt or 0) > 0:
+            use_tiled_eval = int(targets[0]['points'].shape[0]) >= int(eval_tile_min_gt)
+        if use_tiled_eval and int(eval_tile_max_tiles or 0) > 0:
+            tile_rows = len(_tile_starts(img_h, int(eval_tile_size), int(eval_tile_overlap or 0)))
+            tile_cols = len(_tile_starts(img_w, int(eval_tile_size), int(eval_tile_overlap or 0)))
+            use_tiled_eval = (tile_rows * tile_cols) <= int(eval_tile_max_tiles)
         if use_tiled_eval:
             outputs, predict_cnt = _predict_count_tiled(
                 model,

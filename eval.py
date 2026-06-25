@@ -372,6 +372,10 @@ def get_args_parser():
                         help='pixel overlap between eval tiles; 0 gives non-overlap tiling')
     parser.add_argument('--eval_tile_nms_radius', default=0.0, type=float,
                         help='optional cross-tile NMS radius in pixels for overlapped tiled eval')
+    parser.add_argument('--eval_tile_min_gt', default=0, type=int,
+                        help='diagnostic only: tile only validation images with at least this many GT points')
+    parser.add_argument('--eval_tile_max_tiles', default=0, type=int,
+                        help='skip tiled eval when the tile grid would exceed this many tiles; 0 disables limit')
     parser.add_argument('--override_score_threshold', default=None, type=float,
                         help='override the checkpoint score threshold at evaluation time')
     parser.add_argument('--override_split_threshold', default=None, type=float,
@@ -416,6 +420,7 @@ def merge_checkpoint_args(args, checkpoint):
         'resume', 'device', 'vis_dir', 'results_file', 'data_path', 'dataset_file',
         'eval_max_size', 'nwpu_eval_split', 'nwpu_sigma_mode', 'num_workers', 'seed',
         'per_image_results_file', 'eval_tile_size', 'eval_tile_overlap', 'eval_tile_nms_radius',
+        'eval_tile_min_gt', 'eval_tile_max_tiles',
         'override_score_threshold', 'override_split_threshold', 'override_split_threshold_quantile',
         'override_query_prune_threshold',
         'checkpoint_model_key', 'deterministic', 'tta_flip', 'tta_scales',
@@ -644,6 +649,8 @@ def main(args):
             eval_tile_size=args.eval_tile_size,
             eval_tile_overlap=args.eval_tile_overlap,
             eval_tile_nms_radius=args.eval_tile_nms_radius,
+            eval_tile_min_gt=args.eval_tile_min_gt,
+            eval_tile_max_tiles=args.eval_tile_max_tiles,
         )
         mae, mse = test_stats['mae'], test_stats['mse']
     loc_text = format_localization_metrics(test_stats, prefix=', ')
@@ -690,6 +697,8 @@ def main(args):
             'eval_tile_size': int(getattr(args, 'eval_tile_size', 0)),
             'eval_tile_overlap': int(getattr(args, 'eval_tile_overlap', 0)),
             'eval_tile_nms_radius': float(getattr(args, 'eval_tile_nms_radius', 0.0)),
+            'eval_tile_min_gt': int(getattr(args, 'eval_tile_min_gt', 0)),
+            'eval_tile_max_tiles': int(getattr(args, 'eval_tile_max_tiles', 0)),
             'localization_metrics': not bool(getattr(args, 'no_localization_metrics', False)),
             'localization_large_threshold': float(getattr(args, 'localization_large_threshold', 8.0)),
             'localization_small_threshold': float(getattr(args, 'localization_small_threshold', 4.0)),
