@@ -255,6 +255,8 @@ def run_eval(item, args, log_path):
         cmd.extend(['--eval_max_size', str(args.eval_max_size)])
     if args.nwpu_eval_split:
         cmd.extend(['--nwpu_eval_split', args.nwpu_eval_split])
+    if args.nwpu_sigma_mode:
+        cmd.extend(['--nwpu_sigma_mode', args.nwpu_sigma_mode])
     if args.localization_protocol:
         cmd.extend(['--localization_protocol', args.localization_protocol])
     if args.eval_nms_radius is not None:
@@ -415,6 +417,7 @@ def parse_args():
     parser.add_argument('--override_query_prune_threshold', default=None, type=float)
     parser.add_argument('--eval_max_size', default=None, type=int)
     parser.add_argument('--nwpu_eval_split', default='')
+    parser.add_argument('--nwpu_sigma_mode', default='', choices=('', 'area', 'diag', 'min_diag'))
     parser.add_argument('--localization_protocol', default='')
     parser.add_argument('--eval_nms_radius', default=None, type=float)
     parser.add_argument('--eval_branch_gate', default='', choices=('', 'none', 'query', 'pred'))

@@ -35,6 +35,7 @@ class NWPU(Dataset):
         crop_attempts=1,
         min_crop_points=0,
         eval_max_size=1536,
+        sigma_mode='area',
     ):
         self.root_path = str(data_root)
         self.data_root = Path(data_root)
@@ -47,6 +48,7 @@ class NWPU(Dataset):
         self.crop_attempts = max(1, int(crop_attempts))
         self.min_crop_points = max(0, int(min_crop_points))
         self.eval_max_size = int(eval_max_size) if eval_max_size is not None else 1536
+        self.sigma_mode = sigma_mode
 
         self.images_dir = find_dir(self.data_root, ('images', 'Images'))
         self.jsons_dir = find_optional_dir(self.data_root, ('jsons', 'json', 'Jsons'))
@@ -116,7 +118,12 @@ class NWPU(Dataset):
             raise FileNotFoundError(f'Could not read image: {img_path}') from exc
 
         width, height = img.size
-        ann = load_annotation(json_path=json_path, mat_path=mat_path, image_size=(height, width))
+        ann = load_annotation(
+            json_path=json_path,
+            mat_path=mat_path,
+            image_size=(height, width),
+            sigma_mode=self.sigma_mode,
+        )
         points = ann['points'].astype(np.float32, copy=True)
         sigma = ann.get('sigma')
 
@@ -245,7 +252,7 @@ def build_annotation_index(root, suffix):
     return index
 
 
-def load_annotation(json_path=None, mat_path=None, image_size=None):
+def load_annotation(json_path=None, mat_path=None, image_size=None, sigma_mode='area'):
     data = None
     source_path = None
     if json_path is not None and Path(json_path).exists():
@@ -279,8 +286,8 @@ def load_annotation(json_path=None, mat_path=None, image_size=None):
     sigma_norm = _normalize_sigma_array(sigma, points.shape[0])
     sigma_source = 'annotation'
     if sigma_norm is None and boxes is not None:
-        sigma_norm = _sigma_from_boxes(boxes, points.shape[0])
-        sigma_source = 'box_derived'
+        sigma_norm = _sigma_from_boxes(boxes, points.shape[0], mode=sigma_mode)
+        sigma_source = f'box_derived:{sigma_mode}'
 
     if image_size is not None and points.shape[0] > 0:
         height, width = image_size
@@ -488,10 +495,12 @@ def _extract_box_from_record(record):
     return None
 
 
-def _sigma_from_boxes(boxes, count):
+def _sigma_from_boxes(boxes, count, mode='area'):
     boxes = _normalize_boxes_array(boxes)
     if boxes is None or boxes.shape[0] != count:
         return None
+    if mode not in ('area', 'diag', 'min_diag'):
+        raise ValueError(f'Unsupported NWPU sigma mode: {mode}')
     boxes = boxes.astype(np.float32)
     x1, y1, a, b = boxes[:, 0], boxes[:, 1], boxes[:, 2], boxes[:, 3]
     wh_xyxy = np.stack([np.maximum(a - x1, 1.0), np.maximum(b - y1, 1.0)], axis=1)
@@ -500,10 +509,21 @@ def _sigma_from_boxes(boxes, count):
     wh = np.where(use_xyxy[:, None], wh_xyxy, wh_xywh)
     width = np.maximum(wh[:, 0], 1.0)
     height = np.maximum(wh[:, 1], 1.0)
-    # NWPU localization uses target-size-aware thresholds. The strict threshold
-    # follows the smaller head side; the loose threshold follows the box diagonal.
-    sigma_s = np.maximum(0.5 * np.minimum(width, height), 1.0)
-    sigma_l = np.maximum(0.5 * np.sqrt(width * width + height * height), 1.0)
+    if mode == 'area':
+        # Historical repo behavior: a lenient large threshold based on box area.
+        # This is the default because official NWPU eval consumes prepared sigma
+        # files; when those are absent, this fallback preserves prior results.
+        scale = np.sqrt(np.maximum(width * height, 1.0))
+        sigma_s = np.maximum(0.5 * scale, 1.0)
+        sigma_l = np.maximum(scale, 1.0)
+    elif mode == 'diag':
+        diag = np.sqrt(width * width + height * height)
+        sigma_s = np.maximum(0.5 * diag, 1.0)
+        sigma_l = np.maximum(diag, 1.0)
+    else:
+        # Strict diagnostic mode. Useful for ablations, but not the default.
+        sigma_s = np.maximum(0.5 * np.minimum(width, height), 1.0)
+        sigma_l = np.maximum(0.5 * np.sqrt(width * width + height * height), 1.0)
     return np.stack([sigma_s, sigma_l], axis=1).astype(np.float32)
 
 
@@ -526,6 +546,7 @@ def build(image_set, args):
             crop_attempts=getattr(args, 'crop_attempts', 1),
             min_crop_points=getattr(args, 'min_crop_points', 0),
             eval_max_size=getattr(args, 'eval_max_size', 1536),
+            sigma_mode=getattr(args, 'nwpu_sigma_mode', 'area'),
         )
     if image_set == 'val':
         split = getattr(args, 'nwpu_eval_split', 'val') or 'val'
@@ -535,5 +556,6 @@ def build(image_set, args):
             train=False,
             transform=transform,
             eval_max_size=getattr(args, 'eval_max_size', 1536),
+            sigma_mode=getattr(args, 'nwpu_sigma_mode', 'area'),
         )
     raise ValueError(f'Unsupported image_set for NWPU: {image_set}')

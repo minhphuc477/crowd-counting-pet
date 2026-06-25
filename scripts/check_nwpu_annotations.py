@@ -11,7 +11,7 @@ from datasets import build_dataset
 from datasets.NWPU import load_annotation
 
 
-def inspect_split(dataset, image_set, max_examples):
+def inspect_split(dataset, image_set, max_examples, sigma_mode):
     total_points = 0
     sigma_samples = 0
     box_derived_samples = 0
@@ -19,7 +19,7 @@ def inspect_split(dataset, image_set, max_examples):
     rows = []
 
     for image_id, img_path, json_path, mat_path in dataset.samples:
-        ann = load_annotation(json_path=json_path, mat_path=mat_path)
+        ann = load_annotation(json_path=json_path, mat_path=mat_path, sigma_mode=sigma_mode)
         points = ann['points']
         point_count = int(points.shape[0])
         total_points += point_count
@@ -29,7 +29,7 @@ def inspect_split(dataset, image_set, max_examples):
         sigma_source = ann.get('sigma_source', 'missing')
         if sigma is not None:
             sigma_samples += 1
-            if sigma_source == 'box_derived':
+            if sigma_source.startswith('box_derived'):
                 box_derived_samples += 1
         if len(rows) < max_examples:
             if sigma is not None and sigma.shape[0] > 0:
@@ -44,6 +44,7 @@ def inspect_split(dataset, image_set, max_examples):
     print(f'{image_set}:')
     print(f'  root: {dataset.root_path}')
     print(f'  images: {dataset.images_dir}')
+    print(f'  nwpu sigma mode: {sigma_mode}')
     print(f'  samples: {len(dataset.samples)}')
     print(f'  total GT points: {total_points}')
     print(f'  zero-point samples: {zero_point_samples}')
@@ -66,6 +67,8 @@ def main():
     parser.add_argument('--min_crop_points', default=0, type=int)
     parser.add_argument('--eval_max_size', default=1536, type=int)
     parser.add_argument('--nwpu_eval_split', default='val', choices=('val', 'test', 'train'))
+    parser.add_argument('--nwpu_sigma_mode', default='area', choices=('area', 'diag', 'min_diag'),
+                        help='fallback localization sigma derived from boxes when annotation sigma is absent')
     parser.add_argument('--splits', default='train,val',
                         help='comma-separated logical splits to check; use val to skip train')
     parser.add_argument('--max_examples', default=5, type=int)
@@ -88,7 +91,7 @@ def main():
             display = split
         else:
             raise SystemExit(f'Unsupported split in --splits: {split}')
-        totals[split] = inspect_split(dataset, display, args.max_examples)
+        totals[split] = inspect_split(dataset, display, args.max_examples, args.nwpu_sigma_mode)
 
     if any(sample_count == 0 for _points, sample_count, _sigma in totals.values()):
         raise SystemExit('Invalid NWPU dataset: at least one requested split is empty.')

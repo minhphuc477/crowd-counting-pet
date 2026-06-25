@@ -1726,6 +1726,8 @@ def get_args_parser():
                         help='QNRF/UCF validation long-side cap; non-positive disables resizing')
     parser.add_argument('--nwpu_eval_split', default='val', choices=('val', 'test', 'train'),
                         help='NWPU split used for validation/evaluation')
+    parser.add_argument('--nwpu_sigma_mode', default='area', choices=('area', 'diag', 'min_diag'),
+                        help='fallback localization sigma derived from NWPU boxes when annotation sigma is absent')
 
     # misc parameters
     parser.add_argument('--output_dir', default='',
@@ -2074,6 +2076,7 @@ def merge_checkpoint_args(args, checkpoint):
         # allow overriding schedule/eval settings at resume time
         'epochs', 'batch_size', 'accum_iter', 'eval_freq', 'eval_start_epoch', 'eval_model',
         'eval_before_train', 'eval_protocol', 'data_path', 'eval_max_size', 'nwpu_eval_split',
+        'nwpu_sigma_mode',
         'bad_count_direction', 'bad_count_ratio_max', 'bad_count_mae_min', 'bad_count_start_epoch',
         'patch_size', 'patch_size_choices', 'crop_attempts', 'min_crop_points',
         'no_localization_metrics', 'localization_large_threshold', 'localization_small_threshold',

@@ -351,6 +351,8 @@ def get_args_parser():
                         help='QNRF/UCF validation long-side cap; non-positive disables resizing')
     parser.add_argument('--nwpu_eval_split', default='val', choices=('val', 'test', 'train'),
                         help='NWPU split used when --dataset_file NWPU is evaluated')
+    parser.add_argument('--nwpu_sigma_mode', default='area', choices=('area', 'diag', 'min_diag'),
+                        help='fallback localization sigma derived from NWPU boxes when annotation sigma is absent')
 
     # misc parameters
     parser.add_argument('--device', default='cuda',
@@ -404,7 +406,7 @@ def merge_checkpoint_args(args, checkpoint):
             setattr(merged, key, value)
     runtime_keys = {
         'resume', 'device', 'vis_dir', 'results_file', 'data_path', 'dataset_file',
-        'eval_max_size', 'nwpu_eval_split', 'num_workers', 'seed',
+        'eval_max_size', 'nwpu_eval_split', 'nwpu_sigma_mode', 'num_workers', 'seed',
         'override_score_threshold', 'override_split_threshold', 'override_split_threshold_quantile',
         'override_query_prune_threshold',
         'checkpoint_model_key', 'deterministic', 'tta_flip', 'tta_scales',
