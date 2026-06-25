@@ -249,6 +249,14 @@ def run_eval(item, args, log_path):
         cmd.extend(['--override_split_threshold', str(args.override_split_threshold)])
     if args.override_split_threshold_quantile is not None:
         cmd.extend(['--override_split_threshold_quantile', str(args.override_split_threshold_quantile)])
+    if args.eval_max_size is not None:
+        cmd.extend(['--eval_max_size', str(args.eval_max_size)])
+    if args.nwpu_eval_split:
+        cmd.extend(['--nwpu_eval_split', args.nwpu_eval_split])
+    if args.localization_protocol:
+        cmd.extend(['--localization_protocol', args.localization_protocol])
+    if args.eval_foreground_gate:
+        cmd.extend(['--eval_foreground_gate', args.eval_foreground_gate])
 
     started_at = datetime.now().isoformat(timespec='seconds')
     output_lines = []
@@ -382,6 +390,10 @@ def parse_args():
     parser.add_argument('--override_score_threshold', default=None, type=float)
     parser.add_argument('--override_split_threshold', default=None, type=float)
     parser.add_argument('--override_split_threshold_quantile', default=None, type=float)
+    parser.add_argument('--eval_max_size', default=None, type=int)
+    parser.add_argument('--nwpu_eval_split', default='')
+    parser.add_argument('--localization_protocol', default='')
+    parser.add_argument('--eval_foreground_gate', default='')
     return parser.parse_args()
 
 
@@ -443,6 +455,12 @@ def main():
                         'checkpoint': saved.get('checkpoint', str(item['checkpoint'])),
                         'train_best_mae': saved.get('train_best_mae'),
                         'best_epoch': saved.get('best_epoch'),
+                        'loc_f1_large': saved.get('loc_f1_large'),
+                        'loc_prec_large': saved.get('loc_prec_large'),
+                        'loc_rec_large': saved.get('loc_rec_large'),
+                        'loc_f1_small': saved.get('loc_f1_small'),
+                        'loc_prec_small': saved.get('loc_prec_small'),
+                        'loc_rec_small': saved.get('loc_rec_small'),
                     })
             except Exception as exc:
                 print(f"  Warning: could not read existing result: {exc}")
@@ -484,8 +502,24 @@ def main():
                 'checkpoint': str(item['checkpoint']),
                 'train_best_mae': checkpoint_metadata.get('train_best_mae'),
                 'best_epoch': checkpoint_metadata.get('best_epoch'),
+                'loc_f1_large': metrics.get('loc_f1_large'),
+                'loc_prec_large': metrics.get('loc_prec_large'),
+                'loc_rec_large': metrics.get('loc_rec_large'),
+                'loc_f1_small': metrics.get('loc_f1_small'),
+                'loc_prec_small': metrics.get('loc_prec_small'),
+                'loc_rec_small': metrics.get('loc_rec_small'),
             })
-            print(f"  Eval MAE: {mae:.4f} | Eval MSE: {mse:.4f}")
+            loc_text = ''
+            if metrics.get('loc_f1_large') is not None and metrics.get('loc_f1_small') is not None:
+                loc_text = (
+                    f" | sigma_l F/P/R: {float(metrics['loc_f1_large']):.4f}/"
+                    f"{float(metrics.get('loc_prec_large', 0.0)):.4f}/"
+                    f"{float(metrics.get('loc_rec_large', 0.0)):.4f}"
+                    f" | sigma_s F/P/R: {float(metrics['loc_f1_small']):.4f}/"
+                    f"{float(metrics.get('loc_prec_small', 0.0)):.4f}/"
+                    f"{float(metrics.get('loc_rec_small', 0.0)):.4f}"
+                )
+            print(f"  Eval MAE: {mae:.4f} | Eval MSE: {mse:.4f}{loc_text}")
         else:
             failures.append(result_doc)
             print(f"  Failed: {eval_result['error']}")
@@ -548,7 +582,20 @@ def main():
                 if row.get('train_best_mae') is None
                 else f"{float(row['train_best_mae']):.4f}"
             )
-            print(f"    - {row['dir']}: Eval MAE {row['mae']:.4f}, Eval MSE {mse}, Stored best MAE {train_best}")
+            loc_text = ''
+            if row.get('loc_f1_large') is not None and row.get('loc_f1_small') is not None:
+                loc_text = (
+                    f", sigma_l F/P/R {float(row['loc_f1_large']):.4f}/"
+                    f"{float(row.get('loc_prec_large') or 0.0):.4f}/"
+                    f"{float(row.get('loc_rec_large') or 0.0):.4f}"
+                    f", sigma_s F/P/R {float(row['loc_f1_small']):.4f}/"
+                    f"{float(row.get('loc_prec_small') or 0.0):.4f}/"
+                    f"{float(row.get('loc_rec_small') or 0.0):.4f}"
+                )
+            print(
+                f"    - {row['dir']}: Eval MAE {row['mae']:.4f}, Eval MSE {mse}, "
+                f"Stored best MAE {train_best}{loc_text}"
+            )
 
     if failures:
         print(f"\nFailures: {len(failures)}")
