@@ -49,6 +49,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--crop_attempts", default=1, type=int)
     parser.add_argument("--min_crop_points", default=0, type=int)
     parser.add_argument("--eval_max_size", default=1536, type=int)
+    parser.add_argument("--eval_tile_size", default=0, type=int)
+    parser.add_argument("--eval_tile_overlap", default=0, type=int)
+    parser.add_argument("--eval_tile_nms_radius", default=0.0, type=float)
+    parser.add_argument("--eval_tile_min_gt", default=0, type=int)
+    parser.add_argument("--eval_tile_max_tiles", default=0, type=int)
+    parser.add_argument("--eval_tile_trigger_count", default=0.0, type=float)
+    parser.add_argument("--eval_tile_trigger_area", default=0, type=int)
     parser.add_argument("--nwpu_eval_split", default="val", choices=("val", "test", "train"))
     parser.add_argument("--nwpu_sigma_mode", default="area", choices=("area", "diag", "min_diag"))
     parser.add_argument("--nwpu_dense_crop_prob", default=0.0, type=float)
@@ -83,6 +90,13 @@ def main() -> int:
         "--crop_attempts", str(args.crop_attempts),
         "--min_crop_points", str(args.min_crop_points),
         "--eval_max_size", str(args.eval_max_size),
+        "--eval_tile_size", str(args.eval_tile_size),
+        "--eval_tile_overlap", str(args.eval_tile_overlap),
+        "--eval_tile_nms_radius", str(args.eval_tile_nms_radius),
+        "--eval_tile_min_gt", str(args.eval_tile_min_gt),
+        "--eval_tile_max_tiles", str(args.eval_tile_max_tiles),
+        "--eval_tile_trigger_count", str(args.eval_tile_trigger_count),
+        "--eval_tile_trigger_area", str(args.eval_tile_trigger_area),
         "--nwpu_eval_split", args.nwpu_eval_split,
         "--nwpu_sigma_mode", args.nwpu_sigma_mode,
         "--seed", str(args.seed),

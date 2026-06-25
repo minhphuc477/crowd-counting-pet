@@ -1048,6 +1048,33 @@ MODEL_RECIPES['vgg_apglc_ebczip'] = {
     'eval_count_source': 'zip',
 }
 
+# NWPU Tail-Robust APG+LC.
+#
+# NWPU differs from SHA in the exact way that broke the current run: it has
+# high-resolution validation images with counts up to tens of thousands. A
+# single resized full-image pass under-counts those extreme images, while
+# tiling every large image over-counts normal scenes. This recipe keeps the
+# verified PET/APG+LC detector unchanged, but changes the data/eval regime:
+# - sample dense training crops and high-count images more often;
+# - select checkpoints with adaptive tiled eval only when the first PET pass
+#   already indicates an extreme count.
+MODEL_RECIPES['vgg_apglc_nwpu_tail'] = {
+    **MODEL_RECIPES['vgg_apglc'],
+    'crop_attempts': 12,
+    'min_crop_points': 1,
+    'nwpu_dense_crop_prob': 0.5,
+    'nwpu_dense_crop_attempts': 32,
+    'train_count_weight_power': 0.5,
+    'train_count_weight_max': 8.0,
+    'localization_protocol': 'target_sigma',
+    'eval_tile_size': 1536,
+    'eval_tile_overlap': 128,
+    'eval_tile_nms_radius': 8.0,
+    'eval_tile_max_tiles': 16,
+    'eval_tile_trigger_count': 1500.0,
+    'eval_tile_trigger_area': 0,
+}
+
 EXPERIMENTAL_MODEL_RECIPES = {
     # These paths are kept for audit/reproduction only. Session runs showed
     # catastrophic over/under-counting before they could improve on APG+LC.
@@ -1754,6 +1781,20 @@ def get_args_parser():
                         help='nearest-neighbor multiplier for adaptive small-threshold localization')
     parser.add_argument('--eval_protocol', default='pet', choices=('pet', 'crowd_no_overlap'),
                         help='validation protocol used during training')
+    parser.add_argument('--eval_tile_size', default=0, type=int,
+                        help='positive value enables tiled eval for images larger than this size')
+    parser.add_argument('--eval_tile_overlap', default=0, type=int,
+                        help='pixel overlap between eval tiles; 0 gives non-overlap tiling')
+    parser.add_argument('--eval_tile_nms_radius', default=0.0, type=float,
+                        help='optional cross-tile NMS radius in pixels for overlapped tiled eval')
+    parser.add_argument('--eval_tile_min_gt', default=0, type=int,
+                        help='diagnostic only: tile only validation images with at least this many GT points')
+    parser.add_argument('--eval_tile_max_tiles', default=0, type=int,
+                        help='skip tiled eval when the tile grid would exceed this many tiles; 0 disables limit')
+    parser.add_argument('--eval_tile_trigger_count', default=0.0, type=float,
+                        help='tile only when the normal full-image pass predicts at least this many people; 0 disables this trigger')
+    parser.add_argument('--eval_tile_trigger_area', default=0, type=int,
+                        help='tile only when valid image area is at least this many pixels; 0 disables this trigger')
 
     # dataset parameters
     parser.add_argument('--dataset_file', default="SHA")
@@ -2136,6 +2177,9 @@ def merge_checkpoint_args(args, checkpoint):
         'no_localization_metrics', 'localization_large_threshold', 'localization_small_threshold',
         'localization_protocol', 'localization_large_scale', 'localization_small_scale',
         'eval_count_source', 'eval_count_blend_alpha',
+        'eval_tile_size', 'eval_tile_overlap', 'eval_tile_nms_radius',
+        'eval_tile_min_gt', 'eval_tile_max_tiles',
+        'eval_tile_trigger_count', 'eval_tile_trigger_area',
     }
     if getattr(args, 'resume_model_only', False):
         runtime_keys.update({
@@ -2156,6 +2200,9 @@ def merge_checkpoint_args(args, checkpoint):
             'no_eval_filter_invalid_points', 'eval_debug_counting',
             'no_localization_metrics', 'localization_large_threshold', 'localization_small_threshold',
             'localization_protocol', 'localization_large_scale', 'localization_small_scale',
+            'eval_tile_size', 'eval_tile_overlap', 'eval_tile_nms_radius',
+            'eval_tile_min_gt', 'eval_tile_max_tiles',
+            'eval_tile_trigger_count', 'eval_tile_trigger_area',
         })
         explicit_args = set(getattr(args, '_explicit_args', set()))
         if 'eval_dense_start_epoch' in explicit_args:
@@ -2751,6 +2798,13 @@ def main(args):
                 localization_protocol=args.localization_protocol,
                 localization_large_scale=args.localization_large_scale,
                 localization_small_scale=args.localization_small_scale,
+                eval_tile_size=args.eval_tile_size,
+                eval_tile_overlap=args.eval_tile_overlap,
+                eval_tile_nms_radius=args.eval_tile_nms_radius,
+                eval_tile_min_gt=args.eval_tile_min_gt,
+                eval_tile_max_tiles=args.eval_tile_max_tiles,
+                eval_tile_trigger_count=args.eval_tile_trigger_count,
+                eval_tile_trigger_area=args.eval_tile_trigger_area,
             )
         t2 = time.time()
         print("\n==========================")
@@ -2853,6 +2907,13 @@ def main(args):
                     localization_protocol=args.localization_protocol,
                     localization_large_scale=args.localization_large_scale,
                     localization_small_scale=args.localization_small_scale,
+                    eval_tile_size=args.eval_tile_size,
+                    eval_tile_overlap=args.eval_tile_overlap,
+                    eval_tile_nms_radius=args.eval_tile_nms_radius,
+                    eval_tile_min_gt=args.eval_tile_min_gt,
+                    eval_tile_max_tiles=args.eval_tile_max_tiles,
+                    eval_tile_trigger_count=args.eval_tile_trigger_count,
+                    eval_tile_trigger_area=args.eval_tile_trigger_area,
                 )
             t2 = time.time()
 
@@ -2901,6 +2962,13 @@ def main(args):
                     'eval_score_calibration_count_ratio_min': float(getattr(args, 'eval_score_calibration_count_ratio_min', 0.0)),
                     'eval_score_calibration_count_ratio_max': float(getattr(args, 'eval_score_calibration_count_ratio_max', 1e6)),
                     'eval_filter_invalid_points': not bool(getattr(args, 'no_eval_filter_invalid_points', False)),
+                    'eval_tile_size': int(getattr(args, 'eval_tile_size', 0)),
+                    'eval_tile_overlap': int(getattr(args, 'eval_tile_overlap', 0)),
+                    'eval_tile_nms_radius': float(getattr(args, 'eval_tile_nms_radius', 0.0)),
+                    'eval_tile_min_gt': int(getattr(args, 'eval_tile_min_gt', 0)),
+                    'eval_tile_max_tiles': int(getattr(args, 'eval_tile_max_tiles', 0)),
+                    'eval_tile_trigger_count': float(getattr(args, 'eval_tile_trigger_count', 0.0)),
+                    'eval_tile_trigger_area': int(getattr(args, 'eval_tile_trigger_area', 0)),
                     'localization_metrics': not bool(getattr(args, 'no_localization_metrics', False)),
                     'localization_large_threshold': float(getattr(args, 'localization_large_threshold', 8.0)),
                     'localization_small_threshold': float(getattr(args, 'localization_small_threshold', 4.0)),

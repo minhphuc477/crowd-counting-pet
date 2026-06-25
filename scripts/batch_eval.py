@@ -263,6 +263,10 @@ def run_eval(item, args, log_path):
         cmd.extend(['--eval_tile_min_gt', str(args.eval_tile_min_gt)])
     if args.eval_tile_max_tiles is not None:
         cmd.extend(['--eval_tile_max_tiles', str(args.eval_tile_max_tiles)])
+    if args.eval_tile_trigger_count is not None:
+        cmd.extend(['--eval_tile_trigger_count', str(args.eval_tile_trigger_count)])
+    if args.eval_tile_trigger_area is not None:
+        cmd.extend(['--eval_tile_trigger_area', str(args.eval_tile_trigger_area)])
     if args.nwpu_eval_split:
         cmd.extend(['--nwpu_eval_split', args.nwpu_eval_split])
     if args.nwpu_sigma_mode:
@@ -431,6 +435,8 @@ def parse_args():
     parser.add_argument('--eval_tile_nms_radius', default=None, type=float)
     parser.add_argument('--eval_tile_min_gt', default=None, type=int)
     parser.add_argument('--eval_tile_max_tiles', default=None, type=int)
+    parser.add_argument('--eval_tile_trigger_count', default=None, type=float)
+    parser.add_argument('--eval_tile_trigger_area', default=None, type=int)
     parser.add_argument('--nwpu_eval_split', default='')
     parser.add_argument('--nwpu_sigma_mode', default='', choices=('', 'area', 'diag', 'min_diag'))
     parser.add_argument('--localization_protocol', default='')

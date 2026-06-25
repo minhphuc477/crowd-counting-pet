@@ -549,6 +549,8 @@ def evaluate(
     eval_tile_nms_radius=0.0,
     eval_tile_min_gt=0,
     eval_tile_max_tiles=0,
+    eval_tile_trigger_count=0.0,
+    eval_tile_trigger_area=0,
 ):
     model.eval()
     if tta_scales is None:
@@ -585,17 +587,37 @@ def evaluate(
             raise ValueError('PET evaluation expects batch_size=1; counting metrics are image-level.')
         img_h, img_w = _valid_hw(samples)
 
-        # inference
-        use_tiled_eval = (
+        # Inference. Tiling every large NWPU image over-counts ordinary scenes
+        # and is slow. Optional triggers make it a tail handler for extremely
+        # dense/high-resolution cases where resized full-image PET under-counts.
+        tile_candidate = (
             int(eval_tile_size or 0) > 0
             and (img_h > int(eval_tile_size) or img_w > int(eval_tile_size))
         )
-        if use_tiled_eval and int(eval_tile_min_gt or 0) > 0:
-            use_tiled_eval = int(targets[0]['points'].shape[0]) >= int(eval_tile_min_gt)
-        if use_tiled_eval and int(eval_tile_max_tiles or 0) > 0:
+        if tile_candidate and int(eval_tile_min_gt or 0) > 0:
+            tile_candidate = int(targets[0]['points'].shape[0]) >= int(eval_tile_min_gt)
+        if tile_candidate and int(eval_tile_max_tiles or 0) > 0:
             tile_rows = len(_tile_starts(img_h, int(eval_tile_size), int(eval_tile_overlap or 0)))
             tile_cols = len(_tile_starts(img_w, int(eval_tile_size), int(eval_tile_overlap or 0)))
-            use_tiled_eval = (tile_rows * tile_cols) <= int(eval_tile_max_tiles)
+            tile_candidate = (tile_rows * tile_cols) <= int(eval_tile_max_tiles)
+
+        outputs = None
+        predict_cnt = None
+        trigger_count = float(eval_tile_trigger_count or 0.0)
+        trigger_area = int(eval_tile_trigger_area or 0)
+        needs_base_pass = tile_candidate and (trigger_count > 0.0 or trigger_area > 0)
+        if needs_base_pass:
+            outputs, predict_cnt = _predict_count(model, samples, targets, epoch=epoch)
+            use_tiled_eval = True
+            if trigger_count > 0.0:
+                use_tiled_eval = use_tiled_eval and float(predict_cnt) >= trigger_count
+            if trigger_area > 0:
+                use_tiled_eval = use_tiled_eval and int(img_h * img_w) >= trigger_area
+            if not use_tiled_eval and 'eval_count_debug' in outputs:
+                outputs['eval_count_debug']['tile_trigger_skipped'] = 1.0
+        else:
+            use_tiled_eval = tile_candidate
+
         if use_tiled_eval:
             outputs, predict_cnt = _predict_count_tiled(
                 model,
@@ -606,7 +628,8 @@ def evaluate(
                 tile_overlap=eval_tile_overlap,
                 tile_nms_radius=eval_tile_nms_radius,
             )
-        else:
+            outputs.setdefault('eval_count_debug', {})['tile_used'] = 1.0
+        elif outputs is None or predict_cnt is None:
             outputs, predict_cnt = _predict_count(model, samples, targets, epoch=epoch)
         # outputs_scores: per-query person probability, shape [N_queries]
         # test_forward() already applies score thresholding and returns only
