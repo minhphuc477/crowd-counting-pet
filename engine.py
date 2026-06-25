@@ -4,6 +4,7 @@ Train and eval functions used in main.py
 import math
 import os
 import sys
+import json
 from contextlib import nullcontext
 from typing import Iterable
 import numpy as np
@@ -441,6 +442,7 @@ def evaluate(
     localization_protocol='fixed',
     localization_large_scale=1.0,
     localization_small_scale=0.5,
+    per_image_results_file=None,
 ):
     model.eval()
     if tta_scales is None:
@@ -470,6 +472,7 @@ def evaluate(
     loc_threshold_sums = {name: 0.0 for name in loc_thresholds}
     loc_threshold_counts = {name: 0.0 for name in loc_thresholds}
     loc_protocol_used = {name: localization_protocol for name in loc_thresholds}
+    per_image_rows = [] if per_image_results_file else None
     for samples, targets in metric_logger.log_every(data_loader, print_freq, header):
         samples = samples.to(device)
         if len(targets) != 1 or samples.tensors.shape[0] != 1:
@@ -513,6 +516,7 @@ def evaluate(
         metric_logger.update(pred_cnt=results_reduced['pred_cnt'], gt_cnt=results_reduced['gt_cnt'])
 
         if localization_metrics:
+            per_image_loc = {}
             if outputs_points.numel() == 0:
                 pred_points_abs = outputs_points.detach().reshape(0, 2).to(device=device, dtype=torch.float32)
             else:
@@ -549,6 +553,32 @@ def evaluate(
                 loc_totals[name]['tp'] += float(tp)
                 loc_totals[name]['fp'] += float(fp)
                 loc_totals[name]['fn'] += float(fn)
+                per_image_loc[f'loc_tp_{name}'] = int(tp)
+                per_image_loc[f'loc_fp_{name}'] = int(fp)
+                per_image_loc[f'loc_fn_{name}'] = int(fn)
+                denom_p = float(tp + fp)
+                denom_r = float(tp + fn)
+                prec = float(tp) / denom_p if denom_p > 0 else 0.0
+                rec = float(tp) / denom_r if denom_r > 0 else 0.0
+                per_image_loc[f'loc_prec_{name}'] = prec
+                per_image_loc[f'loc_rec_{name}'] = rec
+                per_image_loc[f'loc_f1_{name}'] = (
+                    2.0 * prec * rec / (prec + rec) if (prec + rec) > 0 else 0.0
+                )
+
+        if per_image_rows is not None:
+            target = targets[0]
+            row = {
+                'image_id': str(target.get('image_id', '')),
+                'image_path': str(target.get('image_path', '')),
+                'gt_cnt': int(gt_cnt),
+                'pred_cnt': float(predict_cnt),
+                'abs_error': float(mae),
+                'sq_error': float(mse_sq),
+            }
+            if localization_metrics:
+                row.update(per_image_loc)
+            per_image_rows.append(row)
 
         if 'eval_count_debug' in outputs:
             metric_logger.update(**{
@@ -587,4 +617,9 @@ def evaluate(
             threshold = threshold_sum / threshold_count if threshold_count > 0 else loc_thresholds[name]
             _add_localization_result(results, name, threshold, tp, fp, fn)
             results[f'loc_protocol_{name}'] = loc_protocol_used[name]
+    if per_image_rows is not None and utils.is_main_process():
+        per_image_rows.sort(key=lambda row: row['sq_error'], reverse=True)
+        os.makedirs(os.path.dirname(per_image_results_file) or '.', exist_ok=True)
+        with open(per_image_results_file, 'w', encoding='utf-8') as handle:
+            json.dump(per_image_rows, handle, indent=2)
     return results

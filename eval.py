@@ -364,6 +364,8 @@ def get_args_parser():
     parser.add_argument('--vis_dir', default="")
     parser.add_argument('--results_file', default='',
                         help='where to save eval metrics; empty writes eval_results.json next to checkpoint')
+    parser.add_argument('--per_image_results_file', default='',
+                        help='optional JSON path for per-image count/localization errors')
     parser.add_argument('--override_score_threshold', default=None, type=float,
                         help='override the checkpoint score threshold at evaluation time')
     parser.add_argument('--override_split_threshold', default=None, type=float,
@@ -407,6 +409,7 @@ def merge_checkpoint_args(args, checkpoint):
     runtime_keys = {
         'resume', 'device', 'vis_dir', 'results_file', 'data_path', 'dataset_file',
         'eval_max_size', 'nwpu_eval_split', 'nwpu_sigma_mode', 'num_workers', 'seed',
+        'per_image_results_file',
         'override_score_threshold', 'override_split_threshold', 'override_split_threshold_quantile',
         'override_query_prune_threshold',
         'checkpoint_model_key', 'deterministic', 'tta_flip', 'tta_scales',
@@ -631,6 +634,7 @@ def main(args):
             localization_protocol=args.localization_protocol,
             localization_large_scale=args.localization_large_scale,
             localization_small_scale=args.localization_small_scale,
+            per_image_results_file=args.per_image_results_file,
         )
         mae, mse = test_stats['mae'], test_stats['mse']
     loc_text = format_localization_metrics(test_stats, prefix=', ')
