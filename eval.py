@@ -366,6 +366,12 @@ def get_args_parser():
                         help='where to save eval metrics; empty writes eval_results.json next to checkpoint')
     parser.add_argument('--per_image_results_file', default='',
                         help='optional JSON path for per-image count/localization errors')
+    parser.add_argument('--eval_tile_size', default=0, type=int,
+                        help='positive value enables tiled full-resolution eval for images larger than this size')
+    parser.add_argument('--eval_tile_overlap', default=0, type=int,
+                        help='pixel overlap between eval tiles; 0 gives non-overlap tiling')
+    parser.add_argument('--eval_tile_nms_radius', default=0.0, type=float,
+                        help='optional cross-tile NMS radius in pixels for overlapped tiled eval')
     parser.add_argument('--override_score_threshold', default=None, type=float,
                         help='override the checkpoint score threshold at evaluation time')
     parser.add_argument('--override_split_threshold', default=None, type=float,
@@ -409,7 +415,7 @@ def merge_checkpoint_args(args, checkpoint):
     runtime_keys = {
         'resume', 'device', 'vis_dir', 'results_file', 'data_path', 'dataset_file',
         'eval_max_size', 'nwpu_eval_split', 'nwpu_sigma_mode', 'num_workers', 'seed',
-        'per_image_results_file',
+        'per_image_results_file', 'eval_tile_size', 'eval_tile_overlap', 'eval_tile_nms_radius',
         'override_score_threshold', 'override_split_threshold', 'override_split_threshold_quantile',
         'override_query_prune_threshold',
         'checkpoint_model_key', 'deterministic', 'tta_flip', 'tta_scales',
@@ -635,6 +641,9 @@ def main(args):
             localization_large_scale=args.localization_large_scale,
             localization_small_scale=args.localization_small_scale,
             per_image_results_file=args.per_image_results_file,
+            eval_tile_size=args.eval_tile_size,
+            eval_tile_overlap=args.eval_tile_overlap,
+            eval_tile_nms_radius=args.eval_tile_nms_radius,
         )
         mae, mse = test_stats['mae'], test_stats['mse']
     loc_text = format_localization_metrics(test_stats, prefix=', ')
@@ -678,6 +687,9 @@ def main(args):
             'eval_score_calibration_count_ratio_min': float(getattr(args, 'eval_score_calibration_count_ratio_min', 0.0)),
             'eval_score_calibration_count_ratio_max': float(getattr(args, 'eval_score_calibration_count_ratio_max', 1e6)),
             'eval_filter_invalid_points': not bool(getattr(args, 'no_eval_filter_invalid_points', False)),
+            'eval_tile_size': int(getattr(args, 'eval_tile_size', 0)),
+            'eval_tile_overlap': int(getattr(args, 'eval_tile_overlap', 0)),
+            'eval_tile_nms_radius': float(getattr(args, 'eval_tile_nms_radius', 0.0)),
             'localization_metrics': not bool(getattr(args, 'no_localization_metrics', False)),
             'localization_large_threshold': float(getattr(args, 'localization_large_threshold', 8.0)),
             'localization_small_threshold': float(getattr(args, 'localization_small_threshold', 4.0)),

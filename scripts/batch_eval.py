@@ -253,6 +253,12 @@ def run_eval(item, args, log_path):
         cmd.extend(['--override_query_prune_threshold', str(args.override_query_prune_threshold)])
     if args.eval_max_size is not None:
         cmd.extend(['--eval_max_size', str(args.eval_max_size)])
+    if args.eval_tile_size is not None:
+        cmd.extend(['--eval_tile_size', str(args.eval_tile_size)])
+    if args.eval_tile_overlap is not None:
+        cmd.extend(['--eval_tile_overlap', str(args.eval_tile_overlap)])
+    if args.eval_tile_nms_radius is not None:
+        cmd.extend(['--eval_tile_nms_radius', str(args.eval_tile_nms_radius)])
     if args.nwpu_eval_split:
         cmd.extend(['--nwpu_eval_split', args.nwpu_eval_split])
     if args.nwpu_sigma_mode:
@@ -416,6 +422,9 @@ def parse_args():
     parser.add_argument('--override_split_threshold_quantile', default=None, type=float)
     parser.add_argument('--override_query_prune_threshold', default=None, type=float)
     parser.add_argument('--eval_max_size', default=None, type=int)
+    parser.add_argument('--eval_tile_size', default=None, type=int)
+    parser.add_argument('--eval_tile_overlap', default=None, type=int)
+    parser.add_argument('--eval_tile_nms_radius', default=None, type=float)
     parser.add_argument('--nwpu_eval_split', default='')
     parser.add_argument('--nwpu_sigma_mode', default='', choices=('', 'area', 'diag', 'min_diag'))
     parser.add_argument('--localization_protocol', default='')

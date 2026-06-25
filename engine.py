@@ -387,6 +387,107 @@ def _resize_nested_tensor(samples, scale):
     return NestedTensor(padded_tensors, padded_mask)
 
 
+def _tile_starts(length, tile_size, overlap):
+    tile_size = int(tile_size)
+    overlap = int(overlap)
+    if length <= tile_size:
+        return [0]
+    stride = max(1, tile_size - overlap)
+    starts = list(range(0, max(length - tile_size, 0) + 1, stride))
+    last = length - tile_size
+    if starts[-1] != last:
+        starts.append(last)
+    return starts
+
+
+def _make_tile_nested(samples, y0, y1, x0, x1):
+    tile = samples.tensors[:, :, y0:y1, x0:x1]
+    _, channels, tile_h, tile_w = tile.shape
+    pad_h = _ceil_to_multiple(tile_h)
+    pad_w = _ceil_to_multiple(tile_w)
+    padded = tile.new_zeros((1, channels, pad_h, pad_w))
+    padded[:, :, :tile_h, :tile_w] = tile
+    mask = torch.ones((1, pad_h, pad_w), dtype=torch.bool, device=tile.device)
+    mask[:, :tile_h, :tile_w] = False
+    return NestedTensor(padded, mask)
+
+
+def _nms_points_abs(points, scores=None, radius=0.0):
+    if radius <= 0 or points.shape[0] <= 1:
+        return points
+    if scores is None:
+        scores = torch.arange(points.shape[0], device=points.device, dtype=torch.float32)
+    order = torch.argsort(scores, descending=True)
+    keep = []
+    suppressed = torch.zeros(points.shape[0], dtype=torch.bool, device=points.device)
+    radius_sq = float(radius) * float(radius)
+    for idx in order.tolist():
+        if suppressed[idx]:
+            continue
+        keep.append(idx)
+        dist_sq = ((points - points[idx]) ** 2).sum(dim=1)
+        suppressed |= dist_sq <= radius_sq
+    return points[torch.as_tensor(keep, dtype=torch.long, device=points.device)]
+
+
+def _predict_count_tiled(
+    model,
+    samples,
+    targets,
+    epoch=0,
+    tile_size=1536,
+    tile_overlap=0,
+    tile_nms_radius=0.0,
+):
+    img_h, img_w = _valid_hw(samples)
+    tile_size = max(1, int(tile_size))
+    tile_overlap = max(0, int(tile_overlap))
+    pred_points_abs_parts = []
+    score_parts = []
+
+    for y0 in _tile_starts(img_h, tile_size, tile_overlap):
+        y1 = min(y0 + tile_size, img_h)
+        for x0 in _tile_starts(img_w, tile_size, tile_overlap):
+            x1 = min(x0 + tile_size, img_w)
+            tile_samples = _make_tile_nested(samples, y0, y1, x0, x1)
+            outputs, _count = _predict_count(model, tile_samples, targets, epoch=epoch)
+            points = outputs['pred_points'][0].detach()
+            if points.numel() == 0:
+                continue
+            tile_h, tile_w = y1 - y0, x1 - x0
+            points_abs = points.to(dtype=torch.float32) * points.new_tensor([float(tile_h), float(tile_w)])
+            points_abs[:, 0] += float(y0)
+            points_abs[:, 1] += float(x0)
+            pred_points_abs_parts.append(points_abs)
+            if 'pred_logits' in outputs and outputs['pred_logits'].numel() > 0:
+                scores = torch.softmax(outputs['pred_logits'][0].detach(), dim=-1)[:, 1]
+            else:
+                scores = torch.ones(points_abs.shape[0], dtype=torch.float32, device=points_abs.device)
+            score_parts.append(scores)
+
+    if pred_points_abs_parts:
+        pred_points_abs = torch.cat(pred_points_abs_parts, dim=0)
+        scores = torch.cat(score_parts, dim=0) if score_parts else None
+        pred_points_abs = _nms_points_abs(pred_points_abs, scores=scores, radius=tile_nms_radius)
+        pred_points_norm = pred_points_abs / pred_points_abs.new_tensor([float(img_h), float(img_w)])
+    else:
+        pred_points_norm = torch.empty((0, 2), dtype=samples.tensors.dtype, device=samples.tensors.device)
+
+    pred_count = float(pred_points_norm.shape[0])
+    logits = pred_points_norm.new_zeros((1, pred_points_norm.shape[0], 2))
+    if pred_points_norm.shape[0] > 0:
+        logits[:, :, 1] = 1.0
+    outputs = {
+        'pred_logits': logits,
+        'pred_points': pred_points_norm.unsqueeze(0),
+        'eval_count_debug': {
+            'tile_count': float(len(pred_points_abs_parts)),
+            'tile_final': pred_count,
+        },
+    }
+    return outputs, pred_count
+
+
 @torch.no_grad()
 def evaluate_crowd_no_overlap(
     model,
@@ -443,6 +544,9 @@ def evaluate(
     localization_large_scale=1.0,
     localization_small_scale=0.5,
     per_image_results_file=None,
+    eval_tile_size=0,
+    eval_tile_overlap=0,
+    eval_tile_nms_radius=0.0,
 ):
     model.eval()
     if tta_scales is None:
@@ -480,7 +584,22 @@ def evaluate(
         img_h, img_w = _valid_hw(samples)
 
         # inference
-        outputs, predict_cnt = _predict_count(model, samples, targets, epoch=epoch)
+        use_tiled_eval = (
+            int(eval_tile_size or 0) > 0
+            and (img_h > int(eval_tile_size) or img_w > int(eval_tile_size))
+        )
+        if use_tiled_eval:
+            outputs, predict_cnt = _predict_count_tiled(
+                model,
+                samples,
+                targets,
+                epoch=epoch,
+                tile_size=eval_tile_size,
+                tile_overlap=eval_tile_overlap,
+                tile_nms_radius=eval_tile_nms_radius,
+            )
+        else:
+            outputs, predict_cnt = _predict_count(model, samples, targets, epoch=epoch)
         # outputs_scores: per-query person probability, shape [N_queries]
         # test_forward() already applies score thresholding and returns only
         # surviving (person) queries in pred_logits, so len(outputs_scores) is
