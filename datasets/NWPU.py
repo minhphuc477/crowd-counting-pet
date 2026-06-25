@@ -498,9 +498,12 @@ def _sigma_from_boxes(boxes, count):
     wh_xywh = np.stack([np.maximum(a, 1.0), np.maximum(b, 1.0)], axis=1)
     use_xyxy = (a > x1) & (b > y1)
     wh = np.where(use_xyxy[:, None], wh_xyxy, wh_xywh)
-    scale = np.sqrt(np.maximum(wh[:, 0] * wh[:, 1], 1.0))
-    sigma_s = np.maximum(scale * 0.5, 1.0)
-    sigma_l = np.maximum(scale, 1.0)
+    width = np.maximum(wh[:, 0], 1.0)
+    height = np.maximum(wh[:, 1], 1.0)
+    # NWPU localization uses target-size-aware thresholds. The strict threshold
+    # follows the smaller head side; the loose threshold follows the box diagonal.
+    sigma_s = np.maximum(0.5 * np.minimum(width, height), 1.0)
+    sigma_l = np.maximum(0.5 * np.sqrt(width * width + height * height), 1.0)
     return np.stack([sigma_s, sigma_l], axis=1).astype(np.float32)
 
 

@@ -29,3 +29,9 @@ vgg16_bn_apglc_apgccneg_late_countreg_seed42
 ```
 
 Best: mae=50.9121 mse=82.1399 score_threshold=0.61 split_threshold=0.5 eval_nms_radius=0.0 eval_branch_gate=none eval_soft_split_gate=none eval_score_calibration=none
+
+cd ~/crowd-counting-pet
+conda activate crowd_counting
+
+
+
