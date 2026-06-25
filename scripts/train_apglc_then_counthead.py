@@ -11,6 +11,7 @@ counting.
 from __future__ import annotations
 
 import argparse
+import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -37,13 +38,30 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--stage1_checkpoint", default=None,
                         help="explicit APG+LC checkpoint for stage 2; overrides stage1_output/best_checkpoint.pth")
     parser.add_argument("--stage2_output", default="outputs/SHA/vgg16_bn_apglc_counthead_stage2_seed42")
+    parser.add_argument("--stage1_recipe", default="vgg_apglc")
+    parser.add_argument("--stage2_recipe", default="vgg_apglc_density_counthead_ft_legacy")
     parser.add_argument("--seed", default=42, type=int)
     parser.add_argument("--stage1_epochs", default=1500, type=int)
     parser.add_argument("--stage2_epochs", default=80, type=int)
     parser.add_argument("--batch_size", default=8, type=int)
+    parser.add_argument("--patch_size", default=256, type=int)
+    parser.add_argument("--patch_size_choices", default="")
+    parser.add_argument("--crop_attempts", default=1, type=int)
+    parser.add_argument("--min_crop_points", default=0, type=int)
+    parser.add_argument("--eval_max_size", default=1536, type=int)
+    parser.add_argument("--nwpu_eval_split", default="val", choices=("val", "test", "train"))
+    parser.add_argument("--nwpu_sigma_mode", default="area", choices=("area", "diag", "min_diag"))
+    parser.add_argument("--nwpu_dense_crop_prob", default=0.0, type=float)
+    parser.add_argument("--nwpu_dense_crop_attempts", default=16, type=int)
+    parser.add_argument("--train_count_weight_power", default=0.0, type=float)
+    parser.add_argument("--train_count_weight_max", default=8.0, type=float)
     parser.add_argument("--eval_freq", default=5, type=int)
     parser.add_argument("--skip_stage1", action="store_true",
                         help="reuse stage1_output/best_checkpoint.pth and only run the count-head stage")
+    parser.add_argument("--stage1_extra_args", default="",
+                        help="extra args appended to the APG+LC stage, shell-style quoted")
+    parser.add_argument("--stage2_extra_args", default="",
+                        help="extra args appended to the count-head stage, shell-style quoted")
     return parser.parse_args()
 
 
@@ -61,8 +79,23 @@ def main() -> int:
         "--device", args.device,
         "--num_workers", str(args.num_workers),
         "--batch_size", str(args.batch_size),
+        "--patch_size", str(args.patch_size),
+        "--crop_attempts", str(args.crop_attempts),
+        "--min_crop_points", str(args.min_crop_points),
+        "--eval_max_size", str(args.eval_max_size),
+        "--nwpu_eval_split", args.nwpu_eval_split,
+        "--nwpu_sigma_mode", args.nwpu_sigma_mode,
         "--seed", str(args.seed),
     ]
+    if args.patch_size_choices:
+        common.extend(["--patch_size_choices", args.patch_size_choices])
+    if args.dataset_file == "NWPU":
+        common.extend([
+            "--nwpu_dense_crop_prob", str(args.nwpu_dense_crop_prob),
+            "--nwpu_dense_crop_attempts", str(args.nwpu_dense_crop_attempts),
+            "--train_count_weight_power", str(args.train_count_weight_power),
+            "--train_count_weight_max", str(args.train_count_weight_max),
+        ])
 
     stage1_output = Path(args.stage1_output)
     stage1_best = Path(args.stage1_checkpoint) if args.stage1_checkpoint else stage1_output / "best_checkpoint.pth"
@@ -71,12 +104,13 @@ def main() -> int:
             raise ValueError("--stage1_checkpoint is only valid with --skip_stage1")
         run([
             python, "main.py",
-            "--model_recipe", "vgg_apglc",
+            "--model_recipe", args.stage1_recipe,
             "--output_dir", args.stage1_output,
             "--epochs", str(args.stage1_epochs),
             "--eval_freq", str(args.eval_freq),
             "--eval_start_epoch", "0",
             *common,
+            *shlex.split(args.stage1_extra_args),
         ])
 
     if not stage1_best.is_file():
@@ -84,7 +118,7 @@ def main() -> int:
 
     run([
         python, "main.py",
-        "--model_recipe", "vgg_apglc_density_counthead_ft_legacy",
+        "--model_recipe", args.stage2_recipe,
         "--resume", str(stage1_best),
         "--resume_model_only",
         "--output_dir", args.stage2_output,
@@ -92,6 +126,7 @@ def main() -> int:
         "--eval_freq", "2",
         "--eval_start_epoch", "0",
         *common,
+        *shlex.split(args.stage2_extra_args),
     ])
     return 0
 

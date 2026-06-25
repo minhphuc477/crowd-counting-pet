@@ -275,6 +275,50 @@ MODEL_RECIPES = {
         'bad_count_start_epoch': 8,
         'bad_count_direction': 'over',
     },
+    # Stage-2 adaptation after a trained APG+LC checkpoint. Unlike the legacy
+    # recovery recipe, this updates the PET counting/localization heads with a
+    # small scalar count-head auxiliary, while keeping the backbone frozen. It
+    # is intended for NWPU high-density adaptation where eval still uses PET
+    # threshold counting, so training only the count head cannot improve MAE.
+    'vgg_apglc_counthead_stage2_adapt': {
+        'backbone': 'vgg16_bn',
+        'timm_adapter': 'lite_fpn',
+        'epochs': 120,
+        'eval_freq': 2,
+        'lr': 2e-5,
+        'lr_backbone': 0.0,
+        'lr_scheduler': 'step',
+        'lr_drop': 80,
+        'lr_gamma': 0.1,
+        'pet_loss_variant': 'paper',
+        'split_loss_variant': 'auto',
+        'apg_loss_coef': 0.0,
+        'count_head_loss_coef': 0.2,
+        'count_head_loss_type': 'log_l1',
+        'count_head_start_epoch': 0,
+        'count_head_end_epoch': -1,
+        'count_head_warmup_epochs': 20,
+        'count_head_feature_grad_scale': 0.05,
+        'count_head_feature_grad_start_epoch': 0,
+        'count_head_feature_grad_warmup_epochs': 20,
+        'density_map_loss_coef': 0.0,
+        'routed_apg_loss_coef': 0.0,
+        'foreground_loss_coef': 0.0,
+        'eval_foreground_gate': 'none',
+        'eval_count_mode': 'threshold',
+        'eval_count_source': 'pet',
+        'eval_score_calibration': 'none',
+        'eval_dense_start_epoch': 0,
+        'eval_dense_residual_mode': 'none',
+        'eval_nms_radius': 0.0,
+        'eval_branch_gate': 'none',
+        'eval_soft_split_gate': 'none',
+        'score_threshold': 0.50,
+        'split_threshold': 0.45,
+        'split_threshold_quantile': 0.55,
+        'bad_count_start_epoch': 20,
+        'bad_count_direction': 'over',
+    },
     # Same end-to-end architecture as APG+LC + late scalar count regularizer,
     # but with an explicit APG warmup so scratch training starts near PET's loss
     # scale. Unlike the failed count-feedback variants, this does not suppress
@@ -1728,6 +1772,14 @@ def get_args_parser():
                         help='NWPU split used for validation/evaluation')
     parser.add_argument('--nwpu_sigma_mode', default='area', choices=('area', 'diag', 'min_diag'),
                         help='fallback localization sigma derived from NWPU boxes when annotation sigma is absent')
+    parser.add_argument('--nwpu_dense_crop_prob', default=0.0, type=float,
+                        help='NWPU train only: probability of choosing the densest crop among random candidates')
+    parser.add_argument('--nwpu_dense_crop_attempts', default=16, type=int,
+                        help='NWPU train only: candidates for dense crop selection')
+    parser.add_argument('--train_count_weight_power', default=0.0, type=float,
+                        help='sample training images with weight (count+1)^power; 0 keeps uniform sampling')
+    parser.add_argument('--train_count_weight_max', default=8.0, type=float,
+                        help='maximum per-image sampling weight when --train_count_weight_power is enabled')
 
     # misc parameters
     parser.add_argument('--output_dir', default='',
@@ -2079,6 +2131,8 @@ def merge_checkpoint_args(args, checkpoint):
         'nwpu_sigma_mode',
         'bad_count_direction', 'bad_count_ratio_max', 'bad_count_mae_min', 'bad_count_start_epoch',
         'patch_size', 'patch_size_choices', 'crop_attempts', 'min_crop_points',
+        'nwpu_dense_crop_prob', 'nwpu_dense_crop_attempts',
+        'train_count_weight_power', 'train_count_weight_max',
         'no_localization_metrics', 'localization_large_threshold', 'localization_small_threshold',
         'localization_protocol', 'localization_large_scale', 'localization_small_scale',
         'eval_count_source', 'eval_count_blend_alpha',
@@ -2537,8 +2591,32 @@ def main(args):
     if args.distributed:
         sampler_train = DistributedSampler(dataset_train, seed=args.seed)
         sampler_val = DistributedSampler(dataset_val, shuffle=False)
+        if float(getattr(args, 'train_count_weight_power', 0.0)) > 0 and utils.is_main_process():
+            print('WARNING: --train_count_weight_power is ignored with DistributedSampler')
     else:
-        sampler_train = torch.utils.data.RandomSampler(dataset_train, generator=data_loader_generator)
+        count_weight_power = float(getattr(args, 'train_count_weight_power', 0.0))
+        if count_weight_power > 0 and hasattr(dataset_train, 'get_sample_counts'):
+            counts = torch.as_tensor(dataset_train.get_sample_counts(), dtype=torch.float64)
+            weights = torch.pow(counts + 1.0, count_weight_power)
+            max_weight = float(getattr(args, 'train_count_weight_max', 0.0))
+            if max_weight > 0:
+                weights = weights.clamp(max=max_weight)
+            weights = weights / weights.mean().clamp_min(1e-12)
+            sampler_train = torch.utils.data.WeightedRandomSampler(
+                weights,
+                num_samples=len(weights),
+                replacement=True,
+                generator=data_loader_generator,
+            )
+            if utils.is_main_process():
+                print(
+                    'count-weighted sampler:',
+                    f'power={count_weight_power}',
+                    f'max_weight={max_weight}',
+                    f'weight_range=[{float(weights.min()):.3f},{float(weights.max()):.3f}]',
+                )
+        else:
+            sampler_train = torch.utils.data.RandomSampler(dataset_train, generator=data_loader_generator)
         sampler_val = torch.utils.data.SequentialSampler(dataset_val)
 
     batch_sampler_train = torch.utils.data.BatchSampler(

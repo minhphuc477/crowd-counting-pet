@@ -11,7 +11,7 @@ from PIL import Image
 from torch.utils.data import Dataset
 
 from .image_io import load_rgb_image
-from .SHA import IMAGE_EXTENSIONS, random_crop_with_retries, safe_random_scale
+from .SHA import IMAGE_EXTENSIONS, random_crop, random_crop_with_retries, safe_random_scale
 from .SHA import _parse_patch_size_choices
 
 
@@ -36,6 +36,8 @@ class NWPU(Dataset):
         min_crop_points=0,
         eval_max_size=1536,
         sigma_mode='area',
+        dense_crop_prob=0.0,
+        dense_crop_attempts=16,
     ):
         self.root_path = str(data_root)
         self.data_root = Path(data_root)
@@ -49,6 +51,8 @@ class NWPU(Dataset):
         self.min_crop_points = max(0, int(min_crop_points))
         self.eval_max_size = int(eval_max_size) if eval_max_size is not None else 1536
         self.sigma_mode = sigma_mode
+        self.dense_crop_prob = max(0.0, min(1.0, float(dense_crop_prob)))
+        self.dense_crop_attempts = max(1, int(dense_crop_attempts))
 
         self.images_dir = find_dir(self.data_root, ('images', 'Images'))
         self.jsons_dir = find_optional_dir(self.data_root, ('jsons', 'json', 'Jsons'))
@@ -99,9 +103,19 @@ class NWPU(Dataset):
 
         self.img_list = [str(sample[1]) for sample in self.samples]
         self.nSamples = len(self.samples)
+        self.sample_counts = None
 
     def __len__(self):
         return self.nSamples
+
+    def get_sample_counts(self):
+        if self.sample_counts is None:
+            counts = []
+            for _image_id, _img_path, json_path, mat_path in self.samples:
+                ann = load_annotation(json_path=json_path, mat_path=mat_path, sigma_mode=self.sigma_mode)
+                counts.append(int(ann['points'].shape[0]))
+            self.sample_counts = counts
+        return self.sample_counts
 
     def compute_density(self, points):
         points_tensor = torch.from_numpy(points.copy())
@@ -141,13 +155,21 @@ class NWPU(Dataset):
 
         if self.train:
             img, points = safe_random_scale(img, points, patch_size)
-            img, points = random_crop_with_retries(
-                img,
-                points,
-                patch_size=patch_size,
-                attempts=self.crop_attempts,
-                min_points=self.min_crop_points,
-            )
+            if points.shape[0] > 0 and random.random() < self.dense_crop_prob:
+                img, points = max_count_random_crop(
+                    img,
+                    points,
+                    patch_size=patch_size,
+                    attempts=self.dense_crop_attempts,
+                )
+            else:
+                img, points = random_crop_with_retries(
+                    img,
+                    points,
+                    patch_size=patch_size,
+                    attempts=self.crop_attempts,
+                    min_points=self.min_crop_points,
+                )
 
         if random.random() > 0.5 and self.train and self.flip:
             img = torch.flip(img, dims=[2])
@@ -321,6 +343,19 @@ def resize_long_side_with_sigma(img, points, sigma, max_size):
     if sigma is not None:
         sigma = sigma / factor
     return img, points, sigma
+
+
+def max_count_random_crop(img, points, patch_size=256, attempts=16):
+    """Return the densest crop among random candidates for high-density training."""
+    best_img, best_points = None, None
+    best_count = -1
+    for _ in range(max(1, int(attempts))):
+        crop_img, crop_points = random_crop(img, points, patch_size)
+        crop_count = int(crop_points.shape[0])
+        if crop_count > best_count:
+            best_img, best_points = crop_img, crop_points
+            best_count = crop_count
+    return best_img, best_points
 
 
 def _as_numeric_array(value):
@@ -547,6 +582,8 @@ def build(image_set, args):
             min_crop_points=getattr(args, 'min_crop_points', 0),
             eval_max_size=getattr(args, 'eval_max_size', 1536),
             sigma_mode=getattr(args, 'nwpu_sigma_mode', 'area'),
+            dense_crop_prob=getattr(args, 'nwpu_dense_crop_prob', 0.0),
+            dense_crop_attempts=getattr(args, 'nwpu_dense_crop_attempts', 16),
         )
     if image_set == 'val':
         split = getattr(args, 'nwpu_eval_split', 'val') or 'val'
