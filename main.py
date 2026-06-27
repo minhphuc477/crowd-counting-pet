@@ -1062,6 +1062,7 @@ MODEL_RECIPES['vgg_apglc_nwpu_tail'] = {
     **MODEL_RECIPES['vgg_apglc'],
     'crop_attempts': 12,
     'min_crop_points': 1,
+    'eval_max_size': 0,
     'nwpu_dense_crop_prob': 0.5,
     'nwpu_dense_crop_attempts': 32,
     'train_count_weight_power': 0.5,
@@ -1086,6 +1087,7 @@ MODEL_RECIPES['vgg_apglc_counthead_stage2_nwpu'] = {
     **MODEL_RECIPES['vgg_apglc_counthead_stage2_adapt'],
     'crop_attempts': 12,
     'min_crop_points': 1,
+    'eval_max_size': 0,
     'nwpu_dense_crop_prob': 0.5,
     'nwpu_dense_crop_attempts': 32,
     'train_count_weight_power': 0.5,
@@ -2185,16 +2187,10 @@ def merge_checkpoint_args(args, checkpoint):
     for key, value in vars(args).items():
         if not hasattr(merged, key):
             setattr(merged, key, value)
-    runtime_keys = {
-        'resume', 'device', 'output_dir', 'seed', 'start_epoch',
-        'resume_model_only', 'resume_allow_arch_change', 'num_workers', 'world_size', 'dist_url',
-        'list_backbones', 'syn_bn', 'deterministic', 'freeze_bn', 'amp', 'amp_dtype',
-        'strict_model_checks',
-        # allow overriding schedule/eval settings at resume time
-        'epochs', 'batch_size', 'accum_iter', 'eval_freq', 'eval_start_epoch', 'eval_model',
-        'eval_before_train', 'eval_protocol', 'data_path', 'eval_max_size', 'nwpu_eval_split',
-        'nwpu_sigma_mode',
-        'bad_count_direction', 'bad_count_ratio_max', 'bad_count_mae_min', 'bad_count_start_epoch',
+    explicit_args = set(getattr(args, '_explicit_args', set()))
+    explicit_only_runtime_keys = {
+        'model_recipe', 'allow_experimental_model_recipe', 'auto_backbone_recipe',
+        'eval_protocol', 'eval_max_size', 'nwpu_sigma_mode',
         'patch_size', 'patch_size_choices', 'crop_attempts', 'min_crop_points',
         'nwpu_dense_crop_prob', 'nwpu_dense_crop_attempts',
         'train_count_weight_power', 'train_count_weight_max',
@@ -2204,6 +2200,27 @@ def merge_checkpoint_args(args, checkpoint):
         'eval_tile_size', 'eval_tile_overlap', 'eval_tile_nms_radius',
         'eval_tile_min_gt', 'eval_tile_max_tiles',
         'eval_tile_trigger_count', 'eval_tile_trigger_area',
+        'score_threshold', 'split_threshold', 'split_threshold_quantile', 'query_prune_threshold',
+        'eval_nms_radius', 'eval_branch_gate', 'eval_soft_split_gate',
+        'eval_foreground_gate', 'eval_foreground_gate_mode', 'eval_foreground_gate_strength',
+        'eval_count_mode', 'eval_count_head_min_score',
+        'eval_score_calibration', 'eval_score_calibration_strength',
+        'eval_score_calibration_start_epoch',
+        'eval_score_calibration_min_bias', 'eval_score_calibration_max_bias',
+        'eval_score_calibration_count_blend',
+        'eval_score_calibration_count_ratio_min',
+        'eval_score_calibration_count_ratio_max',
+        'no_eval_filter_invalid_points', 'eval_debug_counting',
+    }
+    runtime_keys = {
+        'resume', 'device', 'output_dir', 'seed', 'start_epoch',
+        'resume_model_only', 'resume_allow_arch_change', 'num_workers', 'world_size', 'dist_url',
+        'list_backbones', 'syn_bn', 'deterministic', 'freeze_bn', 'amp', 'amp_dtype',
+        'strict_model_checks',
+        # allow overriding schedule/eval settings at resume time
+        'epochs', 'batch_size', 'accum_iter', 'eval_freq', 'eval_start_epoch', 'eval_model',
+        'eval_before_train', 'data_path', 'nwpu_eval_split',
+        'bad_count_direction', 'bad_count_ratio_max', 'bad_count_mae_min', 'bad_count_start_epoch',
     }
     if getattr(args, 'resume_model_only', False):
         runtime_keys.update({
@@ -2211,24 +2228,7 @@ def merge_checkpoint_args(args, checkpoint):
             'freeze_backbone_epochs', 'clip_max_norm',
             'lr_scheduler', 'lr_drop', 'lr_gamma', 'warmup_epochs', 'hold_epochs',
             'min_lr', 'ema_decay',
-            'score_threshold', 'split_threshold', 'split_threshold_quantile', 'query_prune_threshold',
-            'eval_nms_radius', 'eval_branch_gate', 'eval_soft_split_gate',
-            'eval_foreground_gate', 'eval_foreground_gate_mode', 'eval_foreground_gate_strength',
-            'eval_count_mode', 'eval_count_source', 'eval_count_blend_alpha', 'eval_count_head_min_score',
-            'eval_score_calibration', 'eval_score_calibration_strength',
-            'eval_score_calibration_start_epoch',
-            'eval_score_calibration_min_bias', 'eval_score_calibration_max_bias',
-            'eval_score_calibration_count_blend',
-            'eval_score_calibration_count_ratio_min',
-            'eval_score_calibration_count_ratio_max',
-            'no_eval_filter_invalid_points', 'eval_debug_counting',
-            'no_localization_metrics', 'localization_large_threshold', 'localization_small_threshold',
-            'localization_protocol', 'localization_large_scale', 'localization_small_scale',
-            'eval_tile_size', 'eval_tile_overlap', 'eval_tile_nms_radius',
-            'eval_tile_min_gt', 'eval_tile_max_tiles',
-            'eval_tile_trigger_count', 'eval_tile_trigger_area',
         })
-        explicit_args = set(getattr(args, '_explicit_args', set()))
         if 'eval_dense_start_epoch' in explicit_args:
             runtime_keys.add('eval_dense_start_epoch')
         for key in ('eval_dense_residual_mode', 'eval_dense_residual_start_epoch', 'eval_dense_residual_min_score'):
@@ -2297,6 +2297,7 @@ def merge_checkpoint_args(args, checkpoint):
         runtime_keys.update(key for key in aux_resume_keys if key in explicit_args)
         if getattr(args, 'resume_allow_arch_change', False):
             runtime_keys.update(key for key in ARCHITECTURE_OVERRIDE_KEYS if key in explicit_args)
+    runtime_keys.update(key for key in explicit_only_runtime_keys if key in explicit_args)
     for key in runtime_keys:
         if hasattr(args, key):
             setattr(merged, key, getattr(args, key))

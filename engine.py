@@ -387,6 +387,17 @@ def _resize_nested_tensor(samples, scale):
     return NestedTensor(padded_tensors, padded_mask)
 
 
+def _resize_nested_long_side(samples, max_size):
+    max_size = int(max_size or 0)
+    if max_size <= 0:
+        return samples
+    valid_h, valid_w = _valid_hw(samples)
+    long_side = max(valid_h, valid_w)
+    if long_side <= max_size:
+        return samples
+    return _resize_nested_tensor(samples, float(max_size) / float(long_side))
+
+
 def _tile_starts(length, tile_size, overlap):
     tile_size = int(tile_size)
     overlap = int(overlap)
@@ -590,10 +601,11 @@ def evaluate(
         # Inference. Tiling every large NWPU image over-counts ordinary scenes
         # and is slow. Optional triggers make it a tail handler for extremely
         # dense/high-resolution cases where resized full-image PET under-counts.
-        tile_candidate = (
+        tile_candidate_by_size = (
             int(eval_tile_size or 0) > 0
             and (img_h > int(eval_tile_size) or img_w > int(eval_tile_size))
         )
+        tile_candidate = tile_candidate_by_size
         if tile_candidate and int(eval_tile_min_gt or 0) > 0:
             tile_candidate = int(targets[0]['points'].shape[0]) >= int(eval_tile_min_gt)
         if tile_candidate and int(eval_tile_max_tiles or 0) > 0:
@@ -605,18 +617,29 @@ def evaluate(
         predict_cnt = None
         trigger_count = float(eval_tile_trigger_count or 0.0)
         trigger_area = int(eval_tile_trigger_area or 0)
-        needs_base_pass = tile_candidate and (trigger_count > 0.0 or trigger_area > 0)
-        if needs_base_pass:
-            outputs, predict_cnt = _predict_count(model, samples, targets, epoch=epoch)
+        needs_trigger_count_pass = tile_candidate and trigger_count > 0.0
+        if needs_trigger_count_pass:
+            # Keep validation samples at full resolution for tiling, but make
+            # the trigger decision from a bounded resized pass. Running the
+            # trigger on full NWPU frames can OOM, while resizing the dataset
+            # before this point prevents tiling from ever activating.
+            trigger_samples = _resize_nested_long_side(samples, int(eval_tile_size))
+            outputs, predict_cnt = _predict_count(model, trigger_samples, targets, epoch=epoch)
             use_tiled_eval = True
-            if trigger_count > 0.0:
-                use_tiled_eval = use_tiled_eval and float(predict_cnt) >= trigger_count
+            outputs.setdefault('eval_count_debug', {})['tile_trigger_count'] = float(predict_cnt)
+            use_tiled_eval = use_tiled_eval and float(predict_cnt) >= trigger_count
             if trigger_area > 0:
                 use_tiled_eval = use_tiled_eval and int(img_h * img_w) >= trigger_area
             if not use_tiled_eval and 'eval_count_debug' in outputs:
                 outputs['eval_count_debug']['tile_trigger_skipped'] = 1.0
         else:
             use_tiled_eval = tile_candidate
+            if use_tiled_eval and trigger_area > 0:
+                use_tiled_eval = int(img_h * img_w) >= trigger_area
+            if tile_candidate_by_size and not use_tiled_eval:
+                trigger_samples = _resize_nested_long_side(samples, int(eval_tile_size))
+                outputs, predict_cnt = _predict_count(model, trigger_samples, targets, epoch=epoch)
+                outputs.setdefault('eval_count_debug', {})['tile_trigger_skipped'] = 1.0
 
         if use_tiled_eval:
             outputs, predict_cnt = _predict_count_tiled(
@@ -742,7 +765,9 @@ def evaluate(
             split_threshold = outputs.get('split_threshold', 0.5)
             if torch.is_tensor(split_threshold):
                 split_threshold = float(split_threshold.detach().cpu().item())
-            split_map = (outputs['split_map_raw'][0].detach().cpu().squeeze(0) > split_threshold).float().numpy()
+            split_map = None
+            if 'split_map_raw' in outputs:
+                split_map = (outputs['split_map_raw'][0].detach().cpu().squeeze(0) > split_threshold).float().numpy()
             visualization(samples, targets, [points], vis_dir, split_map=split_map)
     
     # gather the stats from all processes

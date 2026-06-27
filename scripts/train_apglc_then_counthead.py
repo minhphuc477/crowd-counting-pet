@@ -93,12 +93,12 @@ def main() -> int:
         "--num_workers", str(args.num_workers),
         "--batch_size", str(args.batch_size),
         "--patch_size", str(args.patch_size),
-        "--eval_max_size", str(args.eval_max_size),
         "--nwpu_eval_split", args.nwpu_eval_split,
         "--nwpu_sigma_mode", args.nwpu_sigma_mode,
         "--seed", str(args.seed),
     ]
     recipe_owned = {
+        "eval_max_size": ("--eval_max_size", str(args.eval_max_size)),
         "patch_size_choices": ("--patch_size_choices", args.patch_size_choices),
         "crop_attempts": ("--crop_attempts", str(args.crop_attempts)),
         "min_crop_points": ("--min_crop_points", str(args.min_crop_points)),
