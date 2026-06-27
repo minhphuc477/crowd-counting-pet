@@ -34,4 +34,8 @@ cd ~/crowd-counting-pet
 conda activate crowd_counting
 
 
+conda activate crowd_counting
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+
+
 

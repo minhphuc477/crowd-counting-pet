@@ -69,7 +69,13 @@ def parse_args() -> argparse.Namespace:
                         help="extra args appended to the APG+LC stage, shell-style quoted")
     parser.add_argument("--stage2_extra_args", default="",
                         help="extra args appended to the count-head stage, shell-style quoted")
-    return parser.parse_args()
+    args = parser.parse_args()
+    args._explicit_args = {
+        token[2:].split("=", 1)[0].replace("-", "_")
+        for token in sys.argv[1:]
+        if token.startswith("--")
+    }
+    return args
 
 
 def main() -> int:
@@ -87,29 +93,35 @@ def main() -> int:
         "--num_workers", str(args.num_workers),
         "--batch_size", str(args.batch_size),
         "--patch_size", str(args.patch_size),
-        "--crop_attempts", str(args.crop_attempts),
-        "--min_crop_points", str(args.min_crop_points),
         "--eval_max_size", str(args.eval_max_size),
-        "--eval_tile_size", str(args.eval_tile_size),
-        "--eval_tile_overlap", str(args.eval_tile_overlap),
-        "--eval_tile_nms_radius", str(args.eval_tile_nms_radius),
-        "--eval_tile_min_gt", str(args.eval_tile_min_gt),
-        "--eval_tile_max_tiles", str(args.eval_tile_max_tiles),
-        "--eval_tile_trigger_count", str(args.eval_tile_trigger_count),
-        "--eval_tile_trigger_area", str(args.eval_tile_trigger_area),
         "--nwpu_eval_split", args.nwpu_eval_split,
         "--nwpu_sigma_mode", args.nwpu_sigma_mode,
         "--seed", str(args.seed),
     ]
-    if args.patch_size_choices:
-        common.extend(["--patch_size_choices", args.patch_size_choices])
+    recipe_owned = {
+        "patch_size_choices": ("--patch_size_choices", args.patch_size_choices),
+        "crop_attempts": ("--crop_attempts", str(args.crop_attempts)),
+        "min_crop_points": ("--min_crop_points", str(args.min_crop_points)),
+        "eval_tile_size": ("--eval_tile_size", str(args.eval_tile_size)),
+        "eval_tile_overlap": ("--eval_tile_overlap", str(args.eval_tile_overlap)),
+        "eval_tile_nms_radius": ("--eval_tile_nms_radius", str(args.eval_tile_nms_radius)),
+        "eval_tile_min_gt": ("--eval_tile_min_gt", str(args.eval_tile_min_gt)),
+        "eval_tile_max_tiles": ("--eval_tile_max_tiles", str(args.eval_tile_max_tiles)),
+        "eval_tile_trigger_count": ("--eval_tile_trigger_count", str(args.eval_tile_trigger_count)),
+        "eval_tile_trigger_area": ("--eval_tile_trigger_area", str(args.eval_tile_trigger_area)),
+    }
+    for key, (flag, value) in recipe_owned.items():
+        if key in args._explicit_args and value != "":
+            common.extend([flag, value])
     if args.dataset_file == "NWPU":
-        common.extend([
-            "--nwpu_dense_crop_prob", str(args.nwpu_dense_crop_prob),
-            "--nwpu_dense_crop_attempts", str(args.nwpu_dense_crop_attempts),
-            "--train_count_weight_power", str(args.train_count_weight_power),
-            "--train_count_weight_max", str(args.train_count_weight_max),
-        ])
+        for key, flag, value in (
+            ("nwpu_dense_crop_prob", "--nwpu_dense_crop_prob", str(args.nwpu_dense_crop_prob)),
+            ("nwpu_dense_crop_attempts", "--nwpu_dense_crop_attempts", str(args.nwpu_dense_crop_attempts)),
+            ("train_count_weight_power", "--train_count_weight_power", str(args.train_count_weight_power)),
+            ("train_count_weight_max", "--train_count_weight_max", str(args.train_count_weight_max)),
+        ):
+            if key in args._explicit_args:
+                common.extend([flag, value])
 
     stage1_output = Path(args.stage1_output)
     stage1_best = Path(args.stage1_checkpoint) if args.stage1_checkpoint else stage1_output / "best_checkpoint.pth"

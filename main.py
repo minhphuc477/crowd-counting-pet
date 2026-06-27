@@ -1075,6 +1075,30 @@ MODEL_RECIPES['vgg_apglc_nwpu_tail'] = {
     'eval_tile_trigger_area': 0,
 }
 
+# NWPU stage-2 count-head adaptation.
+#
+# This is the NWPU analogue of the SHA 50 -> 48 recovery path, but it keeps
+# the safer stage-2 behavior: load a calibrated APG+LC detector, freeze the
+# backbone, and lightly update PET heads with the scalar count auxiliary while
+# preserving the same dense-crop/high-count sampling and tail-aware validation
+# policy used by stage 1.
+MODEL_RECIPES['vgg_apglc_counthead_stage2_nwpu'] = {
+    **MODEL_RECIPES['vgg_apglc_counthead_stage2_adapt'],
+    'crop_attempts': 12,
+    'min_crop_points': 1,
+    'nwpu_dense_crop_prob': 0.5,
+    'nwpu_dense_crop_attempts': 32,
+    'train_count_weight_power': 0.5,
+    'train_count_weight_max': 8.0,
+    'localization_protocol': 'target_sigma',
+    'eval_tile_size': 1536,
+    'eval_tile_overlap': 128,
+    'eval_tile_nms_radius': 8.0,
+    'eval_tile_max_tiles': 16,
+    'eval_tile_trigger_count': 1500.0,
+    'eval_tile_trigger_area': 0,
+}
+
 EXPERIMENTAL_MODEL_RECIPES = {
     # These paths are kept for audit/reproduction only. Session runs showed
     # catastrophic over/under-counting before they could improve on APG+LC.

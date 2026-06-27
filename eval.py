@@ -420,14 +420,21 @@ def merge_checkpoint_args(args, checkpoint):
     for key, value in vars(args).items():
         if not hasattr(merged, key):
             setattr(merged, key, value)
-    runtime_keys = {
+    always_runtime_keys = {
         'resume', 'device', 'vis_dir', 'results_file', 'data_path', 'dataset_file',
-        'eval_max_size', 'nwpu_eval_split', 'nwpu_sigma_mode', 'num_workers', 'seed',
-        'per_image_results_file', 'eval_tile_size', 'eval_tile_overlap', 'eval_tile_nms_radius',
+        'nwpu_eval_split', 'nwpu_sigma_mode', 'num_workers', 'seed',
+        'per_image_results_file',
+        'override_score_threshold', 'override_split_threshold', 'override_split_threshold_quantile',
+        'override_query_prune_threshold',
+        'checkpoint_model_key', 'deterministic', 'amp_dtype', 'strict_model_checks',
+    }
+    explicit_only_runtime_keys = {
+        'eval_max_size',
+        'eval_tile_size', 'eval_tile_overlap', 'eval_tile_nms_radius',
         'eval_tile_min_gt', 'eval_tile_max_tiles', 'eval_tile_trigger_count', 'eval_tile_trigger_area',
         'override_score_threshold', 'override_split_threshold', 'override_split_threshold_quantile',
         'override_query_prune_threshold',
-        'checkpoint_model_key', 'deterministic', 'tta_flip', 'tta_scales',
+        'tta_flip', 'tta_scales',
         'eval_nms_radius', 'eval_branch_gate', 'eval_soft_split_gate',
         'eval_foreground_gate', 'eval_foreground_gate_mode', 'eval_foreground_gate_strength',
         'eval_count_mode', 'eval_count_source', 'eval_count_blend_alpha', 'eval_count_head_min_score',
@@ -441,18 +448,20 @@ def merge_checkpoint_args(args, checkpoint):
         'no_localization_metrics', 'localization_large_threshold', 'localization_small_threshold',
         'localization_protocol', 'localization_large_scale', 'localization_small_scale',
         'eval_protocol', 'resume_allow_arch_change',
-        'amp_dtype', 'strict_model_checks',
     }
     explicit_args = set(getattr(args, '_explicit_args', set()))
     if 'eval_dense_start_epoch' in explicit_args:
-        runtime_keys.add('eval_dense_start_epoch')
+        explicit_only_runtime_keys.add('eval_dense_start_epoch')
     for key in ('eval_dense_residual_mode', 'eval_dense_residual_start_epoch', 'eval_dense_residual_min_score'):
         if key in explicit_args:
-            runtime_keys.add(key)
+            explicit_only_runtime_keys.add(key)
     if getattr(args, 'resume_allow_arch_change', False):
-        runtime_keys.update(key for key in ARCHITECTURE_OVERRIDE_KEYS if key in explicit_args)
-    for key in runtime_keys:
+        explicit_only_runtime_keys.update(key for key in ARCHITECTURE_OVERRIDE_KEYS if key in explicit_args)
+    for key in always_runtime_keys:
         setattr(merged, key, getattr(args, key))
+    for key in explicit_only_runtime_keys:
+        if key in explicit_args:
+            setattr(merged, key, getattr(args, key))
     if hasattr(args, '_explicit_args'):
         setattr(merged, '_explicit_args', getattr(args, '_explicit_args'))
     return merged
