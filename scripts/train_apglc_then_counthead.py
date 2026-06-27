@@ -57,7 +57,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--eval_tile_trigger_count", default=0.0, type=float)
     parser.add_argument("--eval_tile_trigger_area", default=0, type=int)
     parser.add_argument("--nwpu_eval_split", default="val", choices=("val", "test", "train"))
-    parser.add_argument("--nwpu_sigma_mode", default="area", choices=("area", "diag", "min_diag"))
+    parser.add_argument("--nwpu_sigma_mode", default="area", choices=("area", "diag", "min_diag", "official"))
     parser.add_argument("--nwpu_dense_crop_prob", default=0.0, type=float)
     parser.add_argument("--nwpu_dense_crop_attempts", default=16, type=int)
     parser.add_argument("--train_count_weight_power", default=0.0, type=float)
@@ -94,10 +94,10 @@ def main() -> int:
         "--batch_size", str(args.batch_size),
         "--patch_size", str(args.patch_size),
         "--nwpu_eval_split", args.nwpu_eval_split,
-        "--nwpu_sigma_mode", args.nwpu_sigma_mode,
         "--seed", str(args.seed),
     ]
     recipe_owned = {
+        "nwpu_sigma_mode": ("--nwpu_sigma_mode", args.nwpu_sigma_mode),
         "eval_max_size": ("--eval_max_size", str(args.eval_max_size)),
         "patch_size_choices": ("--patch_size_choices", args.patch_size_choices),
         "crop_attempts": ("--crop_attempts", str(args.crop_attempts)),

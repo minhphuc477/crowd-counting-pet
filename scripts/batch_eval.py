@@ -438,7 +438,7 @@ def parse_args():
     parser.add_argument('--eval_tile_trigger_count', default=None, type=float)
     parser.add_argument('--eval_tile_trigger_area', default=None, type=int)
     parser.add_argument('--nwpu_eval_split', default='')
-    parser.add_argument('--nwpu_sigma_mode', default='', choices=('', 'area', 'diag', 'min_diag'))
+    parser.add_argument('--nwpu_sigma_mode', default='', choices=('', 'area', 'diag', 'min_diag', 'official'))
     parser.add_argument('--localization_protocol', default='')
     parser.add_argument('--eval_nms_radius', default=None, type=float)
     parser.add_argument('--eval_branch_gate', default='', choices=('', 'none', 'query', 'pred'))

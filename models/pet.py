@@ -116,6 +116,24 @@ class BasePETCount(nn.Module):
 
         self.pq_stride = args.sparse_stride if quadtree_layer == 'sparse' else args.dense_stride
         self.feat_name = '8x' if quadtree_layer == 'sparse' else '4x'
+        self.query_feature_interpolation = getattr(args, 'query_feature_interpolation', 'nearest')
+        if self.query_feature_interpolation not in ('nearest', 'implicit'):
+            raise ValueError('query_feature_interpolation must be one of "nearest" or "implicit"')
+        self.query_feature_interpolator = None
+        if self.query_feature_interpolation == 'implicit':
+            self.query_feature_interpolator = ImplicitFeatureInterpolator(
+                hidden_dim,
+                pos_dim=getattr(args, 'ifi_pos_dim', 32),
+                mlp_hidden_dim=getattr(args, 'ifi_mlp_hidden_dim', hidden_dim),
+                activation=getattr(args, 'ifi_activation', 'gelu'),
+            )
+
+    def sample_query_features(self, src, points_queries, image_shape):
+        if self.query_feature_interpolator is None:
+            shift_y_down = points_queries[:, 0] // self.pq_stride
+            shift_x_down = points_queries[:, 1] // self.pq_stride
+            return src[:, :, shift_y_down, shift_x_down]
+        return self.query_feature_interpolator.sample_batch(src, points_queries, image_shape).permute(0, 2, 1).contiguous()
     
     def points_queris_embed(self, samples, stride=8, src=None, **kwargs):
         """
@@ -142,9 +160,8 @@ class BasePETCount(nn.Module):
         bs, c = query_embed.shape[:2]
         query_embed = query_embed.view(bs, c, h, w)
 
-        # get point queries features, equivalent to nearest interpolation
-        shift_y_down, shift_x_down = points_queries[:, 0] // stride, points_queries[:, 1] // stride
-        query_feats = src[:, :, shift_y_down,shift_x_down]
+        # get point query features
+        query_feats = self.sample_query_features(src, points_queries, image_shape)
         query_feats = query_feats.view(bs, c, h, w)
 
         return query_embed, points_queries, query_feats
@@ -174,9 +191,8 @@ class BasePETCount(nn.Module):
         query_embed = dense_input_embed[:, :, points_queries[:, 0], points_queries[:, 1]]
         bs, c = query_embed.shape[:2]
 
-        # get points queries features, equivalent to nearest interpolation
-        shift_y_down, shift_x_down = points_queries[:, 0] // stride, points_queries[:, 1] // stride
-        query_feats = src[:, :, shift_y_down, shift_x_down]
+        # get point query features
+        query_feats = self.sample_query_features(src, points_queries, image_shape)
         
         # window-rize
         query_embed = query_embed.reshape(bs, c, h, w)
@@ -286,6 +302,92 @@ def _make_group_norm(num_channels):
     while num_channels % groups != 0:
         groups -= 1
     return nn.GroupNorm(groups, num_channels)
+
+
+class ImplicitFeatureInterpolator(nn.Module):
+    """APGCC-style local implicit feature interpolation.
+
+    Instead of reading the nearest feature cell, this module gathers the four
+    neighboring latent features around an arbitrary image-space point, encodes
+    the relative sub-cell offsets with Fourier features, maps each neighbor
+    through a small MLP, and blends them with bilinear area weights.
+    """
+
+    def __init__(self, hidden_dim, pos_dim=32, mlp_hidden_dim=None, activation='gelu'):
+        super().__init__()
+        self.hidden_dim = int(hidden_dim)
+        self.pos_dim = max(2, int(pos_dim))
+        self.num_freqs = max(1, (self.pos_dim - 2) // 4)
+        self.encoded_pos_dim = 2 + 4 * self.num_freqs
+        mlp_hidden_dim = self.hidden_dim if mlp_hidden_dim is None or int(mlp_hidden_dim) <= 0 else int(mlp_hidden_dim)
+        if activation == 'gelu':
+            act = nn.GELU
+        elif activation == 'relu':
+            act = lambda: nn.ReLU(inplace=True)
+        else:
+            raise ValueError(f'Unsupported IFI activation: {activation}. Use "gelu" or "relu".')
+        self.mlp = nn.Sequential(
+            nn.Linear(self.hidden_dim + self.encoded_pos_dim, mlp_hidden_dim),
+            act(),
+            nn.Linear(mlp_hidden_dim, self.hidden_dim),
+            act(),
+        )
+
+    def _encode_relative(self, rel):
+        freqs = torch.arange(self.num_freqs, device=rel.device, dtype=rel.dtype)
+        freqs = (2.0 ** freqs) * math.pi
+        phase = rel[..., None] * freqs
+        phase = phase.flatten(-2)
+        return torch.cat([rel, torch.sin(phase), torch.cos(phase)], dim=-1)
+
+    def sample_batch(self, feature, points_abs, image_shape):
+        """Return interpolated features shaped [B, N, C]."""
+        if points_abs.numel() == 0:
+            return feature.new_zeros((feature.shape[0], 0, feature.shape[1]))
+        img_h, img_w = image_shape
+        if torch.is_tensor(img_h):
+            img_h = float(img_h.detach().item())
+        if torch.is_tensor(img_w):
+            img_w = float(img_w.detach().item())
+        outputs = [
+            self.sample_points(feature, batch_idx, points_abs, img_h, img_w)
+            for batch_idx in range(feature.shape[0])
+        ]
+        return torch.stack(outputs, dim=0)
+
+    def sample_points(self, feature, batch_idx, points_abs, img_h, img_w):
+        if points_abs.numel() == 0:
+            return feature.new_zeros((0, feature.shape[1]))
+        feat = feature[batch_idx]
+        c, h, w = feat.shape
+        points = points_abs.to(device=feature.device, dtype=feature.dtype)
+        # Align-corners=False equivalent continuous feature coordinate.
+        y = (points[:, 0] + 0.5) / max(float(img_h), 1.0) * h - 0.5
+        x = (points[:, 1] + 0.5) / max(float(img_w), 1.0) * w - 0.5
+        y = y.clamp(0.0, max(float(h - 1), 0.0))
+        x = x.clamp(0.0, max(float(w - 1), 0.0))
+
+        y0 = torch.floor(y).long().clamp(0, h - 1)
+        x0 = torch.floor(x).long().clamp(0, w - 1)
+        y1 = (y0 + 1).clamp(0, h - 1)
+        x1 = (x0 + 1).clamp(0, w - 1)
+        y_idx = torch.stack([y0, y0, y1, y1], dim=1)
+        x_idx = torch.stack([x0, x1, x0, x1], dim=1)
+
+        feat_hw = feat.permute(1, 2, 0).contiguous()
+        local_feat = feat_hw[y_idx, x_idx]
+        rel = torch.stack([
+            y[:, None] - y_idx.to(dtype=feature.dtype),
+            x[:, None] - x_idx.to(dtype=feature.dtype),
+        ], dim=-1)
+        pos = self._encode_relative(rel)
+        local_context = torch.cat([local_feat, pos], dim=-1)
+        local_context = self.mlp(local_context)
+
+        weights = (1.0 - rel.abs()).clamp_min(0.0)
+        weights = (weights[..., 0] * weights[..., 1]).clamp_min(1e-6)
+        weights = weights / weights.sum(dim=1, keepdim=True).clamp_min(1e-6)
+        return (local_context * weights.unsqueeze(-1)).sum(dim=1).reshape(-1, c)
 
 
 class QuadContextMixer(nn.Module):
@@ -990,6 +1092,17 @@ class PET(nn.Module):
         self.quadtree_sparse = BasePETCount(backbone, num_classes, quadtree_layer='sparse', args=args, transformer=transformer)
         self.quadtree_dense = BasePETCount(backbone, num_classes, quadtree_layer='dense', args=args, transformer=transformer)
         self.ifi_loss_coef = float(getattr(args, 'ifi_loss_coef', 0.0))
+        self.ifi_interpolation = getattr(args, 'ifi_interpolation', 'bilinear')
+        if self.ifi_interpolation not in ('bilinear', 'implicit'):
+            raise ValueError('ifi_interpolation must be one of "bilinear" or "implicit"')
+        self.ifi_interpolator = None
+        if self.ifi_interpolation == 'implicit':
+            self.ifi_interpolator = ImplicitFeatureInterpolator(
+                hidden_dim,
+                pos_dim=getattr(args, 'ifi_pos_dim', 32),
+                mlp_hidden_dim=getattr(args, 'ifi_mlp_hidden_dim', hidden_dim),
+                activation=getattr(args, 'ifi_activation', 'gelu'),
+            )
         self.ifi_head_source = getattr(args, 'ifi_head_source', 'separate')
         if self.ifi_head_source not in ('separate', 'sparse', 'dense', 'both', 'routed'):
             raise ValueError('ifi_head_source must be one of "separate", "sparse", "dense", "both", or "routed"')
@@ -2186,6 +2299,8 @@ class PET(nn.Module):
     def _sample_ifi_features(self, encode_src, batch_idx, points_abs, img_h, img_w):
         if points_abs.numel() == 0:
             return encode_src.new_zeros((0, encode_src.shape[1]))
+        if self.ifi_interpolator is not None:
+            return self.ifi_interpolator.sample_points(encode_src, batch_idx, points_abs, img_h, img_w)
         grid = points_abs.to(device=encode_src.device, dtype=encode_src.dtype).clone()
         grid_x = (grid[:, 1] + 0.5) / max(float(img_w), 1.0) * 2.0 - 1.0
         grid_y = (grid[:, 0] + 0.5) / max(float(img_h), 1.0) * 2.0 - 1.0

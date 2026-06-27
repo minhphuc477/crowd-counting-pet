@@ -974,12 +974,50 @@ MODEL_RECIPES['vgg_apglc_shared_ifi'] = {
     **MODEL_RECIPES['vgg_apglc'],
     'ifi_loss_coef': 0.02,
     'ifi_head_source': 'routed',
+    'ifi_interpolation': 'bilinear',
     'ifi_point_coef': 0.2,
     'ifi_neg_k': 4,
     'ifi_neg_radius': 8.0,
     'ifi_neg_min_dist': 2.0,
     'ifi_start_epoch': 0,
     'ifi_end_epoch': 350,
+}
+
+# Full IFI-PET: APGCC-style implicit interpolation in the PET proposal path.
+#
+# This is structural, not just an auxiliary loss. PET's sparse/dense query
+# features are extracted with local implicit interpolation, and the IFI
+# auxiliary sampler uses the same four-neighbor implicit feature function.
+MODEL_RECIPES['vgg_apglc_full_ifi'] = {
+    **MODEL_RECIPES['vgg_apglc'],
+    'query_feature_interpolation': 'implicit',
+    'ifi_interpolation': 'implicit',
+    'ifi_pos_dim': 32,
+    'ifi_mlp_hidden_dim': 256,
+    'ifi_activation': 'gelu',
+    'ifi_loss_coef': 0.02,
+    'ifi_head_source': 'routed',
+    'ifi_point_coef': 0.2,
+    'ifi_neg_k': 4,
+    'ifi_neg_radius': 8.0,
+    'ifi_neg_min_dist': 2.0,
+    'ifi_start_epoch': 0,
+    'ifi_end_epoch': 350,
+}
+
+MODEL_RECIPES['vgg_apglc_full_ifi_counthead_ft_legacy'] = {
+    **MODEL_RECIPES['vgg_apglc_density_counthead_ft_legacy'],
+    'query_feature_interpolation': 'implicit',
+    'ifi_interpolation': 'implicit',
+    'ifi_pos_dim': 32,
+    'ifi_mlp_hidden_dim': 256,
+    'ifi_activation': 'gelu',
+    'ifi_loss_coef': 0.0,
+    'ifi_head_source': 'routed',
+    'ifi_point_coef': 0.2,
+    'ifi_neg_k': 4,
+    'ifi_neg_radius': 8.0,
+    'ifi_neg_min_dist': 2.0,
 }
 
 # Quality-Calibrated PET (QC-PET).
@@ -1067,6 +1105,7 @@ MODEL_RECIPES['vgg_apglc_nwpu_tail'] = {
     'nwpu_dense_crop_attempts': 32,
     'train_count_weight_power': 0.5,
     'train_count_weight_max': 8.0,
+    'nwpu_sigma_mode': 'official',
     'localization_protocol': 'target_sigma',
     'eval_tile_size': 1536,
     'eval_tile_overlap': 128,
@@ -1092,6 +1131,7 @@ MODEL_RECIPES['vgg_apglc_counthead_stage2_nwpu'] = {
     'nwpu_dense_crop_attempts': 32,
     'train_count_weight_power': 0.5,
     'train_count_weight_max': 8.0,
+    'nwpu_sigma_mode': 'official',
     'localization_protocol': 'target_sigma',
     'eval_tile_size': 1536,
     'eval_tile_overlap': 128,
@@ -1099,6 +1139,38 @@ MODEL_RECIPES['vgg_apglc_counthead_stage2_nwpu'] = {
     'eval_tile_max_tiles': 16,
     'eval_tile_trigger_count': 1500.0,
     'eval_tile_trigger_area': 0,
+}
+
+MODEL_RECIPES['vgg_apglc_full_ifi_nwpu'] = {
+    **MODEL_RECIPES['vgg_apglc_nwpu_tail'],
+    'query_feature_interpolation': 'implicit',
+    'ifi_interpolation': 'implicit',
+    'ifi_pos_dim': 32,
+    'ifi_mlp_hidden_dim': 256,
+    'ifi_activation': 'gelu',
+    'ifi_loss_coef': 0.02,
+    'ifi_head_source': 'routed',
+    'ifi_point_coef': 0.2,
+    'ifi_neg_k': 4,
+    'ifi_neg_radius': 8.0,
+    'ifi_neg_min_dist': 2.0,
+    'ifi_start_epoch': 0,
+    'ifi_end_epoch': 700,
+}
+
+MODEL_RECIPES['vgg_apglc_full_ifi_counthead_stage2_nwpu'] = {
+    **MODEL_RECIPES['vgg_apglc_counthead_stage2_nwpu'],
+    'query_feature_interpolation': 'implicit',
+    'ifi_interpolation': 'implicit',
+    'ifi_pos_dim': 32,
+    'ifi_mlp_hidden_dim': 256,
+    'ifi_activation': 'gelu',
+    'ifi_loss_coef': 0.0,
+    'ifi_head_source': 'routed',
+    'ifi_point_coef': 0.2,
+    'ifi_neg_k': 4,
+    'ifi_neg_radius': 8.0,
+    'ifi_neg_min_dist': 2.0,
 }
 
 EXPERIMENTAL_MODEL_RECIPES = {
@@ -1197,6 +1269,11 @@ ARCHITECTURE_OVERRIDE_KEYS = {
     'enc_shift_mode',
     'sparse_dec_win_size',
     'dense_dec_win_size',
+    'query_feature_interpolation',
+    'ifi_interpolation',
+    'ifi_pos_dim',
+    'ifi_mlp_hidden_dim',
+    'ifi_activation',
     'context_patch_size',
     'quad_context_mixer',
     'quad_context_levels',
@@ -1652,6 +1729,16 @@ def get_args_parser():
                         help='pixel sigma for Gaussian soft APG classification targets')
     parser.add_argument('--apg_soft_point_coef', default=2.0, type=float,
                         help='point-regression coefficient inside Gaussian soft APG')
+    parser.add_argument('--query_feature_interpolation', default='nearest', choices=('nearest', 'implicit'),
+                        help='point-query feature extraction: PET nearest-cell lookup or APGCC-style implicit interpolation')
+    parser.add_argument('--ifi_interpolation', default='bilinear', choices=('bilinear', 'implicit'),
+                        help='feature interpolation used by IFI auxiliary supervision')
+    parser.add_argument('--ifi_pos_dim', default=32, type=int,
+                        help='relative positional encoding width for implicit IFI')
+    parser.add_argument('--ifi_mlp_hidden_dim', default=256, type=int,
+                        help='hidden width of the implicit IFI MLP; <=0 uses model hidden_dim')
+    parser.add_argument('--ifi_activation', default='gelu', choices=('relu', 'gelu'),
+                        help='activation used by implicit IFI MLP')
     parser.add_argument('--ifi_loss_coef', default=0.0, type=float,
                         help='Interpolated Feature Guidance auxiliary loss weight; 0 disables it')
     parser.add_argument('--ifi_head_source', default='separate', choices=('separate', 'sparse', 'dense', 'both', 'routed'),
@@ -1837,7 +1924,7 @@ def get_args_parser():
                         help='QNRF/UCF validation long-side cap; non-positive disables resizing')
     parser.add_argument('--nwpu_eval_split', default='val', choices=('val', 'test', 'train'),
                         help='NWPU split used for validation/evaluation')
-    parser.add_argument('--nwpu_sigma_mode', default='area', choices=('area', 'diag', 'min_diag'),
+    parser.add_argument('--nwpu_sigma_mode', default='area', choices=('area', 'diag', 'min_diag', 'official'),
                         help='fallback localization sigma derived from NWPU boxes when annotation sigma is absent')
     parser.add_argument('--nwpu_dense_crop_prob', default=0.0, type=float,
                         help='NWPU train only: probability of choosing the densest crop among random candidates')
@@ -2281,6 +2368,8 @@ def merge_checkpoint_args(args, checkpoint):
             'apg_contrastive_coef', 'apg_neg_k', 'apg_margin',
             'apg_consistency_coef', 'apg_consistency_k', 'apg_consistency_sigma',
             'apg_soft_loss_coef', 'apg_soft_pos_k', 'apg_soft_sigma', 'apg_soft_point_coef',
+            'query_feature_interpolation', 'ifi_interpolation', 'ifi_pos_dim',
+            'ifi_mlp_hidden_dim', 'ifi_activation',
             'ifi_loss_coef', 'ifi_head_source', 'ifi_point_coef', 'ifi_neg_k', 'ifi_neg_radius',
             'ifi_neg_min_dist', 'ifi_start_epoch', 'ifi_end_epoch',
             'qd_apg_loss_coef', 'qd_apg_point_coef', 'qd_apg_suppress_coef',

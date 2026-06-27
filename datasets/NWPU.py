@@ -534,7 +534,7 @@ def _sigma_from_boxes(boxes, count, mode='area'):
     boxes = _normalize_boxes_array(boxes)
     if boxes is None or boxes.shape[0] != count:
         return None
-    if mode not in ('area', 'diag', 'min_diag'):
+    if mode not in ('area', 'diag', 'min_diag', 'official'):
         raise ValueError(f'Unsupported NWPU sigma mode: {mode}')
     boxes = boxes.astype(np.float32)
     x1, y1, a, b = boxes[:, 0], boxes[:, 1], boxes[:, 2], boxes[:, 3]
@@ -544,7 +544,10 @@ def _sigma_from_boxes(boxes, count, mode='area'):
     wh = np.where(use_xyxy[:, None], wh_xyxy, wh_xywh)
     width = np.maximum(wh[:, 0], 1.0)
     height = np.maximum(wh[:, 1], 1.0)
-    if mode == 'area':
+    if mode == 'official':
+        sigma_s = np.maximum(np.minimum(width, height), 1.0)
+        sigma_l = np.maximum(np.sqrt(width * width + height * height), 1.0)
+    elif mode == 'area':
         # Historical repo behavior: a lenient large threshold based on box area.
         # This is the default because official NWPU eval consumes prepared sigma
         # files; when those are absent, this fallback preserves prior results.

@@ -41,6 +41,11 @@ ARCHITECTURE_OVERRIDE_KEYS = {
     'enc_shift_mode',
     'sparse_dec_win_size',
     'dense_dec_win_size',
+    'query_feature_interpolation',
+    'ifi_interpolation',
+    'ifi_pos_dim',
+    'ifi_mlp_hidden_dim',
+    'ifi_activation',
     'context_patch_size',
     'quad_context_mixer',
     'quad_context_levels',
@@ -243,7 +248,13 @@ def get_args_parser():
     parser.add_argument('--apg_soft_pos_k', default=4, type=int)
     parser.add_argument('--apg_soft_sigma', default=6.0, type=float)
     parser.add_argument('--apg_soft_point_coef', default=2.0, type=float)
+    parser.add_argument('--query_feature_interpolation', default='nearest', choices=('nearest', 'implicit'))
+    parser.add_argument('--ifi_interpolation', default='bilinear', choices=('bilinear', 'implicit'))
+    parser.add_argument('--ifi_pos_dim', default=32, type=int)
+    parser.add_argument('--ifi_mlp_hidden_dim', default=256, type=int)
+    parser.add_argument('--ifi_activation', default='gelu', choices=('relu', 'gelu'))
     parser.add_argument('--ifi_loss_coef', default=0.0, type=float)
+    parser.add_argument('--ifi_head_source', default='separate', choices=('separate', 'sparse', 'dense', 'both', 'routed'))
     parser.add_argument('--ifi_point_coef', default=1.0, type=float)
     parser.add_argument('--ifi_neg_k', default=4, type=int)
     parser.add_argument('--ifi_neg_radius', default=12.0, type=float)
@@ -351,7 +362,7 @@ def get_args_parser():
                         help='QNRF/UCF validation long-side cap; non-positive disables resizing')
     parser.add_argument('--nwpu_eval_split', default='val', choices=('val', 'test', 'train'),
                         help='NWPU split used when --dataset_file NWPU is evaluated')
-    parser.add_argument('--nwpu_sigma_mode', default='area', choices=('area', 'diag', 'min_diag'),
+    parser.add_argument('--nwpu_sigma_mode', default='area', choices=('area', 'diag', 'min_diag', 'official'),
                         help='fallback localization sigma derived from NWPU boxes when annotation sigma is absent')
 
     # misc parameters
@@ -422,7 +433,7 @@ def merge_checkpoint_args(args, checkpoint):
             setattr(merged, key, value)
     always_runtime_keys = {
         'resume', 'device', 'vis_dir', 'results_file', 'data_path', 'dataset_file',
-        'nwpu_eval_split', 'nwpu_sigma_mode', 'num_workers', 'seed',
+        'nwpu_eval_split', 'num_workers', 'seed',
         'per_image_results_file',
         'override_score_threshold', 'override_split_threshold', 'override_split_threshold_quantile',
         'override_query_prune_threshold',
@@ -430,6 +441,7 @@ def merge_checkpoint_args(args, checkpoint):
     }
     explicit_only_runtime_keys = {
         'eval_max_size',
+        'nwpu_sigma_mode',
         'eval_tile_size', 'eval_tile_overlap', 'eval_tile_nms_radius',
         'eval_tile_min_gt', 'eval_tile_max_tiles', 'eval_tile_trigger_count', 'eval_tile_trigger_area',
         'override_score_threshold', 'override_split_threshold', 'override_split_threshold_quantile',
