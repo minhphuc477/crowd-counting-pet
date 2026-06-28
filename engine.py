@@ -773,6 +773,14 @@ def evaluate(
     # gather the stats from all processes
     metric_logger.synchronize_between_processes()
     results = {k: meter.global_avg for k, meter in metric_logger.meters.items()}
+    evaluated_samples = float(metric_logger.meters['mae'].count) if 'mae' in metric_logger.meters else 0.0
+    for name, meter in list(metric_logger.meters.items()):
+        if not name.startswith('dbg_'):
+            continue
+        results[f'{name}_samples'] = float(meter.count)
+        results[f'{name}_coverage'] = (
+            float(meter.count) / evaluated_samples if evaluated_samples > 0 else 0.0
+        )
     results['mse'] = np.sqrt(results.pop('mse_sq'))
     if localization_metrics:
         loc_reduce = {}

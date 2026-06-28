@@ -37,5 +37,5 @@ conda activate crowd_counting
 conda activate crowd_counting
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
-
+![1782634408142](image/result/1782634408142.png)
 

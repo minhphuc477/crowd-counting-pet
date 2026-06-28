@@ -2415,6 +2415,58 @@ def backup_existing_best_checkpoint(output_dir):
     print(f'backed up existing best checkpoint to: {backup_path}')
 
 
+def ensure_mae_checkpoint_alias(output_dir):
+    """Expose the legacy best checkpoint as initial explicit metric checkpoints."""
+    legacy_path = output_dir / 'best_checkpoint.pth'
+    mae_path = output_dir / 'best_mae_checkpoint.pth'
+    mse_path = output_dir / 'best_mse_checkpoint.pth'
+    localization_path = output_dir / 'best_localization_checkpoint.pth'
+    legacy_eval_path = output_dir / 'best_eval_results.json'
+    localization_eval_path = output_dir / 'best_localization_eval_results.json'
+    if not utils.is_main_process() or not legacy_path.exists():
+        return
+    if not mae_path.exists():
+        shutil.copy2(legacy_path, mae_path)
+        print(f'created MAE checkpoint alias: {mae_path}')
+    if not mse_path.exists():
+        # Historical checkpoints only retained the MSE paired with best MAE.
+        # Use that available model as the initial MSE candidate; future
+        # evaluations replace it using independently tracked MSE.
+        shutil.copy2(legacy_path, mse_path)
+        print(f'created initial MSE checkpoint alias: {mse_path}')
+    if not localization_path.exists() and legacy_eval_path.exists():
+        try:
+            legacy_eval = json.loads(legacy_eval_path.read_text(encoding='utf-8'))
+        except (OSError, ValueError):
+            legacy_eval = {}
+        if 'loc_f1_large' in legacy_eval and 'loc_f1_small' in legacy_eval:
+            shutil.copy2(legacy_path, localization_path)
+            if not localization_eval_path.exists():
+                shutil.copy2(legacy_eval_path, localization_eval_path)
+            print(f'created initial localization checkpoint alias: {localization_path}')
+
+
+def read_eval_record(path):
+    try:
+        record = json.loads(path.read_text(encoding='utf-8'))
+    except (OSError, ValueError):
+        return {}
+    return record if isinstance(record, dict) else {}
+
+
+def enrich_checkpoint_metadata(path, metadata):
+    """Add metric metadata to a legacy checkpoint without changing its state."""
+    if not utils.is_main_process() or not path.exists():
+        return
+    checkpoint = torch.load(path, map_location='cpu', weights_only=False)
+    missing = {key: value for key, value in metadata.items() if key not in checkpoint}
+    if not missing:
+        return
+    checkpoint.update(missing)
+    utils.save_on_master(checkpoint, path)
+    print(f'embedded evaluation metadata in legacy checkpoint: {path}')
+
+
 def checkpoint_args_snapshot(args):
     return argparse.Namespace(**{
         key: value for key, value in vars(args).items()
@@ -2439,6 +2491,21 @@ def scalar_eval_metrics(test_stats, skip=()):
             continue
         if isinstance(value, (int, float, np.integer, np.floating)):
             metrics[key] = float(value)
+    return metrics
+
+
+def checkpoint_eval_metrics(test_stats):
+    """Convert all scalar/string evaluation outputs to checkpoint-safe values."""
+    metrics = {}
+    for key, value in test_stats.items():
+        if torch.is_tensor(value):
+            if value.numel() != 1:
+                continue
+            value = value.detach().cpu().item()
+        elif isinstance(value, np.generic):
+            value = value.item()
+        if isinstance(value, (str, bool, int, float)):
+            metrics[key] = value
     return metrics
 
 
@@ -2805,6 +2872,7 @@ def main(args):
     run_log_name = output_dir / 'run_log.txt'
     if utils.is_main_process():
         os.makedirs(output_dir, exist_ok=True)
+        ensure_mae_checkpoint_alias(output_dir)
         print(f'outputs will be saved to: {output_dir.resolve()}')
         with open(run_log_name, "a", encoding="utf-8") as log_file:
             log_file.write('Run Log %s\n' % time.strftime("%c"))
@@ -2812,6 +2880,18 @@ def main(args):
             log_file.write("parameters: {}\n".format(n_parameters))
 
     best_mae, best_mse, best_epoch = 1e8, 1e8, 0
+    best_loc_f1_large = -1.0
+    best_loc_f1_small = -1.0
+    best_loc_mae = 1e8
+    best_loc_mse = 1e8
+    best_loc_epoch = 0
+    lowest_mse = 1e8
+    best_mse_mae = 1e8
+    best_mse_epoch = 0
+    latest_eval_metrics = {}
+    best_mae_eval_metrics = {}
+    best_mse_eval_metrics = {}
+    best_localization_eval_metrics = {}
     if checkpoint is not None:
         model_key = 'model'
         if model_ema is not None and 'model_raw' in checkpoint and not args.resume_model_only:
@@ -2861,6 +2941,58 @@ def main(args):
             best_mae = checkpoint.get('best_mae', best_mae)
             best_mse = checkpoint.get('best_mse', best_mse)
             best_epoch = checkpoint.get('best_epoch', best_epoch)
+            best_loc_f1_large = checkpoint.get('best_loc_f1_large', best_loc_f1_large)
+            best_loc_f1_small = checkpoint.get('best_loc_f1_small', best_loc_f1_small)
+            best_loc_mae = checkpoint.get('best_loc_mae', best_loc_mae)
+            best_loc_mse = checkpoint.get('best_loc_mse', best_loc_mse)
+            best_loc_epoch = checkpoint.get('best_loc_epoch', best_loc_epoch)
+            lowest_mse = checkpoint.get('lowest_mse', checkpoint.get('best_mse', lowest_mse))
+            best_mse_mae = checkpoint.get('best_mse_mae', checkpoint.get('best_mae', best_mse_mae))
+            best_mse_epoch = checkpoint.get('best_mse_epoch', checkpoint.get('best_epoch', best_mse_epoch))
+            latest_eval_metrics = dict(checkpoint.get('latest_eval_metrics', latest_eval_metrics))
+            best_mae_eval_metrics = dict(checkpoint.get('best_mae_eval_metrics', best_mae_eval_metrics))
+            best_mse_eval_metrics = dict(checkpoint.get('best_mse_eval_metrics', best_mse_eval_metrics))
+            best_localization_eval_metrics = dict(
+                checkpoint.get('best_localization_eval_metrics', best_localization_eval_metrics)
+            )
+
+    # Migrate complete evaluation metadata from runs created before metric
+    # records were embedded in checkpoint payloads.
+    saved_latest_record = read_eval_record(output_dir / 'latest_eval_results.json')
+    saved_mae_record = read_eval_record(output_dir / 'best_eval_results.json')
+    saved_mse_record = read_eval_record(output_dir / 'best_mse_eval_results.json')
+    saved_loc_record = read_eval_record(output_dir / 'best_localization_eval_results.json')
+    if not latest_eval_metrics and saved_latest_record:
+        latest_eval_metrics = saved_latest_record
+    if not best_mae_eval_metrics and saved_mae_record:
+        best_mae_eval_metrics = saved_mae_record
+    if not best_mse_eval_metrics:
+        best_mse_eval_metrics = saved_mse_record or saved_mae_record
+    if not best_localization_eval_metrics:
+        best_localization_eval_metrics = saved_loc_record or saved_mae_record
+
+    if best_mse_eval_metrics:
+        saved_mse = float(best_mse_eval_metrics.get('test_mse', lowest_mse))
+        if saved_mse <= lowest_mse:
+            lowest_mse = saved_mse
+            best_mse_mae = float(best_mse_eval_metrics.get('test_mae', best_mse_mae))
+            best_mse_epoch = int(best_mse_eval_metrics.get('epoch', best_mse_epoch))
+    if (
+        'loc_f1_large' in best_localization_eval_metrics
+        and 'loc_f1_small' in best_localization_eval_metrics
+    ):
+        saved_loc_rank = (
+            float(best_localization_eval_metrics['loc_f1_large']),
+            float(best_localization_eval_metrics['loc_f1_small']),
+            -float(best_localization_eval_metrics.get('test_mae', 1e8)),
+        )
+        best_loc_rank = (best_loc_f1_large, best_loc_f1_small, -best_loc_mae)
+        if saved_loc_rank > best_loc_rank:
+            best_loc_f1_large = saved_loc_rank[0]
+            best_loc_f1_small = saved_loc_rank[1]
+            best_loc_mae = float(best_localization_eval_metrics.get('test_mae', best_loc_mae))
+            best_loc_mse = float(best_localization_eval_metrics.get('test_mse', best_loc_mse))
+            best_loc_epoch = int(best_localization_eval_metrics.get('epoch', best_loc_epoch))
 
     def checkpoint_payload(epoch, model_state=None, include_raw_model=False):
         payload = {
@@ -2872,6 +3004,19 @@ def main(args):
             'best_mae': best_mae,
             'best_mse': best_mse,
             'best_epoch': best_epoch,
+            'best_loc_f1_large': best_loc_f1_large,
+            'best_loc_f1_small': best_loc_f1_small,
+            'best_loc_mae': best_loc_mae,
+            'best_loc_mse': best_loc_mse,
+            'best_loc_epoch': best_loc_epoch,
+            'lowest_mse': lowest_mse,
+            'best_mse_mae': best_mse_mae,
+            'best_mse_epoch': best_mse_epoch,
+            'latest_eval_metrics': dict(latest_eval_metrics),
+            'best_mae_eval_metrics': dict(best_mae_eval_metrics),
+            'best_mse_eval_metrics': dict(best_mse_eval_metrics),
+            'best_localization_eval_metrics': dict(best_localization_eval_metrics),
+            'checkpoint_eval_metrics': dict(latest_eval_metrics),
         }
         if model_ema is not None:
             payload['model_ema'] = model_ema.state_dict()
@@ -2882,15 +3027,47 @@ def main(args):
             payload['model_raw'] = model_without_ddp.state_dict()
         return payload
 
+    legacy_metric_metadata = {
+        'best_mae': best_mae,
+        'best_mse': best_mse,
+        'best_epoch': best_epoch,
+        'lowest_mse': lowest_mse,
+        'best_mse_mae': best_mse_mae,
+        'best_mse_epoch': best_mse_epoch,
+        'best_loc_f1_large': best_loc_f1_large,
+        'best_loc_f1_small': best_loc_f1_small,
+        'best_loc_mae': best_loc_mae,
+        'best_loc_mse': best_loc_mse,
+        'best_loc_epoch': best_loc_epoch,
+        'latest_eval_metrics': dict(latest_eval_metrics),
+        'best_mae_eval_metrics': dict(best_mae_eval_metrics),
+        'best_mse_eval_metrics': dict(best_mse_eval_metrics),
+        'best_localization_eval_metrics': dict(best_localization_eval_metrics),
+    }
+    for metric_path, metric_record in (
+        (output_dir / 'best_checkpoint.pth', best_mae_eval_metrics),
+        (output_dir / 'best_mae_checkpoint.pth', best_mae_eval_metrics),
+        (output_dir / 'best_mse_checkpoint.pth', best_mse_eval_metrics),
+        (output_dir / 'best_localization_checkpoint.pth', best_localization_eval_metrics),
+    ):
+        metric_metadata = dict(legacy_metric_metadata)
+        metric_metadata['checkpoint_eval_metrics'] = dict(metric_record)
+        enrich_checkpoint_metadata(metric_path, metric_metadata)
+
     if getattr(args, 'eval_before_train', False):
         t1 = time.time()
+        pretrain_eval_epoch = (
+            int(checkpoint.get('epoch', args.start_epoch))
+            if checkpoint is not None
+            else int(args.start_epoch)
+        )
         eval_model, eval_model_name = select_eval_model(model, model_without_ddp, model_ema, args)
         if args.eval_protocol == 'crowd_no_overlap':
             test_stats = evaluate_crowd_no_overlap(
                 eval_model,
                 data_loader_val,
                 device,
-                epoch=args.start_epoch,
+                epoch=pretrain_eval_epoch,
                 vis_dir=None,
                 localization_metrics=not args.no_localization_metrics,
                 localization_large_threshold=args.localization_large_threshold,
@@ -2904,7 +3081,7 @@ def main(args):
                 eval_model,
                 data_loader_val,
                 device,
-                args.start_epoch,
+                pretrain_eval_epoch,
                 None,
                 localization_metrics=not args.no_localization_metrics,
                 localization_large_threshold=args.localization_large_threshold,
@@ -2923,7 +3100,7 @@ def main(args):
         t2 = time.time()
         print("\n==========================")
         print(
-            "\npretrain_eval epoch:", args.start_epoch,
+            "\npretrain_eval epoch:", pretrain_eval_epoch,
             "mae:", test_stats['mae'],
             "mse:", test_stats['mse'],
             "pred_cnt:", test_stats.get('pred_cnt', 0.0),
@@ -2933,9 +3110,131 @@ def main(args):
             "eval_time:", t2 - t1,
         )
         print("==========================\n")
-        abort_bad_count, abort_reason = should_abort_for_bad_count(args, args.start_epoch, test_stats)
+        abort_bad_count, abort_reason = should_abort_for_bad_count(args, pretrain_eval_epoch, test_stats)
         if abort_bad_count:
             raise RuntimeError(f'eval_before_train failed sanity check: {abort_reason}')
+        evaluated_epoch = pretrain_eval_epoch
+        pretrain_mae = float(test_stats['mae'])
+        pretrain_mse = float(test_stats['mse'])
+        pretrain_mae_improved = pretrain_mae < best_mae
+        if pretrain_mae_improved:
+            best_mae = pretrain_mae
+            best_mse = pretrain_mse
+            best_epoch = evaluated_epoch
+        pretrain_mse_improved = pretrain_mse < lowest_mse
+        if pretrain_mse_improved:
+            lowest_mse = pretrain_mse
+            best_mse_mae = pretrain_mae
+            best_mse_epoch = evaluated_epoch
+
+        pretrain_loc_f1_large = test_stats.get('loc_f1_large')
+        pretrain_loc_f1_small = test_stats.get('loc_f1_small')
+        pretrain_loc_improved = False
+        if pretrain_loc_f1_large is not None and pretrain_loc_f1_small is not None:
+            pretrain_loc_f1_large = float(pretrain_loc_f1_large)
+            pretrain_loc_f1_small = float(pretrain_loc_f1_small)
+            pretrain_loc_rank = (
+                pretrain_loc_f1_large,
+                pretrain_loc_f1_small,
+                -float(test_stats['mae']),
+            )
+            best_loc_rank = (best_loc_f1_large, best_loc_f1_small, -best_loc_mae)
+            pretrain_loc_improved = pretrain_loc_rank > best_loc_rank
+            if pretrain_loc_improved:
+                best_loc_f1_large = pretrain_loc_f1_large
+                best_loc_f1_small = pretrain_loc_f1_small
+                best_loc_mae = pretrain_mae
+                best_loc_mse = pretrain_mse
+                best_loc_epoch = evaluated_epoch
+
+        pretrain_eval_record = {
+            'epoch': evaluated_epoch,
+            'test_mae': pretrain_mae,
+            'test_mse': pretrain_mse,
+            'pred_cnt': float(test_stats.get('pred_cnt', 0.0)),
+            'gt_cnt': float(test_stats.get('gt_cnt', 0.0)),
+            'best_epoch': int(best_epoch),
+            'best_test_mae': float(best_mae),
+            'best_test_mse': float(best_mse),
+            'improved': bool(pretrain_mae_improved),
+            'mse_improved': bool(pretrain_mse_improved),
+            'lowest_mse': float(lowest_mse),
+            'best_mse_mae': float(best_mse_mae),
+            'best_mse_epoch': int(best_mse_epoch),
+            'localization_improved': bool(pretrain_loc_improved),
+            'best_loc_f1_large': float(best_loc_f1_large),
+            'best_loc_f1_small': float(best_loc_f1_small),
+            'best_loc_mae': float(best_loc_mae),
+            'best_loc_mse': float(best_loc_mse),
+            'best_loc_epoch': int(best_loc_epoch),
+            'eval_model': eval_model_name,
+            'eval_time': float(t2 - t1),
+            'source': 'eval_before_train',
+        }
+        pretrain_eval_record.update(checkpoint_eval_metrics(test_stats))
+        latest_eval_metrics = dict(pretrain_eval_record)
+        if pretrain_mae_improved:
+            best_mae_eval_metrics = dict(pretrain_eval_record)
+        if pretrain_mse_improved:
+            best_mse_eval_metrics = dict(pretrain_eval_record)
+        if pretrain_loc_improved:
+            best_localization_eval_metrics = dict(pretrain_eval_record)
+
+        if utils.is_main_process():
+            (output_dir / 'latest_eval_results.json').write_text(
+                json.dumps(pretrain_eval_record, indent=2) + "\n",
+                encoding="utf-8",
+            )
+            utils.save_on_master(checkpoint_payload(evaluated_epoch), output_dir / 'checkpoint.pth')
+            evaluated_model_state, include_raw = best_state_for_eval_model(
+                model_without_ddp,
+                model_ema,
+                eval_model_name,
+            )
+            if pretrain_mae_improved:
+                (output_dir / 'best_eval_results.json').write_text(
+                    json.dumps(pretrain_eval_record, indent=2) + "\n",
+                    encoding="utf-8",
+                )
+                best_mae_payload = checkpoint_payload(
+                    evaluated_epoch,
+                    model_state=evaluated_model_state,
+                    include_raw_model=include_raw,
+                )
+                utils.save_on_master(best_mae_payload, output_dir / 'best_checkpoint.pth')
+                utils.save_on_master(best_mae_payload, output_dir / 'best_mae_checkpoint.pth')
+            if pretrain_mse_improved:
+                (output_dir / 'best_mse_eval_results.json').write_text(
+                    json.dumps(pretrain_eval_record, indent=2) + "\n",
+                    encoding="utf-8",
+                )
+                utils.save_on_master(
+                    checkpoint_payload(
+                        evaluated_epoch,
+                        model_state=evaluated_model_state,
+                        include_raw_model=include_raw,
+                    ),
+                    output_dir / 'best_mse_checkpoint.pth',
+                )
+            if pretrain_loc_improved:
+                (output_dir / 'best_localization_eval_results.json').write_text(
+                    json.dumps(pretrain_eval_record, indent=2) + "\n",
+                    encoding="utf-8",
+                )
+                utils.save_on_master(
+                    checkpoint_payload(
+                        evaluated_epoch,
+                        model_state=evaluated_model_state,
+                        include_raw_model=include_raw,
+                    ),
+                    output_dir / 'best_localization_checkpoint.pth',
+                )
+                print(
+                    'updated localization-best checkpoint:',
+                    f'epoch={best_loc_epoch}',
+                    f'sigma_l_f1={best_loc_f1_large:.4f}',
+                    f'sigma_s_f1={best_loc_f1_small:.4f}',
+                )
 
     # training
     print("Start training")
@@ -3038,6 +3337,26 @@ def main(args):
                 best_epoch = epoch
                 best_mae = mae
                 best_mse = mse
+            mse_improved = mse < lowest_mse
+            if mse_improved:
+                lowest_mse = float(mse)
+                best_mse_mae = float(mae)
+                best_mse_epoch = epoch
+            loc_f1_large = test_stats.get('loc_f1_large')
+            loc_f1_small = test_stats.get('loc_f1_small')
+            localization_improved = False
+            if loc_f1_large is not None and loc_f1_small is not None:
+                loc_f1_large = float(loc_f1_large)
+                loc_f1_small = float(loc_f1_small)
+                current_loc_rank = (loc_f1_large, loc_f1_small, -float(mae))
+                best_loc_rank = (best_loc_f1_large, best_loc_f1_small, -best_loc_mae)
+                localization_improved = current_loc_rank > best_loc_rank
+                if localization_improved:
+                    best_loc_f1_large = loc_f1_large
+                    best_loc_f1_small = loc_f1_small
+                    best_loc_mae = float(mae)
+                    best_loc_mse = float(mse)
+                    best_loc_epoch = epoch
             print("\n==========================")
             print(
                 "\nepoch:", epoch,
@@ -3048,6 +3367,12 @@ def main(args):
                 format_localization_metrics(test_stats),
                 "\n\nbest mae:", best_mae,
                 "best epoch:", best_epoch,
+                "\nbest mse:", lowest_mse,
+                "best mse epoch:", best_mse_epoch,
+                "\nbest localization:",
+                f"sigma_l_f1={best_loc_f1_large:.4f}",
+                f"sigma_s_f1={best_loc_f1_small:.4f}",
+                "best localization epoch:", best_loc_epoch,
             )
             print("==========================\n")
             if utils.is_main_process():
@@ -3061,6 +3386,16 @@ def main(args):
                     'best_test_mae': float(best_mae),
                     'best_test_mse': float(best_mse),
                     'improved': bool(improved),
+                    'mse_improved': bool(mse_improved),
+                    'lowest_mse': float(lowest_mse),
+                    'best_mse_mae': float(best_mse_mae),
+                    'best_mse_epoch': int(best_mse_epoch),
+                    'localization_improved': bool(localization_improved),
+                    'best_loc_f1_large': float(best_loc_f1_large),
+                    'best_loc_f1_small': float(best_loc_f1_small),
+                    'best_loc_mae': float(best_loc_mae),
+                    'best_loc_mse': float(best_loc_mse),
+                    'best_loc_epoch': int(best_loc_epoch),
                     'eval_time': float(t2 - t1),
                     'eval_model': eval_model_name,
                     'eval_count_mode': getattr(args, 'eval_count_mode', 'threshold'),
@@ -3094,6 +3429,13 @@ def main(args):
                     'loc_protocol_small': test_stats.get('loc_protocol_small', ''),
                 }
                 eval_record.update(scalar_eval_metrics(test_stats, skip={'mae', 'mse', 'pred_cnt', 'gt_cnt'}))
+                latest_eval_metrics = dict(eval_record)
+                if improved:
+                    best_mae_eval_metrics = dict(eval_record)
+                if mse_improved:
+                    best_mse_eval_metrics = dict(eval_record)
+                if localization_improved:
+                    best_localization_eval_metrics = dict(eval_record)
                 with open(run_log_name, "a", encoding="utf-8") as log_file:
                     log_file.write("epoch:{}, mae:{}, mse:{}, time{}, \n\nbest mae:{}, best epoch: {}\n".format(
                                                 epoch, mae, mse, t2 - t1, best_mae, best_epoch))
@@ -3104,22 +3446,62 @@ def main(args):
                     json.dumps(eval_record, indent=2) + "\n",
                     encoding="utf-8",
                 )
+                # The epoch checkpoint is written before evaluation. Refresh it
+                # so a resume retains this evaluation and every best-metric
+                # record, even when MAE did not improve.
+                utils.save_on_master(checkpoint_payload(epoch), output_dir / 'checkpoint.pth')
 
             if improved and utils.is_main_process():
-                utils.save_on_master(checkpoint_payload(epoch), output_dir / 'checkpoint.pth')
                 (output_dir / 'best_eval_results.json').write_text(
                     json.dumps(eval_record, indent=2) + "\n",
                     encoding="utf-8",
                 )
                 best_model_state, include_raw = best_state_for_eval_model(model_without_ddp, model_ema, eval_model_name)
                 backup_existing_best_checkpoint(output_dir)
+                best_mae_payload = checkpoint_payload(
+                    epoch,
+                    model_state=best_model_state,
+                    include_raw_model=include_raw,
+                )
+                utils.save_on_master(best_mae_payload, output_dir / 'best_checkpoint.pth')
+                utils.save_on_master(best_mae_payload, output_dir / 'best_mae_checkpoint.pth')
+
+            if mse_improved and utils.is_main_process():
+                (output_dir / 'best_mse_eval_results.json').write_text(
+                    json.dumps(eval_record, indent=2) + "\n",
+                    encoding="utf-8",
+                )
+                best_mse_model_state, include_raw = best_state_for_eval_model(
+                    model_without_ddp,
+                    model_ema,
+                    eval_model_name,
+                )
                 utils.save_on_master(
                     checkpoint_payload(
                         epoch,
-                        model_state=best_model_state,
+                        model_state=best_mse_model_state,
                         include_raw_model=include_raw,
                     ),
-                    output_dir / 'best_checkpoint.pth',
+                    output_dir / 'best_mse_checkpoint.pth',
+                )
+
+            if localization_improved and utils.is_main_process():
+                (output_dir / 'best_localization_eval_results.json').write_text(
+                    json.dumps(eval_record, indent=2) + "\n",
+                    encoding="utf-8",
+                )
+                best_loc_model_state, include_raw = best_state_for_eval_model(
+                    model_without_ddp,
+                    model_ema,
+                    eval_model_name,
+                )
+                utils.save_on_master(
+                    checkpoint_payload(
+                        epoch,
+                        model_state=best_loc_model_state,
+                        include_raw_model=include_raw,
+                    ),
+                    output_dir / 'best_localization_checkpoint.pth',
                 )
 
             abort_bad_count, abort_reason = should_abort_for_bad_count(args, epoch, test_stats)
@@ -3153,6 +3535,14 @@ def main(args):
             'best_epoch': best_epoch,
             'best_test_mae': float(best_mae),
             'best_test_mse': float(best_mse),
+            'lowest_mse': float(lowest_mse),
+            'best_mse_mae': float(best_mse_mae),
+            'best_mse_epoch': int(best_mse_epoch),
+            'best_loc_f1_large': float(best_loc_f1_large),
+            'best_loc_f1_small': float(best_loc_f1_small),
+            'best_loc_mae': float(best_loc_mae),
+            'best_loc_mse': float(best_loc_mse),
+            'best_loc_epoch': int(best_loc_epoch),
             'final': True,
             'eval_model': getattr(args, 'eval_model', 'auto'),
         }
