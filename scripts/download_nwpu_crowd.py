@@ -28,6 +28,10 @@ IMAGE_FILES = (
     'images_part4.zip',
     'images_part5.zip',
 )
+OFFICIAL_VAL_GT_URL = (
+    'https://raw.githubusercontent.com/gjy3035/'
+    'NWPU-Crowd-Sample-Code-for-Localization/master/eval/val_gt_loc.txt'
+)
 
 
 def checked_get(session, url, **kwargs):
@@ -183,6 +187,17 @@ def main():
         elif name.endswith('.txt') or name == 'readme.md':
             data_root.mkdir(parents=True, exist_ok=True)
             shutil.copy2(output, data_root / name)
+
+    if not args.no_extract:
+        official_gt_path = data_root / 'val_gt_loc.txt'
+        if official_gt_path.exists():
+            print(f'{official_gt_path}: already downloaded')
+        else:
+            print('Downloading official NWPU validation localization thresholds ...')
+            response = checked_get(session, OFFICIAL_VAL_GT_URL, timeout=60)
+            official_gt_path.parent.mkdir(parents=True, exist_ok=True)
+            official_gt_path.write_bytes(response.content)
+            print(f'  saved {official_gt_path} ({official_gt_path.stat().st_size} bytes)')
 
     print('Done.')
     print(f'Dataset root: {data_root}')

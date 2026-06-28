@@ -44,6 +44,14 @@ class DeNormalize(object):
         return tensor
 
 
+def move_target_to_device(target, device):
+    """Move tensor payloads while preserving evaluation/debug metadata."""
+    return {
+        key: value.to(device) if torch.is_tensor(value) else value
+        for key, value in target.items()
+    }
+
+
 def visualization(samples, targets, pred, vis_dir, split_map=None):
     """
     Visualize predictions
@@ -115,7 +123,7 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
     optimizer.zero_grad(set_to_none=True)
     for step, (samples, targets) in enumerate(metric_logger.log_every(data_loader, print_freq, header)):
         samples = samples.to(device)
-        targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
+        targets = [move_target_to_device(target, device) for target in targets]
         gt_points = [target['points'] for target in targets]
 
         with autocast_context(device, amp_enabled, amp_dtype):

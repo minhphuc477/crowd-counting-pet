@@ -1,11 +1,9 @@
 #!/usr/bin/env python3
-"""Run the APG+LC/IFI -> scalar count-head recovery pipeline.
+"""Run unified APG+LC/IFI training followed by count-head adaptation.
 
-This is intentionally a two-stage training protocol, not a hidden single-stage
-architecture switch. The archived 48-MAE run was produced by first training the
-PET/APG+LC point model, then loading its best checkpoint and training the
-scalar density-sum count head while inference still used normal PET threshold
-counting.
+The detector architecture is identical in both stages. Stage 2 initializes the
+additional scalar count head and applies its low-gradient auxiliary objective;
+inference continues to use normal PET point thresholding.
 """
 
 from __future__ import annotations
@@ -27,7 +25,7 @@ def run(cmd: list[str]) -> None:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Train APG+LC from scratch, then run the verified count-head recovery stage."
+        description="Train unified APG+LC/IFI from scratch, then adapt it with a scalar count head."
     )
     parser.add_argument("--data_path", default="./data/ShanghaiTech/part_A")
     parser.add_argument("--dataset_file", default="SHA")
@@ -79,28 +77,20 @@ def parse_args() -> argparse.Namespace:
         args.stage1_recipe = (
             "vgg_apglc_unified_ifi_nwpu"
             if args.dataset_file == "NWPU"
-            else "vgg_apglc"
+            else "vgg_apglc_unified_ifi"
         )
     if args.stage2_recipe is None:
         args.stage2_recipe = (
             "vgg_apglc_unified_ifi_counthead_stage2_nwpu"
             if args.dataset_file == "NWPU"
-            else "vgg_apglc_density_counthead_ft_legacy"
+            else "vgg_apglc_unified_ifi_counthead_stage2"
         )
     dataset_dir = args.dataset_file
     if args.stage1_output is None:
-        run_name = (
-            f"vgg16_bn_apglc_unified_ifi_stage1_seed{args.seed}"
-            if args.dataset_file == "NWPU"
-            else f"vgg16_bn_apglc_stage1_seed{args.seed}"
-        )
+        run_name = f"vgg16_bn_apglc_unified_ifi_stage1_seed{args.seed}"
         args.stage1_output = str(Path("outputs") / dataset_dir / run_name)
     if args.stage2_output is None:
-        run_name = (
-            f"vgg16_bn_apglc_unified_ifi_counthead_stage2_seed{args.seed}"
-            if args.dataset_file == "NWPU"
-            else f"vgg16_bn_apglc_counthead_stage2_seed{args.seed}"
-        )
+        run_name = f"vgg16_bn_apglc_unified_ifi_counthead_stage2_seed{args.seed}"
         args.stage2_output = str(Path("outputs") / dataset_dir / run_name)
     return args
 

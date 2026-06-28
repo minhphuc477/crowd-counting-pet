@@ -178,7 +178,7 @@ def organize_nwpu_layout(data_root):
             copied = copy_tree_contents(source, target)
             print(f'Copied {copied} {dirname} files from {source} -> {target}')
 
-    for filename in ('train.txt', 'val.txt', 'test.txt', 'readme.md'):
+    for filename in ('train.txt', 'val.txt', 'test.txt', 'val_gt_loc.txt', 'readme.md'):
         target = data_root / filename
         if target.exists():
             continue

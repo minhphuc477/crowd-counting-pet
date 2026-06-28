@@ -53,6 +53,9 @@ class NWPU(Dataset):
         self.sigma_mode = sigma_mode
         self.dense_crop_prob = max(0.0, min(1.0, float(dense_crop_prob)))
         self.dense_crop_attempts = max(1, int(dense_crop_attempts))
+        self.official_sigma = load_official_localization_sigma(
+            self.data_root / f'{split}_gt_loc.txt'
+        )
 
         self.images_dir = find_dir(self.data_root, ('images', 'Images'))
         self.jsons_dir = find_optional_dir(self.data_root, ('jsons', 'json', 'Jsons'))
@@ -138,6 +141,10 @@ class NWPU(Dataset):
             image_size=(height, width),
             sigma_mode=self.sigma_mode,
         )
+        official_sigma = self.official_sigma.get(Path(str(image_id)).stem)
+        if official_sigma is not None and official_sigma.shape[0] == ann['points'].shape[0]:
+            ann['sigma'] = official_sigma.copy()
+            ann['sigma_source'] = 'official_localization_file'
         points = ann['points'].astype(np.float32, copy=True)
         sigma = ann.get('sigma')
 
@@ -194,7 +201,6 @@ class NWPU(Dataset):
             target['density'] = self.compute_density(points)
             if sigma is not None and len(sigma) == points.shape[0]:
                 target['sigma'] = torch.as_tensor(sigma, dtype=torch.float32)
-                target['sigma_source'] = ann.get('sigma_source', 'unknown')
         else:
             target['image_path'] = str(img_path)
             target['image_id'] = image_id
@@ -237,6 +243,39 @@ def read_split_ids(root, split):
             ids.append(Path(token[0]).stem)
         return ids
     return []
+
+
+def load_official_localization_sigma(path):
+    """Read NWPU's ``*_gt_loc.txt`` per-head small/large radii."""
+    path = Path(path)
+    if not path.is_file():
+        return {}
+    sigma_by_id = {}
+    for line_number, line in enumerate(
+        path.read_text(encoding='utf-8', errors='ignore').splitlines(),
+        start=1,
+    ):
+        fields = line.strip().split()
+        if not fields:
+            continue
+        try:
+            image_id = Path(fields[0]).stem
+            count = int(fields[1])
+            values = np.asarray([float(value) for value in fields[2:]], dtype=np.float32)
+        except (IndexError, ValueError) as exc:
+            raise ValueError(f'Invalid NWPU localization line {line_number} in {path}') from exc
+        expected = count * 5
+        if values.size != expected:
+            raise ValueError(
+                f'Invalid NWPU localization line {line_number} in {path}: '
+                f'expected {expected} values after count, found {values.size}'
+            )
+        sigma_by_id[image_id] = (
+            values.reshape(count, 5)[:, 2:4].copy()
+            if count > 0
+            else np.empty((0, 2), dtype=np.float32)
+        )
+    return sigma_by_id
 
 
 def find_image_path(images_dir, image_id):
@@ -558,8 +597,15 @@ def _sigma_from_boxes(boxes, count, mode='area'):
     width = np.maximum(wh[:, 0], 1.0)
     height = np.maximum(wh[:, 1], 1.0)
     if mode == 'official':
-        sigma_s = np.maximum(np.minimum(width, height), 1.0)
-        sigma_l = np.maximum(np.sqrt(width * width + height * height), 1.0)
+        # NWPU's localization protocol uses integer radii derived from half
+        # the annotated head-box size and half its diagonal.
+        width = np.ceil(width)
+        height = np.ceil(height)
+        sigma_s = np.maximum(np.ceil(0.5 * np.minimum(width, height)), 1.0)
+        sigma_l = np.maximum(
+            np.ceil(0.5 * np.sqrt(width * width + height * height)),
+            1.0,
+        )
     elif mode == 'area':
         # Historical repo behavior: a lenient large threshold based on box area.
         # This is the default because official NWPU eval consumes prepared sigma

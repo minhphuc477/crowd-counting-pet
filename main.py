@@ -1173,14 +1173,7 @@ MODEL_RECIPES['vgg_apglc_full_ifi_counthead_stage2_nwpu'] = {
     'ifi_neg_min_dist': 2.0,
 }
 
-# Unified IFI-PET for NWPU.
-#
-# One IFI module is shared by sparse/dense queries and randomized APG auxiliary
-# points. It consumes both 4x detail and 8x context features through a
-# zero-gated residual, routes all branch supervision by the same GT quadtree
-# teacher, and adds a low-weight box-scale-normalized localization objective.
-MODEL_RECIPES['vgg_apglc_unified_ifi_nwpu'] = {
-    **MODEL_RECIPES['vgg_apglc_nwpu_tail'],
+UNIFIED_IFI_RECIPE_OVERRIDES = {
     'query_feature_interpolation': 'implicit',
     'query_ifi_sharing': 'shared',
     'query_ifi_feature_source': 'fpn4x8x',
@@ -1204,41 +1197,47 @@ MODEL_RECIPES['vgg_apglc_unified_ifi_nwpu'] = {
     'split_loss_variant': 'paper_gt',
     'split_count_threshold': 2,
     'split_pos_weight': 1.0,
+    'eval_branch_gate': 'none',
+}
+
+# Unified IFI-PET.
+#
+# Sparse, dense, and APG auxiliary points use one shared continuous feature
+# representation and the same prediction heads. GT quadtree routing gives each
+# target one branch owner during training, while inference retains PET's native
+# window pruning rather than applying a second heuristic branch gate.
+MODEL_RECIPES['vgg_apglc_unified_ifi'] = {
+    **MODEL_RECIPES['vgg_apglc'],
+    **UNIFIED_IFI_RECIPE_OVERRIDES,
+    'scale_point_loss_coef': 0.0,
+}
+
+MODEL_RECIPES['vgg_apglc_unified_ifi_counthead_stage2'] = {
+    **MODEL_RECIPES['vgg_apglc_counthead_stage2_adapt'],
+    **UNIFIED_IFI_RECIPE_OVERRIDES,
+    'ifi_loss_coef': 0.0,
+    'scale_point_loss_coef': 0.0,
+}
+
+# NWPU specialization: retain the unified detector and add box-scale-aware
+# localization plus tail-aware crop/evaluation settings.
+MODEL_RECIPES['vgg_apglc_unified_ifi_nwpu'] = {
+    **MODEL_RECIPES['vgg_apglc_nwpu_tail'],
+    **UNIFIED_IFI_RECIPE_OVERRIDES,
     'scale_point_loss_coef': 0.05,
     'scale_point_sigma': 'small',
     'scale_point_sigma_min': 2.0,
     'scale_point_sigma_max': 128.0,
-    'eval_branch_gate': 'query',
 }
 
 MODEL_RECIPES['vgg_apglc_unified_ifi_counthead_stage2_nwpu'] = {
     **MODEL_RECIPES['vgg_apglc_counthead_stage2_nwpu'],
-    'query_feature_interpolation': 'implicit',
-    'query_ifi_sharing': 'shared',
-    'query_ifi_feature_source': 'fpn4x8x',
-    'ifi_interpolation': 'implicit',
-    'ifi_feature_source': 'branch',
-    'ifi_pos_dim': 32,
-    'ifi_mlp_hidden_dim': 256,
-    'ifi_activation': 'gelu',
+    **UNIFIED_IFI_RECIPE_OVERRIDES,
     'ifi_loss_coef': 0.0,
-    'ifi_head_source': 'routed',
-    'ifi_point_coef': 0.2,
-    'ifi_pos_k': 2,
-    'ifi_pos_radius': 2.0,
-    'ifi_random_sampling': True,
-    'ifi_neg_k': 2,
-    'ifi_neg_radius': 8.0,
-    'ifi_neg_min_dist': 2.0,
-    'branch_target_routing': 'gt_count',
-    'split_loss_variant': 'paper_gt',
-    'split_count_threshold': 2,
-    'split_pos_weight': 1.0,
     'scale_point_loss_coef': 0.05,
     'scale_point_sigma': 'small',
     'scale_point_sigma_min': 2.0,
     'scale_point_sigma_max': 128.0,
-    'eval_branch_gate': 'query',
 }
 
 EXPERIMENTAL_MODEL_RECIPES = {

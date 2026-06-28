@@ -2592,25 +2592,32 @@ class PET(nn.Module):
         max_radius = max(float(self.ifi_neg_radius), 1.0)
         min_radius = min(max(float(self.ifi_neg_min_dist), 0.0), max_radius)
         if self.ifi_random_sampling:
-            angles = torch.rand(
-                self.ifi_neg_k,
-                device=gt_points.device,
-                dtype=gt_points.dtype,
-            ) * (2.0 * math.pi)
-            radii = min_radius + torch.rand(
-                self.ifi_neg_k,
+            magnitudes = min_radius + torch.rand(
+                (gt_points.shape[0], self.ifi_neg_k, 2),
                 device=gt_points.device,
                 dtype=gt_points.dtype,
             ) * (max_radius - min_radius)
+            signs = torch.where(
+                torch.rand(
+                    (gt_points.shape[0], self.ifi_neg_k, 2),
+                    device=gt_points.device,
+                    dtype=gt_points.dtype,
+                ) < 0.5,
+                -torch.ones((), device=gt_points.device, dtype=gt_points.dtype),
+                torch.ones((), device=gt_points.device, dtype=gt_points.dtype),
+            )
+            offsets = magnitudes * signs
         else:
             angles = torch.arange(
                 self.ifi_neg_k,
                 device=gt_points.device,
                 dtype=gt_points.dtype,
             ) * (2.0 * math.pi / max(self.ifi_neg_k, 1))
-            radii = torch.full_like(angles, max_radius)
-        offset_tensor = torch.stack([angles.sin() * radii, angles.cos() * radii], dim=-1)
-        neg_points = (gt_points[:, None, :] + offset_tensor[None, :, :]).reshape(-1, 2)
+            offsets = torch.stack(
+                [angles.sin() * max_radius, angles.cos() * max_radius],
+                dim=-1,
+            )[None].expand(gt_points.shape[0], -1, -1)
+        neg_points = (gt_points[:, None, :] + offsets).reshape(-1, 2)
         neg_points[:, 0].clamp_(0, max(float(img_h) - 1.0, 0.0))
         neg_points[:, 1].clamp_(0, max(float(img_w) - 1.0, 0.0))
         if gt_points.shape[0] > 0 and self.ifi_neg_min_dist > 0:
@@ -2730,7 +2737,7 @@ class PET(nn.Module):
         if self.ifi_head_source != 'routed':
             for logits, offsets in self._ifi_head_predictions(feats):
                 cls_losses.append(self.point_classification_loss(logits, target))
-                if target.numel() > 0 and target[0].item() == 1:
+                if target.numel() > 0:
                     point_losses.append(
                         F.smooth_l1_loss(
                             offsets,
@@ -2752,7 +2759,7 @@ class PET(nn.Module):
             branch_offsets = offset_targets[mask]
             for logits, offsets in self._ifi_head_predictions(branch_feats, source):
                 cls_losses.append(self.point_classification_loss(logits, branch_target))
-                if branch_target.numel() > 0 and branch_target[0].item() == 1:
+                if branch_target.numel() > 0:
                     point_losses.append(
                         F.smooth_l1_loss(
                             offsets,
