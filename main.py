@@ -1041,6 +1041,37 @@ MODEL_RECIPES['vgg_apglc_full_ifi'] = {
     'ifi_end_epoch': 350,
 }
 
+# Controlled non-unified IFI ablation.
+#
+# This starts from the validated PET paper contract and changes only the query
+# representation plus its APGCC-style local point supervision. Sparse and
+# dense branches own separate IFI modules, and auxiliary samples use the same
+# branch module and prediction head as inference. Do not inherit vgg_apglc
+# here: combining its nearest-query APG objective with IFI supervision trains
+# two different representations of the same auxiliary points.
+MODEL_RECIPES['vgg_pet_branch_ifi'] = {
+    **MODEL_RECIPES['vgg_pet_paper'],
+    'query_feature_interpolation': 'implicit',
+    'query_ifi_sharing': 'independent',
+    'query_ifi_feature_source': 'branch',
+    'ifi_interpolation': 'implicit',
+    'ifi_feature_source': 'branch',
+    'ifi_pos_dim': 32,
+    'ifi_mlp_hidden_dim': 256,
+    'ifi_activation': 'gelu',
+    'ifi_loss_coef': 0.02,
+    'ifi_head_source': 'routed',
+    'ifi_point_coef': 0.2,
+    'ifi_pos_k': 2,
+    'ifi_pos_radius': 2.0,
+    'ifi_random_sampling': True,
+    'ifi_neg_k': 2,
+    'ifi_neg_radius': 8.0,
+    'ifi_neg_min_dist': 2.0,
+    'ifi_start_epoch': 0,
+    'ifi_end_epoch': -1,
+}
+
 MODEL_RECIPES['vgg_apglc_full_ifi_counthead_ft_legacy'] = {
     **MODEL_RECIPES['vgg_apglc_density_counthead_ft_legacy'],
     'query_feature_interpolation': 'implicit',
@@ -2536,6 +2567,36 @@ def resolve_output_dir(args):
     return Path("./outputs") / args.dataset_file / output_arg
 
 
+def validate_training_output_dir(output_dir, checkpoint):
+    """Prevent a scratch run from inheriting or replacing an earlier run."""
+    if checkpoint is not None or not output_dir.exists():
+        return
+    protected_names = (
+        'checkpoint.pth',
+        'best_checkpoint.pth',
+        'best_complete_checkpoint.pth',
+        'best_mae_checkpoint.pth',
+        'best_mse_checkpoint.pth',
+        'best_localization_checkpoint.pth',
+        'best_eval_results.json',
+        'best_mse_eval_results.json',
+        'best_localization_eval_results.json',
+        'latest_eval_results.json',
+        'eval_history.jsonl',
+    )
+    existing = {output_dir / name for name in protected_names if (output_dir / name).exists()}
+    existing.update(output_dir.glob('*.pth'))
+    existing = sorted(existing)
+    if existing:
+        preview = '\n  - '.join(str(path) for path in existing[:8])
+        raise FileExistsError(
+            'Refusing to start scratch training in an existing result directory. '
+            'This prevents old checkpoints or metrics from being reused or overwritten. '
+            'Choose a new --output_dir, or pass --resume explicitly to continue the run. '
+            f'Found:\n  - {preview}'
+        )
+
+
 def backup_existing_best_checkpoint(output_dir):
     """Keep the first existing best checkpoint before a training run overwrites it."""
     if not utils.is_main_process():
@@ -3007,10 +3068,12 @@ def main(args):
 
     # output directory and log
     output_dir = resolve_output_dir(args)
+    validate_training_output_dir(output_dir, checkpoint)
     run_log_name = output_dir / 'run_log.txt'
     if utils.is_main_process():
         os.makedirs(output_dir, exist_ok=True)
-        ensure_mae_checkpoint_alias(output_dir)
+        if checkpoint is not None:
+            ensure_mae_checkpoint_alias(output_dir)
         print(f'outputs will be saved to: {output_dir.resolve()}')
         with open(run_log_name, "a", encoding="utf-8") as log_file:
             log_file.write('Run Log %s\n' % time.strftime("%c"))

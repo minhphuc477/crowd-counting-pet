@@ -444,9 +444,11 @@ class ImplicitFeatureInterpolator(nn.Module):
         feat = feature[batch_idx]
         c, h, w = feat.shape
         points = points_abs.to(device=feature.device, dtype=feature.dtype)
-        # Align-corners=False equivalent continuous feature coordinate.
-        y = (points[:, 0] + 0.5) / max(float(img_h), 1.0) * h - 0.5
-        x = (points[:, 1] + 0.5) / max(float(img_w), 1.0) * w - 0.5
+        # Point coordinates are already image-space pixel centers. Under
+        # align_corners=False, a stride-s cell center at s/2 maps to feature
+        # index zero, so adding another half pixel here shifts every sample.
+        y = points[:, 0] / max(float(img_h), 1.0) * h - 0.5
+        x = points[:, 1] / max(float(img_w), 1.0) * w - 0.5
         y = y.clamp(0.0, max(float(h - 1), 0.0))
         x = x.clamp(0.0, max(float(w - 1), 0.0))
 
@@ -468,7 +470,7 @@ class ImplicitFeatureInterpolator(nn.Module):
         local_context = self.mlp(local_context)
 
         weights = (1.0 - rel.abs()).clamp_min(0.0)
-        weights = (weights[..., 0] * weights[..., 1]).clamp_min(1e-6)
+        weights = weights[..., 0] * weights[..., 1]
         weights = weights / weights.sum(dim=1, keepdim=True).clamp_min(1e-6)
         return (local_context * weights.unsqueeze(-1)).sum(dim=1).reshape(-1, c)
 
@@ -1240,13 +1242,16 @@ class PET(nn.Module):
 
         # point-query quadtree
         args.sparse_stride, args.dense_stride = 8, 4    # point-query stride
+        self.query_feature_interpolation = getattr(args, 'query_feature_interpolation', 'nearest')
+        if self.query_feature_interpolation not in ('nearest', 'implicit'):
+            raise ValueError('query_feature_interpolation must be one of "nearest" or "implicit"')
         self.query_ifi_sharing = getattr(args, 'query_ifi_sharing', 'independent')
         if self.query_ifi_sharing not in ('independent', 'shared'):
             raise ValueError('query_ifi_sharing must be one of "independent" or "shared"')
         self.query_ifi_feature_source = getattr(args, 'query_ifi_feature_source', 'branch')
         self.shared_query_feature_interpolator = None
         if (
-            getattr(args, 'query_feature_interpolation', 'nearest') == 'implicit'
+            self.query_feature_interpolation == 'implicit'
             and self.query_ifi_sharing == 'shared'
         ):
             self.shared_query_feature_interpolator = SharedMultiScaleIFI(
@@ -1263,19 +1268,23 @@ class PET(nn.Module):
         self.ifi_interpolation = getattr(args, 'ifi_interpolation', 'bilinear')
         if self.ifi_interpolation not in ('bilinear', 'implicit'):
             raise ValueError('ifi_interpolation must be one of "bilinear" or "implicit"')
+        self.ifi_feature_source = getattr(args, 'ifi_feature_source', 'encoded')
+        if self.ifi_feature_source not in ('encoded', 'branch'):
+            raise ValueError('ifi_feature_source must be one of "encoded" or "branch"')
+        if self.ifi_feature_source == 'branch' and self.query_feature_interpolation != 'implicit':
+            raise ValueError('ifi_feature_source=branch requires implicit query feature interpolation')
         self.ifi_interpolator = None
-        if self.ifi_interpolation == 'implicit' and self.shared_query_feature_interpolator is None:
+        if (
+            self.ifi_interpolation == 'implicit'
+            and self.ifi_feature_source == 'encoded'
+            and self.shared_query_feature_interpolator is None
+        ):
             self.ifi_interpolator = ImplicitFeatureInterpolator(
                 hidden_dim,
                 pos_dim=getattr(args, 'ifi_pos_dim', 32),
                 mlp_hidden_dim=getattr(args, 'ifi_mlp_hidden_dim', hidden_dim),
                 activation=getattr(args, 'ifi_activation', 'gelu'),
             )
-        self.ifi_feature_source = getattr(args, 'ifi_feature_source', 'encoded')
-        if self.ifi_feature_source not in ('encoded', 'branch'):
-            raise ValueError('ifi_feature_source must be one of "encoded" or "branch"')
-        if self.ifi_feature_source == 'branch' and self.shared_query_feature_interpolator is None:
-            raise ValueError('ifi_feature_source=branch requires shared implicit query IFI')
         self.ifi_head_source = getattr(args, 'ifi_head_source', 'separate')
         if self.ifi_head_source not in ('separate', 'sparse', 'dense', 'both', 'routed'):
             raise ValueError('ifi_head_source must be one of "separate", "sparse", "dense", "both", or "routed"')
@@ -2492,23 +2501,38 @@ class PET(nn.Module):
         img_w,
         feature_maps=None,
         primary='8x',
+        interpolator=None,
     ):
         if points_abs.numel() == 0:
             return encode_src.new_zeros((0, encode_src.shape[1]))
-        if feature_maps is not None and self.shared_query_feature_interpolator is not None:
-            return self.shared_query_feature_interpolator.sample_points(
-                feature_maps,
-                batch_idx,
-                points_abs,
-                img_h,
-                img_w,
-                primary=primary,
-            )
+        if feature_maps is not None:
+            if interpolator is None:
+                interpolator = self.shared_query_feature_interpolator
+            if isinstance(interpolator, SharedMultiScaleIFI):
+                return interpolator.sample_points(
+                    feature_maps,
+                    batch_idx,
+                    points_abs,
+                    img_h,
+                    img_w,
+                    primary=primary,
+                )
+            if isinstance(interpolator, ImplicitFeatureInterpolator):
+                if primary not in feature_maps:
+                    raise ValueError(f'branch IFI feature map {primary!r} is missing')
+                return interpolator.sample_points(
+                    feature_maps[primary],
+                    batch_idx,
+                    points_abs,
+                    img_h,
+                    img_w,
+                )
+            raise ValueError('branch IFI supervision requires a query feature interpolator')
         if self.ifi_interpolator is not None:
             return self.ifi_interpolator.sample_points(encode_src, batch_idx, points_abs, img_h, img_w)
         grid = points_abs.to(device=encode_src.device, dtype=encode_src.dtype).clone()
-        grid_x = (grid[:, 1] + 0.5) / max(float(img_w), 1.0) * 2.0 - 1.0
-        grid_y = (grid[:, 0] + 0.5) / max(float(img_h), 1.0) * 2.0 - 1.0
+        grid_x = grid[:, 1] / max(float(img_w), 1.0) * 2.0 - 1.0
+        grid_y = grid[:, 0] / max(float(img_h), 1.0) * 2.0 - 1.0
         sample_grid = torch.stack([grid_x, grid_y], dim=-1).view(1, -1, 1, 2)
         feats = F.grid_sample(
             encode_src[batch_idx:batch_idx + 1],
@@ -2546,6 +2570,12 @@ class PET(nn.Module):
         for primary, mask in (('8x', ~dense_mask), ('4x', dense_mask)):
             if not mask.any():
                 continue
+            if self.shared_query_feature_interpolator is not None:
+                interpolator = self.shared_query_feature_interpolator
+            elif primary == '8x':
+                interpolator = self.quadtree_sparse.query_feature_interpolator
+            else:
+                interpolator = self.quadtree_dense.query_feature_interpolator
             sampled[mask] = self._sample_ifi_features(
                 encode_src,
                 batch_idx,
@@ -2554,6 +2584,7 @@ class PET(nn.Module):
                 img_w,
                 feature_maps=feature_maps,
                 primary=primary,
+                interpolator=interpolator,
             )
         return sampled
 
@@ -3895,9 +3926,11 @@ class PET(nn.Module):
         dense_active = 'train' in kwargs or bool(split_mask_dense.any().item())
         if 'train' not in kwargs and not sparse_active and not dense_active:
             sparse_active = True
-        shared_query_feature_maps = None
-        if self.shared_query_feature_interpolator is not None:
-            shared_query_feature_maps = {
+        query_feature_maps = None
+        if self.shared_query_feature_interpolator is not None or (
+            'train' in kwargs and self.ifi_feature_source == 'branch'
+        ):
+            query_feature_maps = {
                 '4x': features['4x'].tensors,
                 '8x': features['8x'].tensors,
             }
@@ -3913,9 +3946,9 @@ class PET(nn.Module):
             sparse_kwargs['div_threshold'] = 1.0 - self.query_prune_threshold
             sparse_kwargs['div_compare'] = 'gt'
             sparse_kwargs['dec_win_size'] = list(self.sparse_dec_win_size)
-            if shared_query_feature_maps is not None:
+            if self.shared_query_feature_interpolator is not None:
                 sparse_kwargs['query_feature_interpolator'] = self.shared_query_feature_interpolator
-                sparse_kwargs['query_feature_maps'] = shared_query_feature_maps
+                sparse_kwargs['query_feature_maps'] = query_feature_maps
             outputs_sparse = self.quadtree_sparse(samples, features, context_info, **sparse_kwargs)
         else:
             outputs_sparse = None
@@ -3927,9 +3960,9 @@ class PET(nn.Module):
             dense_kwargs['div_threshold'] = self.query_prune_threshold
             dense_kwargs['div_compare'] = 'gt'
             dense_kwargs['dec_win_size'] = list(self.dense_dec_win_size)
-            if shared_query_feature_maps is not None:
+            if self.shared_query_feature_interpolator is not None:
                 dense_kwargs['query_feature_interpolator'] = self.shared_query_feature_interpolator
-                dense_kwargs['query_feature_maps'] = shared_query_feature_maps
+                dense_kwargs['query_feature_maps'] = query_feature_maps
             outputs_dense = self.quadtree_dense(samples, features, context_info, **dense_kwargs)
         else:
             outputs_dense = None
@@ -3980,7 +4013,7 @@ class PET(nn.Module):
         if 'train' in kwargs:
             outputs['encode_src'] = encode_src
             if self.ifi_feature_source == 'branch':
-                outputs['ifi_features'] = shared_query_feature_maps
+                outputs['ifi_features'] = query_feature_maps
         return outputs
     
     def train_forward(self, samples, features, pos, **kwargs):
