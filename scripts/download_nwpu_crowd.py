@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+import base64
 import json
 import re
 import shutil
@@ -28,9 +29,11 @@ IMAGE_FILES = (
     'images_part4.zip',
     'images_part5.zip',
 )
-OFFICIAL_VAL_GT_URL = (
-    'https://raw.githubusercontent.com/gjy3035/'
-    'NWPU-Crowd-Sample-Code-for-Localization/master/eval/val_gt_loc.txt'
+OFFICIAL_VAL_GT_SIZE = 3238132
+OFFICIAL_VAL_GT_BLOB_URL = (
+    'https://api.github.com/repos/gjy3035/'
+    'NWPU-Crowd-Sample-Code-for-Localization/git/blobs/'
+    '7def184557a4cd708431239ccb518b94c55d355d'
 )
 
 
@@ -137,6 +140,35 @@ def unzip_to(zip_path, target_dir):
         zf.extractall(target_dir)
 
 
+def download_official_val_gt(session, data_root):
+    output_path = data_root / 'val_gt_loc.txt'
+    if output_path.exists() and output_path.stat().st_size == OFFICIAL_VAL_GT_SIZE:
+        print(f'{output_path}: already downloaded')
+        return output_path
+
+    print('Downloading official NWPU validation localization thresholds ...')
+    response = checked_get(
+        session,
+        OFFICIAL_VAL_GT_BLOB_URL,
+        headers={'Accept': 'application/vnd.github+json'},
+        timeout=60,
+    )
+    payload = response.json()
+    if payload.get('encoding') != 'base64' or not payload.get('content'):
+        raise RuntimeError('GitHub returned an invalid val_gt_loc.txt blob response')
+    content = base64.b64decode(payload['content'])
+    if len(content) != OFFICIAL_VAL_GT_SIZE:
+        raise RuntimeError(
+            f'Invalid val_gt_loc.txt size: expected {OFFICIAL_VAL_GT_SIZE}, '
+            f'got {len(content)}'
+        )
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_bytes(content)
+    print(f'  saved {output_path} ({len(content)} bytes)')
+    return output_path
+
+
 def main():
     parser = argparse.ArgumentParser(description='Download NWPU-Crowd files from the official public SharePoint mirror.')
     parser.add_argument('--data_root', default='data/NWPU-Crowd')
@@ -144,10 +176,22 @@ def main():
     parser.add_argument('--include_images', action='store_true',
                         help='also download images_part*.zip; these files are very large')
     parser.add_argument('--no_extract', action='store_true')
+    parser.add_argument(
+        '--official_localization_only',
+        action='store_true',
+        help='download only the official validation localization threshold file',
+    )
     args = parser.parse_args()
 
     session = requests.Session()
     session.headers.update({'User-Agent': 'Mozilla/5.0'})
+    data_root = Path(args.data_root)
+    if args.official_localization_only:
+        download_official_val_gt(session, data_root)
+        print('Done.')
+        print(f'Dataset root: {data_root}')
+        return
+
     html = open_text(session, SHARE_URL)
     ctx = parse_page_context(html)
     files = list_files(session, ctx)
@@ -157,7 +201,6 @@ def main():
         wanted.extend(IMAGE_FILES)
 
     download_dir = Path(args.download_dir)
-    data_root = Path(args.data_root)
     for name in wanted:
         if name not in files:
             print(f'WARNING: {name} not found in public mirror', file=sys.stderr)
@@ -189,15 +232,7 @@ def main():
             shutil.copy2(output, data_root / name)
 
     if not args.no_extract:
-        official_gt_path = data_root / 'val_gt_loc.txt'
-        if official_gt_path.exists():
-            print(f'{official_gt_path}: already downloaded')
-        else:
-            print('Downloading official NWPU validation localization thresholds ...')
-            response = checked_get(session, OFFICIAL_VAL_GT_URL, timeout=60)
-            official_gt_path.parent.mkdir(parents=True, exist_ok=True)
-            official_gt_path.write_bytes(response.content)
-            print(f'  saved {official_gt_path} ({official_gt_path.stat().st_size} bytes)')
+        download_official_val_gt(session, data_root)
 
     print('Done.')
     print(f'Dataset root: {data_root}')
