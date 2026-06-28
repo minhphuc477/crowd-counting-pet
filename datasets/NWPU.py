@@ -154,22 +154,32 @@ class NWPU(Dataset):
         patch_size = random.choice(self.patch_size_choices) if self.train else int(self.patch_size)
 
         if self.train:
-            img, points = safe_random_scale(img, points, patch_size)
-            if points.shape[0] > 0 and random.random() < self.dense_crop_prob:
-                img, points = max_count_random_crop(
+            sigma_valid = sigma is not None and len(sigma) == points.shape[0]
+            if sigma_valid:
+                point_records = np.concatenate(
+                    [points, np.asarray(sigma, dtype=np.float32)],
+                    axis=1,
+                )
+            else:
+                point_records = points
+            img, point_records = safe_random_scale(img, point_records, patch_size)
+            if point_records.shape[0] > 0 and random.random() < self.dense_crop_prob:
+                img, point_records = max_count_random_crop(
                     img,
-                    points,
+                    point_records,
                     patch_size=patch_size,
                     attempts=self.dense_crop_attempts,
                 )
             else:
-                img, points = random_crop_with_retries(
+                img, point_records = random_crop_with_retries(
                     img,
-                    points,
+                    point_records,
                     patch_size=patch_size,
                     attempts=self.crop_attempts,
                     min_points=self.min_crop_points,
                 )
+            points = point_records[:, :2]
+            sigma = point_records[:, 2:] if sigma_valid else None
 
         if random.random() > 0.5 and self.train and self.flip:
             img = torch.flip(img, dims=[2])
@@ -182,6 +192,9 @@ class NWPU(Dataset):
         }
         if self.train:
             target['density'] = self.compute_density(points)
+            if sigma is not None and len(sigma) == points.shape[0]:
+                target['sigma'] = torch.as_tensor(sigma, dtype=torch.float32)
+                target['sigma_source'] = ann.get('sigma_source', 'unknown')
         else:
             target['image_path'] = str(img_path)
             target['image_id'] = image_id

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the verified APG+LC -> scalar count-head recovery pipeline.
+"""Run the APG+LC/IFI -> scalar count-head recovery pipeline.
 
 This is intentionally a two-stage training protocol, not a hidden single-stage
 architecture switch. The archived 48-MAE run was produced by first training the
@@ -34,12 +34,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--num_workers", default=2, type=int)
     parser.add_argument("--cuda_visible_devices", default=None)
-    parser.add_argument("--stage1_output", default="outputs/SHA/vgg16_bn_apglc_stage1_seed42")
+    parser.add_argument("--stage1_output", default=None)
     parser.add_argument("--stage1_checkpoint", default=None,
-                        help="explicit APG+LC checkpoint for stage 2; overrides stage1_output/best_checkpoint.pth")
-    parser.add_argument("--stage2_output", default="outputs/SHA/vgg16_bn_apglc_counthead_stage2_seed42")
-    parser.add_argument("--stage1_recipe", default="vgg_apglc")
-    parser.add_argument("--stage2_recipe", default="vgg_apglc_density_counthead_ft_legacy")
+                        help="explicit stage-1 checkpoint for stage 2; overrides the complete MAE-best checkpoint")
+    parser.add_argument("--stage2_output", default=None)
+    parser.add_argument("--stage1_recipe", default=None)
+    parser.add_argument("--stage2_recipe", default=None)
     parser.add_argument("--seed", default=42, type=int)
     parser.add_argument("--stage1_epochs", default=1500, type=int)
     parser.add_argument("--stage2_epochs", default=80, type=int)
@@ -75,6 +75,33 @@ def parse_args() -> argparse.Namespace:
         for token in sys.argv[1:]
         if token.startswith("--")
     }
+    if args.stage1_recipe is None:
+        args.stage1_recipe = (
+            "vgg_apglc_unified_ifi_nwpu"
+            if args.dataset_file == "NWPU"
+            else "vgg_apglc"
+        )
+    if args.stage2_recipe is None:
+        args.stage2_recipe = (
+            "vgg_apglc_unified_ifi_counthead_stage2_nwpu"
+            if args.dataset_file == "NWPU"
+            else "vgg_apglc_density_counthead_ft_legacy"
+        )
+    dataset_dir = args.dataset_file
+    if args.stage1_output is None:
+        run_name = (
+            f"vgg16_bn_apglc_unified_ifi_stage1_seed{args.seed}"
+            if args.dataset_file == "NWPU"
+            else f"vgg16_bn_apglc_stage1_seed{args.seed}"
+        )
+        args.stage1_output = str(Path("outputs") / dataset_dir / run_name)
+    if args.stage2_output is None:
+        run_name = (
+            f"vgg16_bn_apglc_unified_ifi_counthead_stage2_seed{args.seed}"
+            if args.dataset_file == "NWPU"
+            else f"vgg16_bn_apglc_counthead_stage2_seed{args.seed}"
+        )
+        args.stage2_output = str(Path("outputs") / dataset_dir / run_name)
     return args
 
 
@@ -124,7 +151,11 @@ def main() -> int:
                 common.extend([flag, value])
 
     stage1_output = Path(args.stage1_output)
-    stage1_best = Path(args.stage1_checkpoint) if args.stage1_checkpoint else stage1_output / "best_checkpoint.pth"
+    if args.stage1_checkpoint:
+        stage1_best = Path(args.stage1_checkpoint)
+    else:
+        complete_best = stage1_output / "best_complete_checkpoint.pth"
+        stage1_best = complete_best if complete_best.is_file() else stage1_output / "best_checkpoint.pth"
     if not args.skip_stage1:
         if args.stage1_checkpoint:
             raise ValueError("--stage1_checkpoint is only valid with --skip_stage1")
@@ -139,6 +170,10 @@ def main() -> int:
             *shlex.split(args.stage1_extra_args),
         ])
 
+    if not args.stage1_checkpoint:
+        complete_best = stage1_output / "best_complete_checkpoint.pth"
+        if complete_best.is_file():
+            stage1_best = complete_best
     if not stage1_best.is_file():
         raise FileNotFoundError(f"stage-1 best checkpoint not found: {stage1_best}")
 

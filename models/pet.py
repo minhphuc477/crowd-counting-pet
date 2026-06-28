@@ -119,8 +119,11 @@ class BasePETCount(nn.Module):
         self.query_feature_interpolation = getattr(args, 'query_feature_interpolation', 'nearest')
         if self.query_feature_interpolation not in ('nearest', 'implicit'):
             raise ValueError('query_feature_interpolation must be one of "nearest" or "implicit"')
+        self.query_ifi_sharing = getattr(args, 'query_ifi_sharing', 'independent')
+        if self.query_ifi_sharing not in ('independent', 'shared'):
+            raise ValueError('query_ifi_sharing must be one of "independent" or "shared"')
         self.query_feature_interpolator = None
-        if self.query_feature_interpolation == 'implicit':
+        if self.query_feature_interpolation == 'implicit' and self.query_ifi_sharing == 'independent':
             self.query_feature_interpolator = ImplicitFeatureInterpolator(
                 hidden_dim,
                 pos_dim=getattr(args, 'ifi_pos_dim', 32),
@@ -128,14 +131,39 @@ class BasePETCount(nn.Module):
                 activation=getattr(args, 'ifi_activation', 'gelu'),
             )
 
-    def sample_query_features(self, src, points_queries, image_shape):
-        if self.query_feature_interpolator is None:
+    def sample_query_features(
+        self,
+        src,
+        points_queries,
+        image_shape,
+        query_feature_interpolator=None,
+        query_feature_maps=None,
+    ):
+        interpolator = query_feature_interpolator or self.query_feature_interpolator
+        if interpolator is None:
             shift_y_down = points_queries[:, 0] // self.pq_stride
             shift_x_down = points_queries[:, 1] // self.pq_stride
             return src[:, :, shift_y_down, shift_x_down]
-        return self.query_feature_interpolator.sample_batch(src, points_queries, image_shape).permute(0, 2, 1).contiguous()
+        if isinstance(interpolator, SharedMultiScaleIFI):
+            sampled = interpolator.sample_batch(
+                query_feature_maps,
+                points_queries,
+                image_shape,
+                primary=self.feat_name,
+            )
+        else:
+            sampled = interpolator.sample_batch(src, points_queries, image_shape)
+        return sampled.permute(0, 2, 1).contiguous()
     
-    def points_queris_embed(self, samples, stride=8, src=None, **kwargs):
+    def points_queris_embed(
+        self,
+        samples,
+        stride=8,
+        src=None,
+        query_feature_interpolator=None,
+        query_feature_maps=None,
+        **kwargs,
+    ):
         """
         Generate point query embedding during training
         """
@@ -161,12 +189,26 @@ class BasePETCount(nn.Module):
         query_embed = query_embed.view(bs, c, h, w)
 
         # get point query features
-        query_feats = self.sample_query_features(src, points_queries, image_shape)
+        query_feats = self.sample_query_features(
+            src,
+            points_queries,
+            image_shape,
+            query_feature_interpolator=query_feature_interpolator,
+            query_feature_maps=query_feature_maps,
+        )
         query_feats = query_feats.view(bs, c, h, w)
 
         return query_embed, points_queries, query_feats
     
-    def points_queris_embed_inference(self, samples, stride=8, src=None, **kwargs):
+    def points_queris_embed_inference(
+        self,
+        samples,
+        stride=8,
+        src=None,
+        query_feature_interpolator=None,
+        query_feature_maps=None,
+        **kwargs,
+    ):
         """
         Generate point query embedding during inference
         """
@@ -192,7 +234,13 @@ class BasePETCount(nn.Module):
         bs, c = query_embed.shape[:2]
 
         # get point query features
-        query_feats = self.sample_query_features(src, points_queries, image_shape)
+        query_feats = self.sample_query_features(
+            src,
+            points_queries,
+            image_shape,
+            query_feature_interpolator=query_feature_interpolator,
+            query_feature_maps=query_feature_maps,
+        )
         
         # window-rize
         query_embed = query_embed.reshape(bs, c, h, w)
@@ -223,7 +271,14 @@ class BasePETCount(nn.Module):
 
         return query_embed_win, points_queries_win, query_feats_win, v_idx
     
-    def get_point_query(self, samples, features, **kwargs):
+    def get_point_query(
+        self,
+        samples,
+        features,
+        query_feature_interpolator=None,
+        query_feature_maps=None,
+        **kwargs,
+    ):
         """
         Generate point query
         """
@@ -231,11 +286,25 @@ class BasePETCount(nn.Module):
 
         # generate points queries and position embedding
         if 'train' in kwargs:
-            query_embed, points_queries, query_feats = self.points_queris_embed(samples, self.pq_stride, src, **kwargs)
+            query_embed, points_queries, query_feats = self.points_queris_embed(
+                samples,
+                self.pq_stride,
+                src,
+                query_feature_interpolator=query_feature_interpolator,
+                query_feature_maps=query_feature_maps,
+                **kwargs,
+            )
             query_embed = query_embed.flatten(2).permute(2,0,1) # NxCxHxW --> (HW)xNxC
             v_idx = None
         else:
-            query_embed, points_queries, query_feats, v_idx = self.points_queris_embed_inference(samples, self.pq_stride, src, **kwargs)
+            query_embed, points_queries, query_feats, v_idx = self.points_queris_embed_inference(
+                samples,
+                self.pq_stride,
+                src,
+                query_feature_interpolator=query_feature_interpolator,
+                query_feature_maps=query_feature_maps,
+                **kwargs,
+            )
 
         out = (query_embed, points_queries, query_feats, v_idx)
         return out
@@ -269,11 +338,25 @@ class BasePETCount(nn.Module):
         out['pq_stride'] = self.pq_stride
         return out
 
-    def forward(self, samples, features, context_info, **kwargs):
+    def forward(
+        self,
+        samples,
+        features,
+        context_info,
+        query_feature_interpolator=None,
+        query_feature_maps=None,
+        **kwargs,
+    ):
         encode_src, src_pos_embed, mask = context_info
 
         # get points queries for transformer
-        pqs = self.get_point_query(samples, features, **kwargs)
+        pqs = self.get_point_query(
+            samples,
+            features,
+            query_feature_interpolator=query_feature_interpolator,
+            query_feature_maps=query_feature_maps,
+            **kwargs,
+        )
         if 'train' not in kwargs and pqs[1].numel() == 0:
             img_shape = samples.tensors.shape[-2:]
             device = encode_src.device
@@ -388,6 +471,75 @@ class ImplicitFeatureInterpolator(nn.Module):
         weights = (weights[..., 0] * weights[..., 1]).clamp_min(1e-6)
         weights = weights / weights.sum(dim=1, keepdim=True).clamp_min(1e-6)
         return (local_context * weights.unsqueeze(-1)).sum(dim=1).reshape(-1, c)
+
+
+class SharedMultiScaleIFI(nn.Module):
+    """One IFI shared by sparse, dense, and auxiliary point supervision.
+
+    APGCC applies the same implicit representation across feature levels. PET
+    additionally needs to retain branch identity, so multi-scale fusion is an
+    identity-initialized residual around the branch's native 4x or 8x feature.
+    """
+
+    def __init__(
+        self,
+        hidden_dim,
+        pos_dim=32,
+        mlp_hidden_dim=None,
+        activation='gelu',
+        feature_source='fpn4x8x',
+    ):
+        super().__init__()
+        if feature_source not in ('branch', 'fpn4x8x'):
+            raise ValueError('query_ifi_feature_source must be one of "branch" or "fpn4x8x"')
+        self.feature_source = feature_source
+        self.interpolator = ImplicitFeatureInterpolator(
+            hidden_dim,
+            pos_dim=pos_dim,
+            mlp_hidden_dim=mlp_hidden_dim,
+            activation=activation,
+        )
+        if activation == 'gelu':
+            act = nn.GELU()
+        elif activation == 'relu':
+            act = nn.ReLU(inplace=True)
+        else:
+            raise ValueError(f'Unsupported IFI activation: {activation}. Use "gelu" or "relu".')
+        self.fusion = nn.Sequential(
+            nn.Linear(hidden_dim * 2, hidden_dim),
+            act,
+            nn.Linear(hidden_dim, hidden_dim),
+        )
+        self.fusion_scale = nn.Parameter(torch.zeros(1))
+
+    def sample_batch(self, feature_maps, points_abs, image_shape, primary):
+        if feature_maps is None or primary not in feature_maps:
+            raise ValueError('shared IFI requires projected 4x/8x feature maps')
+        primary_features = self.interpolator.sample_batch(
+            feature_maps[primary],
+            points_abs,
+            image_shape,
+        )
+        if self.feature_source == 'branch':
+            return primary_features
+        secondary = '4x' if primary == '8x' else '8x'
+        secondary_features = self.interpolator.sample_batch(
+            feature_maps[secondary],
+            points_abs,
+            image_shape,
+        )
+        delta = self.fusion(torch.cat([primary_features, secondary_features], dim=-1))
+        return primary_features + torch.tanh(self.fusion_scale) * delta
+
+    def sample_points(self, feature_maps, batch_idx, points_abs, img_h, img_w, primary):
+        image_shape = (img_h, img_w)
+        sampled = self.sample_batch(
+            {name: value[batch_idx:batch_idx + 1] for name, value in feature_maps.items()},
+            points_abs,
+            image_shape,
+            primary=primary,
+        )
+        return sampled[0]
 
 
 class QuadContextMixer(nn.Module):
@@ -1088,6 +1240,22 @@ class PET(nn.Module):
 
         # point-query quadtree
         args.sparse_stride, args.dense_stride = 8, 4    # point-query stride
+        self.query_ifi_sharing = getattr(args, 'query_ifi_sharing', 'independent')
+        if self.query_ifi_sharing not in ('independent', 'shared'):
+            raise ValueError('query_ifi_sharing must be one of "independent" or "shared"')
+        self.query_ifi_feature_source = getattr(args, 'query_ifi_feature_source', 'branch')
+        self.shared_query_feature_interpolator = None
+        if (
+            getattr(args, 'query_feature_interpolation', 'nearest') == 'implicit'
+            and self.query_ifi_sharing == 'shared'
+        ):
+            self.shared_query_feature_interpolator = SharedMultiScaleIFI(
+                hidden_dim,
+                pos_dim=getattr(args, 'ifi_pos_dim', 32),
+                mlp_hidden_dim=getattr(args, 'ifi_mlp_hidden_dim', hidden_dim),
+                activation=getattr(args, 'ifi_activation', 'gelu'),
+                feature_source=self.query_ifi_feature_source,
+            )
         transformer = build_decoder(args)
         self.quadtree_sparse = BasePETCount(backbone, num_classes, quadtree_layer='sparse', args=args, transformer=transformer)
         self.quadtree_dense = BasePETCount(backbone, num_classes, quadtree_layer='dense', args=args, transformer=transformer)
@@ -1096,13 +1264,18 @@ class PET(nn.Module):
         if self.ifi_interpolation not in ('bilinear', 'implicit'):
             raise ValueError('ifi_interpolation must be one of "bilinear" or "implicit"')
         self.ifi_interpolator = None
-        if self.ifi_interpolation == 'implicit':
+        if self.ifi_interpolation == 'implicit' and self.shared_query_feature_interpolator is None:
             self.ifi_interpolator = ImplicitFeatureInterpolator(
                 hidden_dim,
                 pos_dim=getattr(args, 'ifi_pos_dim', 32),
                 mlp_hidden_dim=getattr(args, 'ifi_mlp_hidden_dim', hidden_dim),
                 activation=getattr(args, 'ifi_activation', 'gelu'),
             )
+        self.ifi_feature_source = getattr(args, 'ifi_feature_source', 'encoded')
+        if self.ifi_feature_source not in ('encoded', 'branch'):
+            raise ValueError('ifi_feature_source must be one of "encoded" or "branch"')
+        if self.ifi_feature_source == 'branch' and self.shared_query_feature_interpolator is None:
+            raise ValueError('ifi_feature_source=branch requires shared implicit query IFI')
         self.ifi_head_source = getattr(args, 'ifi_head_source', 'separate')
         if self.ifi_head_source not in ('separate', 'sparse', 'dense', 'both', 'routed'):
             raise ValueError('ifi_head_source must be one of "separate", "sparse", "dense", "both", or "routed"')
@@ -1324,6 +1497,9 @@ class PET(nn.Module):
         self.apg_soft_sigma = float(getattr(args, 'apg_soft_sigma', 6.0))
         self.apg_soft_point_coef = float(getattr(args, 'apg_soft_point_coef', 2.0))
         self.ifi_point_coef = float(getattr(args, 'ifi_point_coef', 1.0))
+        self.ifi_pos_k = max(1, int(getattr(args, 'ifi_pos_k', 1)))
+        self.ifi_pos_radius = max(0.0, float(getattr(args, 'ifi_pos_radius', 0.0)))
+        self.ifi_random_sampling = bool(getattr(args, 'ifi_random_sampling', False))
         self.ifi_neg_k = max(0, int(getattr(args, 'ifi_neg_k', 4)))
         self.ifi_neg_radius = float(getattr(args, 'ifi_neg_radius', 12.0))
         self.ifi_neg_min_dist = float(getattr(args, 'ifi_neg_min_dist', 4.0))
@@ -1546,6 +1722,9 @@ class PET(nn.Module):
                 dense_target['labels'] = torch.ones(
                     dense_target['points'].shape[0], dtype=torch.long, device=point_device
                 )
+            if 'sigma' in target and target['sigma'].shape[0] == target['points'].shape[0]:
+                sparse_target['sigma'] = target['sigma'][sparse_mask]
+                dense_target['sigma'] = target['sigma'][dense_mask]
             sparse_targets.append(sparse_target)
             dense_targets.append(dense_target)
 
@@ -1952,11 +2131,19 @@ class PET(nn.Module):
             apg_active = apg_sparse_active or apg_dense_active
             apg_count_scale = self.compute_apg_count_scale(outputs, targets, epoch) if apg_active else output_sparse['pred_logits'].new_tensor(1.0)
             if apg_sparse_active:
-                loss_apg_sparse = self.compute_apg_loss(output_sparse, targets, positive_scale=apg_count_scale)
+                loss_apg_sparse = self.compute_apg_loss(
+                    output_sparse,
+                    targets_sparse,
+                    positive_scale=apg_count_scale,
+                )
             else:
                 loss_apg_sparse = output_sparse['pred_logits'].sum() * 0.0
             if apg_dense_active:
-                loss_apg_dense = self.compute_apg_loss(output_dense, targets, positive_scale=apg_count_scale)
+                loss_apg_dense = self.compute_apg_loss(
+                    output_dense,
+                    targets_dense,
+                    positive_scale=apg_count_scale,
+                )
             else:
                 loss_apg_dense = output_dense['pred_logits'].sum() * 0.0
             loss_dict['loss_apg_sp'] = loss_apg_sparse
@@ -1972,8 +2159,8 @@ class PET(nn.Module):
                 self.apg_end_epoch < 0 or epoch <= self.apg_end_epoch
             )
             if apg_active:
-                loss_apg_soft_sparse = self.compute_soft_apg_loss(output_sparse, targets)
-                loss_apg_soft_dense = self.compute_soft_apg_loss(output_dense, targets)
+                loss_apg_soft_sparse = self.compute_soft_apg_loss(output_sparse, targets_sparse)
+                loss_apg_soft_dense = self.compute_soft_apg_loss(output_dense, targets_dense)
             else:
                 loss_apg_soft_sparse = output_sparse['pred_logits'].sum() * 0.0
                 loss_apg_soft_dense = output_dense['pred_logits'].sum() * 0.0
@@ -2296,9 +2483,27 @@ class PET(nn.Module):
             loss = loss + self.apg_soft_point_coef * torch.stack(point_losses).mean()
         return loss
 
-    def _sample_ifi_features(self, encode_src, batch_idx, points_abs, img_h, img_w):
+    def _sample_ifi_features(
+        self,
+        encode_src,
+        batch_idx,
+        points_abs,
+        img_h,
+        img_w,
+        feature_maps=None,
+        primary='8x',
+    ):
         if points_abs.numel() == 0:
             return encode_src.new_zeros((0, encode_src.shape[1]))
+        if feature_maps is not None and self.shared_query_feature_interpolator is not None:
+            return self.shared_query_feature_interpolator.sample_points(
+                feature_maps,
+                batch_idx,
+                points_abs,
+                img_h,
+                img_w,
+                primary=primary,
+            )
         if self.ifi_interpolator is not None:
             return self.ifi_interpolator.sample_points(encode_src, batch_idx, points_abs, img_h, img_w)
         grid = points_abs.to(device=encode_src.device, dtype=encode_src.dtype).clone()
@@ -2314,15 +2519,97 @@ class PET(nn.Module):
         )
         return feats.squeeze(0).squeeze(-1).transpose(0, 1)
 
+    def _sample_routed_ifi_features(
+        self,
+        outputs,
+        batch_idx,
+        points_abs,
+        dense_mask,
+        img_h,
+        img_w,
+    ):
+        encode_src = outputs['encode_src']
+        if self.ifi_feature_source != 'branch':
+            return self._sample_ifi_features(
+                encode_src,
+                batch_idx,
+                points_abs,
+                img_h,
+                img_w,
+            )
+
+        feature_maps = outputs.get('ifi_features')
+        if feature_maps is None:
+            raise ValueError('branch IFI supervision requires projected ifi_features')
+        sampled = encode_src.new_zeros((points_abs.shape[0], encode_src.shape[1]))
+        dense_mask = dense_mask.to(device=points_abs.device, dtype=torch.bool)
+        for primary, mask in (('8x', ~dense_mask), ('4x', dense_mask)):
+            if not mask.any():
+                continue
+            sampled[mask] = self._sample_ifi_features(
+                encode_src,
+                batch_idx,
+                points_abs[mask],
+                img_h,
+                img_w,
+                feature_maps=feature_maps,
+                primary=primary,
+            )
+        return sampled
+
+    def _build_ifi_positives(self, gt_points, img_h, img_w):
+        if gt_points.numel() == 0:
+            return gt_points.new_zeros((0, 2)), gt_points.new_zeros((0, 2))
+        target_points = gt_points[:, None, :].expand(-1, self.ifi_pos_k, -1).reshape(-1, 2)
+        if self.ifi_pos_radius <= 0:
+            return target_points.clone(), target_points
+        if self.ifi_random_sampling:
+            offsets = (
+                torch.rand(
+                    (gt_points.shape[0], self.ifi_pos_k, 2),
+                    device=gt_points.device,
+                    dtype=gt_points.dtype,
+                )
+                * 2.0
+                - 1.0
+            ) * self.ifi_pos_radius
+        else:
+            angles = torch.arange(
+                self.ifi_pos_k,
+                device=gt_points.device,
+                dtype=gt_points.dtype,
+            ) * (2.0 * math.pi / max(self.ifi_pos_k, 1))
+            offsets = torch.stack([angles.sin(), angles.cos()], dim=-1)
+            offsets = offsets[None].expand(gt_points.shape[0], -1, -1) * self.ifi_pos_radius
+        positive_points = target_points + offsets.reshape(-1, 2)
+        positive_points[:, 0].clamp_(0, max(float(img_h) - 1.0, 0.0))
+        positive_points[:, 1].clamp_(0, max(float(img_w) - 1.0, 0.0))
+        return positive_points, target_points
+
     def _build_ifi_negatives(self, gt_points, img_h, img_w):
         if self.ifi_neg_k <= 0 or gt_points.numel() == 0:
             return gt_points.new_zeros((0, 2))
-        offsets = []
-        radius = max(float(self.ifi_neg_radius), 1.0)
-        for neg_idx in range(self.ifi_neg_k):
-            angle = 2.0 * math.pi * neg_idx / max(self.ifi_neg_k, 1)
-            offsets.append(gt_points.new_tensor([math.sin(angle) * radius, math.cos(angle) * radius]))
-        offset_tensor = torch.stack(offsets, dim=0)
+        max_radius = max(float(self.ifi_neg_radius), 1.0)
+        min_radius = min(max(float(self.ifi_neg_min_dist), 0.0), max_radius)
+        if self.ifi_random_sampling:
+            angles = torch.rand(
+                self.ifi_neg_k,
+                device=gt_points.device,
+                dtype=gt_points.dtype,
+            ) * (2.0 * math.pi)
+            radii = min_radius + torch.rand(
+                self.ifi_neg_k,
+                device=gt_points.device,
+                dtype=gt_points.dtype,
+            ) * (max_radius - min_radius)
+        else:
+            angles = torch.arange(
+                self.ifi_neg_k,
+                device=gt_points.device,
+                dtype=gt_points.dtype,
+            ) * (2.0 * math.pi / max(self.ifi_neg_k, 1))
+            radii = torch.full_like(angles, max_radius)
+        offset_tensor = torch.stack([angles.sin() * radii, angles.cos() * radii], dim=-1)
         neg_points = (gt_points[:, None, :] + offset_tensor[None, :, :]).reshape(-1, 2)
         neg_points[:, 0].clamp_(0, max(float(img_h) - 1.0, 0.0))
         neg_points[:, 1].clamp_(0, max(float(img_w) - 1.0, 0.0))
@@ -2334,11 +2621,9 @@ class PET(nn.Module):
     def compute_ifi_apg_loss(self, outputs, targets, samples):
         """Interpolated Feature Guidance for APG.
 
-        APG-lite supervises nearest fixed grid queries. IFI-lite complements it
-        by sampling PET's encoded feature map at arbitrary GT and local-negative
-        positions, matching APGCC's core idea without changing PET inference.
-        The shared-head mode sends this supervision into PET's sparse/dense
-        prediction heads instead of a detached auxiliary-only head.
+        APG-lite supervises nearest fixed grid queries. Unified IFI samples the
+        exact structural query representation at arbitrary GT and local-negative
+        positions and sends it through the same sparse/dense prediction heads.
         """
         encode_src = outputs.get('encode_src')
         if encode_src is None:
@@ -2350,24 +2635,42 @@ class PET(nn.Module):
             gt_points = target['points'].to(device=encode_src.device, dtype=encode_src.dtype)
             if gt_points.numel() == 0:
                 continue
-            pos_feats = self._sample_ifi_features(encode_src, batch_idx, gt_points, img_h, img_w)
-            pos_target = torch.ones(pos_feats.shape[0], dtype=torch.long, device=encode_src.device)
-
+            pos_points, pos_gt_points = self._build_ifi_positives(gt_points, img_h, img_w)
             pos_dense_mask = None
             if self.ifi_head_source == 'routed':
                 pos_dense_mask = self._ifi_dense_route_mask(
-                    gt_points,
+                    pos_points,
                     outputs['split_map_raw'],
                     batch_idx,
                     img_h,
                     img_w,
+                    reference_points=gt_points,
                 )
-            self._append_ifi_losses(pos_feats, pos_target, cls_losses, point_losses, pos_dense_mask)
+            if pos_dense_mask is None:
+                pos_dense_mask = torch.zeros(pos_points.shape[0], dtype=torch.bool, device=encode_src.device)
+            pos_feats = self._sample_routed_ifi_features(
+                outputs,
+                batch_idx,
+                pos_points,
+                pos_dense_mask,
+                img_h,
+                img_w,
+            )
+            pos_target = torch.ones(pos_feats.shape[0], dtype=torch.long, device=encode_src.device)
+            pos_offsets = pos_gt_points - pos_points
+            pos_offsets[:, 0] /= max(float(img_h), 1.0)
+            pos_offsets[:, 1] /= max(float(img_w), 1.0)
+            self._append_ifi_losses(
+                pos_feats,
+                pos_target,
+                cls_losses,
+                point_losses,
+                pos_dense_mask,
+                offset_targets=pos_offsets,
+            )
 
             neg_points = self._build_ifi_negatives(gt_points, img_h, img_w)
             if neg_points.numel() > 0:
-                neg_feats = self._sample_ifi_features(encode_src, batch_idx, neg_points, img_h, img_w)
-                neg_target = torch.zeros(neg_feats.shape[0], dtype=torch.long, device=encode_src.device)
                 neg_dense_mask = None
                 if self.ifi_head_source == 'routed':
                     neg_dense_mask = self._ifi_dense_route_mask(
@@ -2376,8 +2679,31 @@ class PET(nn.Module):
                         batch_idx,
                         img_h,
                         img_w,
+                        reference_points=gt_points,
                     )
-                self._append_ifi_losses(neg_feats, neg_target, cls_losses, point_losses, neg_dense_mask)
+                if neg_dense_mask is None:
+                    neg_dense_mask = torch.zeros(
+                        neg_points.shape[0],
+                        dtype=torch.bool,
+                        device=encode_src.device,
+                    )
+                neg_feats = self._sample_routed_ifi_features(
+                    outputs,
+                    batch_idx,
+                    neg_points,
+                    neg_dense_mask,
+                    img_h,
+                    img_w,
+                )
+                neg_target = torch.zeros(neg_feats.shape[0], dtype=torch.long, device=encode_src.device)
+                self._append_ifi_losses(
+                    neg_feats,
+                    neg_target,
+                    cls_losses,
+                    point_losses,
+                    neg_dense_mask,
+                    offset_targets=torch.zeros_like(neg_points),
+                )
 
         if not cls_losses:
             return outputs['split_map_raw'].sum() * 0.0
@@ -2386,9 +2712,21 @@ class PET(nn.Module):
             loss = loss + self.ifi_point_coef * torch.stack(point_losses).mean()
         return loss
 
-    def _append_ifi_losses(self, feats, target, cls_losses, point_losses, dense_mask=None):
+    def _append_ifi_losses(
+        self,
+        feats,
+        target,
+        cls_losses,
+        point_losses,
+        dense_mask=None,
+        offset_targets=None,
+    ):
         if feats.numel() == 0:
             return
+        if offset_targets is None:
+            offset_targets = torch.zeros((feats.shape[0], 2), device=feats.device, dtype=feats.dtype)
+        else:
+            offset_targets = offset_targets.to(device=feats.device, dtype=feats.dtype)
         if self.ifi_head_source != 'routed':
             for logits, offsets in self._ifi_head_predictions(feats):
                 cls_losses.append(self.point_classification_loss(logits, target))
@@ -2396,7 +2734,7 @@ class PET(nn.Module):
                     point_losses.append(
                         F.smooth_l1_loss(
                             offsets,
-                            torch.zeros_like(offsets),
+                            offset_targets,
                             reduction='none',
                         ).sum(dim=-1).mean()
                     )
@@ -2411,27 +2749,48 @@ class PET(nn.Module):
                 continue
             branch_feats = feats[mask]
             branch_target = target[mask]
+            branch_offsets = offset_targets[mask]
             for logits, offsets in self._ifi_head_predictions(branch_feats, source):
                 cls_losses.append(self.point_classification_loss(logits, branch_target))
                 if branch_target.numel() > 0 and branch_target[0].item() == 1:
                     point_losses.append(
                         F.smooth_l1_loss(
                             offsets,
-                            torch.zeros_like(offsets),
+                            branch_offsets,
                             reduction='none',
                         ).sum(dim=-1).mean()
                     )
 
-    def _ifi_dense_route_mask(self, points, split_map, batch_idx, img_h, img_w):
+    def _ifi_dense_route_mask(
+        self,
+        points,
+        split_map,
+        batch_idx,
+        img_h,
+        img_w,
+        reference_points=None,
+    ):
         if points.numel() == 0:
             return torch.zeros(0, dtype=torch.bool, device=split_map.device)
         split_h, split_w = split_map.shape[-2:]
         y = torch.clamp((points[:, 0] / max(float(img_h), 1.0) * split_h).long(), 0, split_h - 1)
         x = torch.clamp((points[:, 1] / max(float(img_w), 1.0) * split_w).long(), 0, split_w - 1)
-        linear_idx = y * split_w + x
+        linear_idx = (y * split_w + x).to(device=split_map.device)
+        reference_points = points if reference_points is None else reference_points
+        ref_y = torch.clamp(
+            (reference_points[:, 0] / max(float(img_h), 1.0) * split_h).long(),
+            0,
+            split_h - 1,
+        )
+        ref_x = torch.clamp(
+            (reference_points[:, 1] / max(float(img_w), 1.0) * split_w).long(),
+            0,
+            split_w - 1,
+        )
+        reference_idx = (ref_y * split_w + ref_x).to(device=split_map.device)
         counts = torch.zeros(split_h * split_w, dtype=torch.long, device=split_map.device)
-        counts.scatter_add_(0, linear_idx.to(device=split_map.device), torch.ones_like(linear_idx, dtype=torch.long, device=split_map.device))
-        return counts[linear_idx.to(device=split_map.device)] >= self.split_count_threshold
+        counts.scatter_add_(0, reference_idx, torch.ones_like(reference_idx, dtype=torch.long))
+        return counts[linear_idx] >= self.split_count_threshold
 
     def _ifi_head_predictions(self, feats, head_source=None):
         """Return logits and normalized offsets for the configured IFI heads."""
@@ -3529,6 +3888,12 @@ class PET(nn.Module):
         dense_active = 'train' in kwargs or bool(split_mask_dense.any().item())
         if 'train' not in kwargs and not sparse_active and not dense_active:
             sparse_active = True
+        shared_query_feature_maps = None
+        if self.shared_query_feature_interpolator is not None:
+            shared_query_feature_maps = {
+                '4x': features['4x'].tensors,
+                '8x': features['8x'].tensors,
+            }
         
         # quadtree layer0 forward (sparse)
         if sparse_active:
@@ -3541,6 +3906,9 @@ class PET(nn.Module):
             sparse_kwargs['div_threshold'] = 1.0 - self.query_prune_threshold
             sparse_kwargs['div_compare'] = 'gt'
             sparse_kwargs['dec_win_size'] = list(self.sparse_dec_win_size)
+            if shared_query_feature_maps is not None:
+                sparse_kwargs['query_feature_interpolator'] = self.shared_query_feature_interpolator
+                sparse_kwargs['query_feature_maps'] = shared_query_feature_maps
             outputs_sparse = self.quadtree_sparse(samples, features, context_info, **sparse_kwargs)
         else:
             outputs_sparse = None
@@ -3552,6 +3920,9 @@ class PET(nn.Module):
             dense_kwargs['div_threshold'] = self.query_prune_threshold
             dense_kwargs['div_compare'] = 'gt'
             dense_kwargs['dec_win_size'] = list(self.dense_dec_win_size)
+            if shared_query_feature_maps is not None:
+                dense_kwargs['query_feature_interpolator'] = self.shared_query_feature_interpolator
+                dense_kwargs['query_feature_maps'] = shared_query_feature_maps
             outputs_dense = self.quadtree_dense(samples, features, context_info, **dense_kwargs)
         else:
             outputs_dense = None
@@ -3601,6 +3972,8 @@ class PET(nn.Module):
             outputs['foreground_logits'] = self.foreground_head(encode_src)
         if 'train' in kwargs:
             outputs['encode_src'] = encode_src
+            if self.ifi_feature_source == 'branch':
+                outputs['ifi_features'] = shared_query_feature_maps
         return outputs
     
     def train_forward(self, samples, features, pos, **kwargs):
@@ -3823,6 +4196,14 @@ class SetCriterion(nn.Module):
         self.quality_loss_sigma = max(1e-6, float(getattr(args, 'quality_loss_sigma', 16.0)))
         self.quality_loss_pos_floor = min(max(float(getattr(args, 'quality_loss_pos_floor', 0.5)), 0.0), 1.0)
         self.quality_loss_bg_weight = max(0.0, float(getattr(args, 'quality_loss_bg_weight', 0.1)))
+        self.scale_point_sigma = getattr(args, 'scale_point_sigma', 'small')
+        if self.scale_point_sigma not in ('small', 'large', 'geomean'):
+            raise ValueError('scale_point_sigma must be one of "small", "large", or "geomean"')
+        self.scale_point_sigma_min = max(1e-6, float(getattr(args, 'scale_point_sigma_min', 2.0)))
+        self.scale_point_sigma_max = max(
+            self.scale_point_sigma_min,
+            float(getattr(args, 'scale_point_sigma_max', 128.0)),
+        )
         empty_weight = torch.ones(self.num_classes + 1)
         empty_weight[0] = self.eos_coef    # coefficient for non-object background points
         self.register_buffer('empty_weight', empty_weight)
@@ -4033,6 +4414,56 @@ class SetCriterion(nn.Module):
         
         return losses
 
+    def loss_scale_points(self, outputs, targets, indices, num_points, **kwargs):
+        """Normalize matched pixel error by each annotated head scale."""
+        img_h, img_w = outputs['img_shape']
+        pred_parts = []
+        target_parts = []
+        sigma_parts = []
+        for batch_idx, (target, (src_idx, target_idx)) in enumerate(zip(targets, indices)):
+            sigma = target.get('sigma')
+            if sigma is None or sigma.shape[0] != target['points'].shape[0] or src_idx.numel() == 0:
+                continue
+            src_idx = src_idx.to(outputs['pred_points'].device)
+            target_idx_target = target_idx.to(target['points'].device)
+            pred = outputs['pred_points'][batch_idx, src_idx].float().clone()
+            pred[:, 0] *= float(img_h)
+            pred[:, 1] *= float(img_w)
+            target_points = target['points'][target_idx_target].to(
+                device=pred.device,
+                dtype=pred.dtype,
+            )
+            matched_sigma = sigma[target_idx_target].to(device=pred.device, dtype=pred.dtype)
+            if matched_sigma.ndim == 1:
+                scale = matched_sigma
+            elif self.scale_point_sigma == 'small':
+                scale = matched_sigma[:, 0]
+            elif self.scale_point_sigma == 'large':
+                scale = matched_sigma[:, min(1, matched_sigma.shape[1] - 1)]
+            else:
+                small = matched_sigma[:, 0].clamp_min(self.scale_point_sigma_min)
+                large = matched_sigma[:, min(1, matched_sigma.shape[1] - 1)].clamp_min(
+                    self.scale_point_sigma_min
+                )
+                scale = torch.sqrt(small * large)
+            pred_parts.append(pred)
+            target_parts.append(target_points)
+            sigma_parts.append(scale.clamp(self.scale_point_sigma_min, self.scale_point_sigma_max))
+
+        if not pred_parts:
+            return {'loss_scale_points': outputs['pred_points'].sum() * 0.0}
+        pred = torch.cat(pred_parts, dim=0)
+        target_points = torch.cat(target_parts, dim=0)
+        scale = torch.cat(sigma_parts, dim=0).unsqueeze(-1)
+        normalized_error = (pred - target_points) / scale
+        return {
+            'loss_scale_points': F.smooth_l1_loss(
+                normalized_error,
+                torch.zeros_like(normalized_error),
+                reduction='none',
+            ).sum(dim=-1).mean()
+        }
+
     def _get_src_permutation_idx(self, indices):
         # permute predictions following indices
         batch_idx = torch.cat([torch.full_like(src, i) for i, (src, _) in enumerate(indices)])
@@ -4050,6 +4481,7 @@ class SetCriterion(nn.Module):
             'labels': self.loss_labels,
             'quality': self.loss_quality,
             'points': self.loss_points,
+            'scale_points': self.loss_scale_points,
         }
         assert loss in loss_map, f'{loss} loss is not defined'
         return loss_map[loss](outputs, targets, indices, num_points, **kwargs)
@@ -4117,6 +4549,9 @@ def build_pet(args):
     matcher = build_matcher(args)
     weight_dict = {'loss_ce': args.ce_loss_coef, 'loss_points': args.point_loss_coef}
     losses = ['labels', 'points']
+    if getattr(args, 'scale_point_loss_coef', 0.0) > 0:
+        weight_dict['loss_scale_points'] = args.scale_point_loss_coef
+        losses.append('scale_points')
     if getattr(args, 'quality_loss_coef', 0.0) > 0:
         weight_dict['loss_quality'] = args.quality_loss_coef
         losses.insert(1, 'quality')

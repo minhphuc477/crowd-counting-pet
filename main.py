@@ -1173,6 +1173,74 @@ MODEL_RECIPES['vgg_apglc_full_ifi_counthead_stage2_nwpu'] = {
     'ifi_neg_min_dist': 2.0,
 }
 
+# Unified IFI-PET for NWPU.
+#
+# One IFI module is shared by sparse/dense queries and randomized APG auxiliary
+# points. It consumes both 4x detail and 8x context features through a
+# zero-gated residual, routes all branch supervision by the same GT quadtree
+# teacher, and adds a low-weight box-scale-normalized localization objective.
+MODEL_RECIPES['vgg_apglc_unified_ifi_nwpu'] = {
+    **MODEL_RECIPES['vgg_apglc_nwpu_tail'],
+    'query_feature_interpolation': 'implicit',
+    'query_ifi_sharing': 'shared',
+    'query_ifi_feature_source': 'fpn4x8x',
+    'ifi_interpolation': 'implicit',
+    'ifi_feature_source': 'branch',
+    'ifi_pos_dim': 32,
+    'ifi_mlp_hidden_dim': 256,
+    'ifi_activation': 'gelu',
+    'ifi_loss_coef': 0.02,
+    'ifi_head_source': 'routed',
+    'ifi_point_coef': 0.2,
+    'ifi_pos_k': 2,
+    'ifi_pos_radius': 2.0,
+    'ifi_random_sampling': True,
+    'ifi_neg_k': 2,
+    'ifi_neg_radius': 8.0,
+    'ifi_neg_min_dist': 2.0,
+    'ifi_start_epoch': 0,
+    'ifi_end_epoch': 700,
+    'branch_target_routing': 'gt_count',
+    'split_loss_variant': 'paper_gt',
+    'split_count_threshold': 2,
+    'split_pos_weight': 1.0,
+    'scale_point_loss_coef': 0.05,
+    'scale_point_sigma': 'small',
+    'scale_point_sigma_min': 2.0,
+    'scale_point_sigma_max': 128.0,
+    'eval_branch_gate': 'query',
+}
+
+MODEL_RECIPES['vgg_apglc_unified_ifi_counthead_stage2_nwpu'] = {
+    **MODEL_RECIPES['vgg_apglc_counthead_stage2_nwpu'],
+    'query_feature_interpolation': 'implicit',
+    'query_ifi_sharing': 'shared',
+    'query_ifi_feature_source': 'fpn4x8x',
+    'ifi_interpolation': 'implicit',
+    'ifi_feature_source': 'branch',
+    'ifi_pos_dim': 32,
+    'ifi_mlp_hidden_dim': 256,
+    'ifi_activation': 'gelu',
+    'ifi_loss_coef': 0.0,
+    'ifi_head_source': 'routed',
+    'ifi_point_coef': 0.2,
+    'ifi_pos_k': 2,
+    'ifi_pos_radius': 2.0,
+    'ifi_random_sampling': True,
+    'ifi_neg_k': 2,
+    'ifi_neg_radius': 8.0,
+    'ifi_neg_min_dist': 2.0,
+    'branch_target_routing': 'gt_count',
+    'split_loss_variant': 'paper_gt',
+    'split_count_threshold': 2,
+    'split_pos_weight': 1.0,
+    'scale_point_loss_coef': 0.05,
+    'scale_point_sigma': 'small',
+    'scale_point_sigma_min': 2.0,
+    'scale_point_sigma_max': 128.0,
+    'eval_branch_gate': 'query',
+}
+
 EXPERIMENTAL_MODEL_RECIPES = {
     # These paths are kept for audit/reproduction only. Session runs showed
     # catastrophic over/under-counting before they could improve on APG+LC.
@@ -1270,7 +1338,10 @@ ARCHITECTURE_OVERRIDE_KEYS = {
     'sparse_dec_win_size',
     'dense_dec_win_size',
     'query_feature_interpolation',
+    'query_ifi_sharing',
+    'query_ifi_feature_source',
     'ifi_interpolation',
+    'ifi_feature_source',
     'ifi_pos_dim',
     'ifi_mlp_hidden_dim',
     'ifi_activation',
@@ -1537,6 +1608,14 @@ def get_args_parser():
     # - loss coefficients
     parser.add_argument('--ce_loss_coef', default=1.0, type=float)
     parser.add_argument('--point_loss_coef', default=5.0, type=float)
+    parser.add_argument('--scale_point_loss_coef', default=0.0, type=float,
+                        help='matched point loss normalized by per-head NWPU sigma; 0 disables it')
+    parser.add_argument('--scale_point_sigma', default='small', choices=('small', 'large', 'geomean'),
+                        help='head scale used by --scale_point_loss_coef')
+    parser.add_argument('--scale_point_sigma_min', default=2.0, type=float,
+                        help='minimum pixel scale used by scale-normalized point loss')
+    parser.add_argument('--scale_point_sigma_max', default=128.0, type=float,
+                        help='maximum pixel scale used by scale-normalized point loss')
     parser.add_argument('--quality_loss_coef', default=0.0, type=float,
                         help='quality-aware score calibration loss weight; 0 disables it')
     parser.add_argument('--quality_loss_sigma', default=16.0, type=float,
@@ -1731,8 +1810,14 @@ def get_args_parser():
                         help='point-regression coefficient inside Gaussian soft APG')
     parser.add_argument('--query_feature_interpolation', default='nearest', choices=('nearest', 'implicit'),
                         help='point-query feature extraction: PET nearest-cell lookup or APGCC-style implicit interpolation')
+    parser.add_argument('--query_ifi_sharing', default='independent', choices=('independent', 'shared'),
+                        help='share one implicit interpolator across sparse, dense, and auxiliary point paths')
+    parser.add_argument('--query_ifi_feature_source', default='branch', choices=('branch', 'fpn4x8x'),
+                        help='shared IFI input: native branch feature or identity-initialized 4x/8x fusion')
     parser.add_argument('--ifi_interpolation', default='bilinear', choices=('bilinear', 'implicit'),
                         help='feature interpolation used by IFI auxiliary supervision')
+    parser.add_argument('--ifi_feature_source', default='encoded', choices=('encoded', 'branch'),
+                        help='IFI auxiliary source: encoded 8x context or the structural branch query features')
     parser.add_argument('--ifi_pos_dim', default=32, type=int,
                         help='relative positional encoding width for implicit IFI')
     parser.add_argument('--ifi_mlp_hidden_dim', default=256, type=int,
@@ -1745,6 +1830,12 @@ def get_args_parser():
                         help='prediction head used by IFI: separate auxiliary head, sparse PET head, dense PET head, both PET heads, or one routed PET head per point')
     parser.add_argument('--ifi_point_coef', default=1.0, type=float,
                         help='zero-offset coefficient inside IFI-lite APG loss')
+    parser.add_argument('--ifi_pos_k', default=1, type=int,
+                        help='auxiliary positive points sampled per GT for IFI/APG guidance')
+    parser.add_argument('--ifi_pos_radius', default=0.0, type=float,
+                        help='maximum pixel displacement of IFI/APG positive points around each GT')
+    parser.add_argument('--ifi_random_sampling', action='store_true',
+                        help='randomize IFI/APG positive and negative points as in APGCC')
     parser.add_argument('--ifi_neg_k', default=4, type=int,
                         help='local negative interpolated points per GT for IFI-lite')
     parser.add_argument('--ifi_neg_radius', default=12.0, type=float,
@@ -2327,6 +2418,8 @@ def merge_checkpoint_args(args, checkpoint):
             'count_loss_budget_margin', 'count_loss_start_epoch',
             'quality_loss_coef', 'quality_loss_sigma', 'quality_loss_pos_floor',
             'quality_loss_bg_weight',
+            'scale_point_loss_coef', 'scale_point_sigma',
+            'scale_point_sigma_min', 'scale_point_sigma_max',
             'pq_sparse_coef', 'pq_dense_coef',
             'pq_dense_start_epoch', 'pq_dense_warmup_epochs',
             'branch_target_routing',
@@ -2368,9 +2461,12 @@ def merge_checkpoint_args(args, checkpoint):
             'apg_contrastive_coef', 'apg_neg_k', 'apg_margin',
             'apg_consistency_coef', 'apg_consistency_k', 'apg_consistency_sigma',
             'apg_soft_loss_coef', 'apg_soft_pos_k', 'apg_soft_sigma', 'apg_soft_point_coef',
-            'query_feature_interpolation', 'ifi_interpolation', 'ifi_pos_dim',
+            'query_feature_interpolation', 'query_ifi_sharing', 'query_ifi_feature_source',
+            'ifi_interpolation', 'ifi_feature_source', 'ifi_pos_dim',
             'ifi_mlp_hidden_dim', 'ifi_activation',
-            'ifi_loss_coef', 'ifi_head_source', 'ifi_point_coef', 'ifi_neg_k', 'ifi_neg_radius',
+            'ifi_loss_coef', 'ifi_head_source', 'ifi_point_coef',
+            'ifi_pos_k', 'ifi_pos_radius', 'ifi_random_sampling',
+            'ifi_neg_k', 'ifi_neg_radius',
             'ifi_neg_min_dist', 'ifi_start_epoch', 'ifi_end_epoch',
             'qd_apg_loss_coef', 'qd_apg_point_coef', 'qd_apg_suppress_coef',
             'qd_apg_start_epoch', 'qd_apg_end_epoch', 'qd_apg_route_source',
@@ -2407,17 +2503,21 @@ def resolve_output_dir(args):
 
 def backup_existing_best_checkpoint(output_dir):
     """Keep the first existing best checkpoint before a training run overwrites it."""
-    best_path = output_dir / 'best_checkpoint.pth'
-    backup_path = output_dir / 'best_checkpoint.before_overwrite.pth'
-    if not utils.is_main_process() or not best_path.exists() or backup_path.exists():
+    if not utils.is_main_process():
         return
-    shutil.copy2(best_path, backup_path)
-    print(f'backed up existing best checkpoint to: {backup_path}')
+    for name in ('best_checkpoint.pth', 'best_complete_checkpoint.pth'):
+        best_path = output_dir / name
+        backup_path = output_dir / name.replace('.pth', '.before_overwrite.pth')
+        if not best_path.exists() or backup_path.exists():
+            continue
+        shutil.copy2(best_path, backup_path)
+        print(f'backed up existing best checkpoint to: {backup_path}')
 
 
 def ensure_mae_checkpoint_alias(output_dir):
     """Expose the legacy best checkpoint as initial explicit metric checkpoints."""
     legacy_path = output_dir / 'best_checkpoint.pth'
+    complete_path = output_dir / 'best_complete_checkpoint.pth'
     mae_path = output_dir / 'best_mae_checkpoint.pth'
     mse_path = output_dir / 'best_mse_checkpoint.pth'
     localization_path = output_dir / 'best_localization_checkpoint.pth'
@@ -2425,6 +2525,9 @@ def ensure_mae_checkpoint_alias(output_dir):
     localization_eval_path = output_dir / 'best_localization_eval_results.json'
     if not utils.is_main_process() or not legacy_path.exists():
         return
+    if not complete_path.exists():
+        shutil.copy2(legacy_path, complete_path)
+        print(f'created complete checkpoint alias: {complete_path}')
     if not mae_path.exists():
         shutil.copy2(legacy_path, mae_path)
         print(f'created MAE checkpoint alias: {mae_path}')
@@ -3046,6 +3149,7 @@ def main(args):
     }
     for metric_path, metric_record in (
         (output_dir / 'best_checkpoint.pth', best_mae_eval_metrics),
+        (output_dir / 'best_complete_checkpoint.pth', best_mae_eval_metrics),
         (output_dir / 'best_mae_checkpoint.pth', best_mae_eval_metrics),
         (output_dir / 'best_mse_checkpoint.pth', best_mse_eval_metrics),
         (output_dir / 'best_localization_checkpoint.pth', best_localization_eval_metrics),
@@ -3202,6 +3306,7 @@ def main(args):
                     include_raw_model=include_raw,
                 )
                 utils.save_on_master(best_mae_payload, output_dir / 'best_checkpoint.pth')
+                utils.save_on_master(best_mae_payload, output_dir / 'best_complete_checkpoint.pth')
                 utils.save_on_master(best_mae_payload, output_dir / 'best_mae_checkpoint.pth')
             if pretrain_mse_improved:
                 (output_dir / 'best_mse_eval_results.json').write_text(
@@ -3464,6 +3569,7 @@ def main(args):
                     include_raw_model=include_raw,
                 )
                 utils.save_on_master(best_mae_payload, output_dir / 'best_checkpoint.pth')
+                utils.save_on_master(best_mae_payload, output_dir / 'best_complete_checkpoint.pth')
                 utils.save_on_master(best_mae_payload, output_dir / 'best_mae_checkpoint.pth')
 
             if mse_improved and utils.is_main_process():

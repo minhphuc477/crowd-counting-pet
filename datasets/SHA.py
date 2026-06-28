@@ -1,4 +1,5 @@
 import os
+import math
 import random
 import torch
 import numpy as np
@@ -288,6 +289,9 @@ def random_crop(img, points, patch_size=256):
     if result_points.shape[0] > 0:
         result_points[:, 0] *= fH
         result_points[:, 1] *= fW
+        # Optional per-point scale metadata follows y/x in NWPU training.
+        if result_points.shape[1] > 2:
+            result_points[:, 2:] *= math.sqrt(fH * fW)
     return result_img, result_points
 
 
