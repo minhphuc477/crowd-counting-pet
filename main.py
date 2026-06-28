@@ -58,6 +58,42 @@ BACKBONE_RECIPES = {
 }
 
 MODEL_RECIPES = {
+    # Exact fully supervised PET optimization/evaluation contract used by the
+    # official ICCV 2023 implementation. Keep this recipe free of every added
+    # auxiliary so dataset and evaluator parity can be established before an
+    # architectural ablation is accepted.
+    'vgg_pet_paper': {
+        'backbone': 'vgg16_bn',
+        'timm_adapter': 'lite_fpn',
+        'epochs': 1500,
+        'lr': 1e-4,
+        'lr_backbone': 1e-5,
+        'lr_scheduler': 'step',
+        'lr_drop': -1,
+        'pet_loss_variant': 'paper',
+        'split_loss_variant': 'paper',
+        'apg_loss_coef': 0.0,
+        'ifi_loss_coef': 0.0,
+        'count_head_loss_coef': 0.0,
+        'density_map_loss_coef': 0.0,
+        'routed_apg_loss_coef': 0.0,
+        'foreground_loss_coef': 0.0,
+        'branch_target_routing': 'none',
+        'query_feature_interpolation': 'nearest',
+        'eval_foreground_gate': 'none',
+        'eval_count_mode': 'threshold',
+        'eval_count_source': 'pet',
+        'eval_score_calibration': 'none',
+        'eval_nms_radius': 0.0,
+        'eval_branch_gate': 'none',
+        'eval_soft_split_gate': 'none',
+        'score_threshold': 0.5,
+        'split_threshold': 0.5,
+        'split_threshold_quantile': 0.5,
+        'query_prune_threshold': 0.5,
+        'bad_count_start_epoch': 100,
+        'bad_count_direction': 'all',
+    },
     # Known stable scratch path from this repo/session:
     # PET + lite FPN + low-weight APG. The saved best checkpoint
     # vgg16_bn_drop700_apg_lc_seed42 records apg_loss_coef=0.02,
@@ -3010,7 +3046,8 @@ def main(args):
                 or auto_non_strict_model_only
             )
         )
-        incompatible = model_without_ddp.load_state_dict(checkpoint[model_key], strict=strict_load)
+        resume_model_state = utils.upgrade_legacy_pet_state_dict(checkpoint[model_key])
+        incompatible = model_without_ddp.load_state_dict(resume_model_state, strict=strict_load)
         if auto_non_strict_model_only and not getattr(args, 'resume_allow_arch_change', False):
             validate_model_only_incompatible(incompatible, allowed_missing_prefixes)
         if not strict_load and utils.is_main_process():
@@ -3029,9 +3066,13 @@ def main(args):
             if args.resume_model_only:
                 model_ema.set(model_without_ddp)
             elif 'model_ema' in checkpoint:
-                model_ema.load_state_dict(checkpoint['model_ema'])
+                model_ema.load_state_dict(
+                    utils.upgrade_legacy_pet_state_dict(checkpoint['model_ema'])
+                )
             elif model_key == 'model_raw' and 'model' in checkpoint:
-                model_ema.load_state_dict(checkpoint['model'])
+                model_ema.load_state_dict(
+                    utils.upgrade_legacy_pet_state_dict(checkpoint['model'])
+                )
             else:
                 model_ema.set(model_without_ddp)
         if not args.resume_model_only and 'optimizer' in checkpoint and 'lr_scheduler' in checkpoint and 'epoch' in checkpoint:

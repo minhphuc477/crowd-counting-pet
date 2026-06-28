@@ -391,18 +391,36 @@ def save_on_master(*args, **kwargs):
         torch.save(*args, **kwargs)
 
 
+def upgrade_legacy_pet_state_dict(state_dict):
+    """Map official PET checkpoint names to their current equivalents."""
+    replacements = {
+        'quadtree_splitter.1.weight': 'quadtree_splitter.net.1.weight',
+        'quadtree_splitter.1.bias': 'quadtree_splitter.net.1.bias',
+    }
+    if not any(old in state_dict and new not in state_dict for old, new in replacements.items()):
+        return state_dict
+
+    upgraded = state_dict.copy()
+    for old, new in replacements.items():
+        if old in upgraded and new not in upgraded:
+            upgraded[new] = upgraded.pop(old)
+    if hasattr(state_dict, '_metadata'):
+        upgraded._metadata = state_dict._metadata
+    return upgraded
+
+
 def get_checkpoint_model_state(checkpoint, model_key='auto'):
     """Select a model state from a PET checkpoint for inference/evaluation."""
     if model_key == 'auto':
         if 'model_ema' in checkpoint:
-            return checkpoint['model_ema'], 'model_ema'
+            return upgrade_legacy_pet_state_dict(checkpoint['model_ema']), 'model_ema'
         if 'model' in checkpoint:
-            return checkpoint['model'], 'model'
+            return upgrade_legacy_pet_state_dict(checkpoint['model']), 'model'
         raise KeyError('checkpoint does not contain a model state')
     if model_key not in checkpoint:
         available = ', '.join(sorted(k for k in checkpoint.keys() if k.startswith('model')))
         raise KeyError(f'checkpoint does not contain {model_key!r}; available model keys: {available}')
-    return checkpoint[model_key], model_key
+    return upgrade_legacy_pet_state_dict(checkpoint[model_key]), model_key
 
 
 def init_distributed_mode(args):
