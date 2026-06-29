@@ -20,6 +20,7 @@ class SHA(Dataset):
         data_root,
         transform=None,
         train=False,
+        source_split=None,
         flip=False,
         patch_size=256,
         crop_attempts=1,
@@ -29,8 +30,12 @@ class SHA(Dataset):
         partial_annotation_height_ratio=0.5,
     ):
         self.root_path = data_root
-        
-        prefix = "train_data" if train else "test_data"
+
+        if source_split is None:
+            source_split = 'train' if train else 'test'
+        if source_split not in ('train', 'test'):
+            raise ValueError("source_split must be 'train' or 'test'")
+        prefix = "train_data" if source_split == 'train' else "test_data"
         self.prefix = prefix
         split_dir = os.path.join(data_root, prefix)
         img_dir = os.path.join(split_dir, "images")
@@ -515,6 +520,7 @@ def build(image_set, args):
         train_set = SHA(
             data_root,
             train=True,
+            source_split='train',
             transform=transform,
             flip=True,
             patch_size=getattr(args, 'patch_size_choices', '') or args.patch_size,
@@ -537,7 +543,19 @@ def build(image_set, args):
             ),
         )
         return train_set
+    elif image_set == 'train_eval':
+        return SHA(
+            data_root,
+            train=False,
+            source_split='train',
+            transform=transform,
+        )
     elif image_set == 'val':
         # Evaluate at full resolution — PET is fully convolutional
-        val_set = SHA(data_root, train=False, transform=transform)
+        val_set = SHA(
+            data_root,
+            train=False,
+            source_split='test',
+            transform=transform,
+        )
         return val_set

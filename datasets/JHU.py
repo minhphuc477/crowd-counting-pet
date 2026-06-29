@@ -225,6 +225,14 @@ def build(image_set, args):
             crop_attempts=getattr(args, 'crop_attempts', 1),
             min_crop_points=getattr(args, 'min_crop_points', 0),
         )
+    if image_set == 'train_eval':
+        return JHUCrowd(
+            args.data_path,
+            split='train',
+            train=False,
+            transform=transform,
+            eval_max_size=0,
+        )
     if image_set == 'val':
         return JHUCrowd(
             args.data_path,

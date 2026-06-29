@@ -650,6 +650,15 @@ def build(image_set, args):
             dense_crop_prob=getattr(args, 'nwpu_dense_crop_prob', 0.0),
             dense_crop_attempts=getattr(args, 'nwpu_dense_crop_attempts', 16),
         )
+    if image_set == 'train_eval':
+        return NWPU(
+            args.data_path,
+            split='train',
+            train=False,
+            transform=transform,
+            eval_max_size=0,
+            sigma_mode=getattr(args, 'nwpu_sigma_mode', 'area'),
+        )
     if image_set == 'val':
         split = getattr(args, 'nwpu_eval_split', 'val') or 'val'
         return NWPU(

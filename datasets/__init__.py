@@ -32,15 +32,16 @@ dataset_dir_names = {
 
 
 def _split_images_dir(data_root, image_set, dataset_file):
+    source_set = 'train' if image_set == 'train_eval' else image_set
     if dataset_file in ('QNRF', 'UCF'):
-        split = 'Train' if image_set == 'train' else 'Test'
+        split = 'Train' if source_set == 'train' else 'Test'
         return Path(data_root) / split
     if dataset_file in ('NWPU', 'NWPU_Crowd', 'NWPU-Crowd'):
         return Path(data_root) / 'images'
     if dataset_file in ('JHU', 'JHU_Crowd', 'JHU-Crowd++'):
-        split = 'train' if image_set == 'train' else 'val'
+        split = 'train' if source_set == 'train' else 'val'
         return Path(data_root) / split / 'images'
-    split = 'train_data' if image_set == 'train' else 'test_data'
+    split = 'train_data' if source_set == 'train' else 'test_data'
     return Path(data_root) / split / 'images'
 
 

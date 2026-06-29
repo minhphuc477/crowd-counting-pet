@@ -45,11 +45,16 @@ class DeNormalize(object):
 
 
 def move_target_to_device(target, device):
-    """Move tensor payloads while preserving evaluation/debug metadata."""
-    return {
-        key: value.to(device) if torch.is_tensor(value) else value
-        for key, value in target.items()
-    }
+    """Move tensor payloads while preserving nested metadata containers."""
+    if torch.is_tensor(target):
+        return target.to(device)
+    if isinstance(target, dict):
+        return {key: move_target_to_device(value, device) for key, value in target.items()}
+    if isinstance(target, list):
+        return [move_target_to_device(value, device) for value in target]
+    if isinstance(target, tuple):
+        return tuple(move_target_to_device(value, device) for value in target)
+    return target
 
 
 def visualization(samples, targets, pred, vis_dir, split_map=None):

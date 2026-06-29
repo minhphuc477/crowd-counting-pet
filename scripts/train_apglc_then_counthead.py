@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run unified APG+LC/IFI training followed by count-head adaptation.
+"""Run APG+LC/IFI training followed by count-head adaptation.
 
 The detector architecture is identical in both stages. Stage 2 initializes the
 additional scalar count head and applies its low-gradient auxiliary objective;
@@ -38,6 +38,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--stage2_output", default=None)
     parser.add_argument("--stage1_recipe", default=None)
     parser.add_argument("--stage2_recipe", default=None)
+    parser.add_argument("--ifi_variant", default="branch", choices=("branch", "unified"),
+                        help="branch uses branch-local IFI; unified uses one shared IFI for both branches")
     parser.add_argument("--seed", default=42, type=int)
     parser.add_argument("--stage1_epochs", default=1500, type=int)
     parser.add_argument("--stage2_epochs", default=80, type=int)
@@ -55,7 +57,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--eval_tile_trigger_count", default=0.0, type=float)
     parser.add_argument("--eval_tile_trigger_area", default=0, type=int)
     parser.add_argument("--nwpu_eval_split", default="val", choices=("val", "test", "train"))
+    parser.add_argument("--jhu_eval_split", default="val", choices=("val", "test", "train"))
     parser.add_argument("--nwpu_sigma_mode", default="area", choices=("area", "diag", "min_diag", "official"))
+    parser.add_argument("--validation_protocol", default="auto",
+                        choices=("auto", "benchmark_test", "train_holdout"))
+    parser.add_argument("--train_holdout_fraction", default=0.1, type=float)
+    parser.add_argument("--train_holdout_seed", default=None, type=int)
     parser.add_argument("--nwpu_dense_crop_prob", default=0.0, type=float)
     parser.add_argument("--nwpu_dense_crop_attempts", default=16, type=int)
     parser.add_argument("--train_count_weight_power", default=0.0, type=float)
@@ -74,23 +81,37 @@ def parse_args() -> argparse.Namespace:
         if token.startswith("--")
     }
     if args.stage1_recipe is None:
-        args.stage1_recipe = (
-            "vgg_apglc_unified_ifi_nwpu"
-            if args.dataset_file == "NWPU"
-            else "vgg_apglc_unified_ifi"
-        )
+        if args.ifi_variant == "unified":
+            args.stage1_recipe = (
+                "vgg_apglc_unified_ifi_nwpu"
+                if args.dataset_file == "NWPU"
+                else "vgg_apglc_unified_ifi"
+            )
+        else:
+            args.stage1_recipe = (
+                "vgg_apglc_branch_ifi_nwpu"
+                if args.dataset_file == "NWPU"
+                else "vgg_apglc_branch_ifi"
+            )
     if args.stage2_recipe is None:
-        args.stage2_recipe = (
-            "vgg_apglc_unified_ifi_counthead_stage2_nwpu"
-            if args.dataset_file == "NWPU"
-            else "vgg_apglc_unified_ifi_counthead_stage2"
-        )
+        if args.ifi_variant == "unified":
+            args.stage2_recipe = (
+                "vgg_apglc_unified_ifi_counthead_stage2_nwpu"
+                if args.dataset_file == "NWPU"
+                else "vgg_apglc_unified_ifi_counthead_stage2"
+            )
+        else:
+            args.stage2_recipe = (
+                "vgg_apglc_branch_ifi_counthead_stage2_nwpu"
+                if args.dataset_file == "NWPU"
+                else "vgg_apglc_branch_ifi_counthead_stage2"
+            )
     dataset_dir = args.dataset_file
     if args.stage1_output is None:
-        run_name = f"vgg16_bn_apglc_unified_ifi_stage1_seed{args.seed}"
+        run_name = f"vgg16_bn_apglc_{args.ifi_variant}_ifi_stage1_seed{args.seed}"
         args.stage1_output = str(Path("outputs") / dataset_dir / run_name)
     if args.stage2_output is None:
-        run_name = f"vgg16_bn_apglc_unified_ifi_counthead_stage2_seed{args.seed}"
+        run_name = f"vgg16_bn_apglc_{args.ifi_variant}_ifi_counthead_stage2_seed{args.seed}"
         args.stage2_output = str(Path("outputs") / dataset_dir / run_name)
     return args
 
@@ -111,6 +132,10 @@ def main() -> int:
         "--batch_size", str(args.batch_size),
         "--patch_size", str(args.patch_size),
         "--nwpu_eval_split", args.nwpu_eval_split,
+        "--jhu_eval_split", args.jhu_eval_split,
+        "--validation_protocol", args.validation_protocol,
+        "--train_holdout_fraction", str(args.train_holdout_fraction),
+        "--train_holdout_seed", str(args.seed if args.train_holdout_seed is None else args.train_holdout_seed),
         "--seed", str(args.seed),
     ]
     recipe_owned = {

@@ -1072,6 +1072,57 @@ MODEL_RECIPES['vgg_pet_branch_ifi'] = {
     'ifi_end_epoch': -1,
 }
 
+# APG+LC + branch-local IFI.
+#
+# This is the missing combination that the repo did not expose cleanly before:
+# keep the verified APG+LC training schedule, but replace PET's nearest-cell
+# sparse/dense query features with branch-local implicit interpolation. Unlike
+# unified/shared IFI, sparse and dense keep separate query interpolators and
+# branch-local auxiliary supervision.
+MODEL_RECIPES['vgg_apglc_branch_ifi'] = {
+    **MODEL_RECIPES['vgg_apglc'],
+    'query_feature_interpolation': 'implicit',
+    'query_ifi_sharing': 'independent',
+    'query_ifi_feature_source': 'branch',
+    'ifi_interpolation': 'implicit',
+    'ifi_feature_source': 'branch',
+    'ifi_pos_dim': 32,
+    'ifi_mlp_hidden_dim': 256,
+    'ifi_activation': 'gelu',
+    'ifi_loss_coef': 0.02,
+    'ifi_head_source': 'routed',
+    'ifi_point_coef': 0.2,
+    'ifi_pos_k': 2,
+    'ifi_pos_radius': 2.0,
+    'ifi_random_sampling': True,
+    'ifi_neg_k': 2,
+    'ifi_neg_radius': 8.0,
+    'ifi_neg_min_dist': 2.0,
+    'ifi_start_epoch': 0,
+    'ifi_end_epoch': 350,
+}
+
+MODEL_RECIPES['vgg_apglc_branch_ifi_counthead_stage2'] = {
+    **MODEL_RECIPES['vgg_apglc_counthead_stage2_adapt'],
+    'query_feature_interpolation': 'implicit',
+    'query_ifi_sharing': 'independent',
+    'query_ifi_feature_source': 'branch',
+    'ifi_interpolation': 'implicit',
+    'ifi_feature_source': 'branch',
+    'ifi_pos_dim': 32,
+    'ifi_mlp_hidden_dim': 256,
+    'ifi_activation': 'gelu',
+    'ifi_loss_coef': 0.0,
+    'ifi_head_source': 'routed',
+    'ifi_point_coef': 0.2,
+    'ifi_pos_k': 2,
+    'ifi_pos_radius': 2.0,
+    'ifi_random_sampling': True,
+    'ifi_neg_k': 2,
+    'ifi_neg_radius': 8.0,
+    'ifi_neg_min_dist': 2.0,
+}
+
 # Residual Multi-scale IFI PET (RMI-PET).
 #
 # PET's validated quadtree, matcher, and inference contract remain unchanged.
@@ -1333,6 +1384,58 @@ MODEL_RECIPES['vgg_apglc_unified_ifi_counthead_stage2_nwpu'] = {
     **MODEL_RECIPES['vgg_apglc_counthead_stage2_nwpu'],
     **UNIFIED_IFI_RECIPE_OVERRIDES,
     'ifi_loss_coef': 0.0,
+    'scale_point_loss_coef': 0.05,
+    'scale_point_sigma': 'small',
+    'scale_point_sigma_min': 2.0,
+    'scale_point_sigma_max': 128.0,
+}
+
+MODEL_RECIPES['vgg_apglc_branch_ifi_nwpu'] = {
+    **MODEL_RECIPES['vgg_apglc_nwpu_tail'],
+    'query_feature_interpolation': 'implicit',
+    'query_ifi_sharing': 'independent',
+    'query_ifi_feature_source': 'branch',
+    'ifi_interpolation': 'implicit',
+    'ifi_feature_source': 'branch',
+    'ifi_pos_dim': 32,
+    'ifi_mlp_hidden_dim': 256,
+    'ifi_activation': 'gelu',
+    'ifi_loss_coef': 0.02,
+    'ifi_head_source': 'routed',
+    'ifi_point_coef': 0.2,
+    'ifi_pos_k': 2,
+    'ifi_pos_radius': 2.0,
+    'ifi_random_sampling': True,
+    'ifi_neg_k': 2,
+    'ifi_neg_radius': 8.0,
+    'ifi_neg_min_dist': 2.0,
+    'ifi_start_epoch': 0,
+    'ifi_end_epoch': 700,
+    'scale_point_loss_coef': 0.05,
+    'scale_point_sigma': 'small',
+    'scale_point_sigma_min': 2.0,
+    'scale_point_sigma_max': 128.0,
+}
+
+MODEL_RECIPES['vgg_apglc_branch_ifi_counthead_stage2_nwpu'] = {
+    **MODEL_RECIPES['vgg_apglc_counthead_stage2_nwpu'],
+    'query_feature_interpolation': 'implicit',
+    'query_ifi_sharing': 'independent',
+    'query_ifi_feature_source': 'branch',
+    'ifi_interpolation': 'implicit',
+    'ifi_feature_source': 'branch',
+    'ifi_pos_dim': 32,
+    'ifi_mlp_hidden_dim': 256,
+    'ifi_activation': 'gelu',
+    'ifi_loss_coef': 0.0,
+    'ifi_head_source': 'routed',
+    'ifi_point_coef': 0.2,
+    'ifi_pos_k': 2,
+    'ifi_pos_radius': 2.0,
+    'ifi_random_sampling': True,
+    'ifi_neg_k': 2,
+    'ifi_neg_radius': 8.0,
+    'ifi_neg_min_dist': 2.0,
     'scale_point_loss_coef': 0.05,
     'scale_point_sigma': 'small',
     'scale_point_sigma_min': 2.0,
@@ -2124,6 +2227,13 @@ def get_args_parser():
                         help='NWPU split used for validation/evaluation')
     parser.add_argument('--jhu_eval_split', default='val', choices=('val', 'test', 'train'),
                         help='JHU-Crowd++ split used for validation/evaluation')
+    parser.add_argument('--validation_protocol', default='auto',
+                        choices=('auto', 'benchmark_test', 'train_holdout'),
+                        help='checkpoint-selection protocol; auto uses train_holdout for SHA/SHB/QNRF and benchmark_test for NWPU/JHU')
+    parser.add_argument('--train_holdout_fraction', default=0.1, type=float,
+                        help='fraction of the training split reserved for checkpoint selection under train_holdout validation')
+    parser.add_argument('--train_holdout_seed', default=42, type=int,
+                        help='seed for deterministic train_holdout partitioning')
     parser.add_argument('--partial_annotation_ratio', default=1.0, type=float,
                         help='Shanghai train-only fixed annotated-region ratio in (0,1]; 1 keeps full supervision')
     parser.add_argument('--partial_annotation_seed', default=0, type=int,
@@ -2993,6 +3103,52 @@ class ModelEma:
     def state_dict(self):
         return self.module.state_dict()
 
+
+class IndexedSubset(torch.utils.data.Dataset):
+    def __init__(self, dataset, indices):
+        self.dataset = dataset
+        self.indices = list(int(i) for i in indices)
+
+    def __getitem__(self, idx):
+        return self.dataset[self.indices[idx]]
+
+    def __len__(self):
+        return len(self.indices)
+
+    def get_sample_counts(self):
+        if not hasattr(self.dataset, 'get_sample_counts'):
+            raise AttributeError('underlying dataset does not expose get_sample_counts')
+        counts = self.dataset.get_sample_counts()
+        return [counts[i] for i in self.indices]
+
+    def __getattr__(self, name):
+        return getattr(self.dataset, name)
+
+
+def resolve_validation_protocol(args):
+    protocol = str(getattr(args, 'validation_protocol', 'auto'))
+    if protocol != 'auto':
+        return protocol
+    if args.dataset_file in ('NWPU', 'JHU'):
+        return 'benchmark_test'
+    return 'train_holdout'
+
+
+def build_train_holdout_indices(num_samples, holdout_fraction, seed):
+    if num_samples < 2:
+        raise ValueError('train-holdout validation requires at least 2 training samples')
+    holdout_fraction = float(holdout_fraction)
+    if not (0.0 < holdout_fraction < 1.0):
+        raise ValueError('--train_holdout_fraction must be in (0, 1)')
+    num_val = int(round(num_samples * holdout_fraction))
+    num_val = max(1, min(num_samples - 1, num_val))
+    generator = torch.Generator()
+    generator.manual_seed(int(seed))
+    permutation = torch.randperm(num_samples, generator=generator).tolist()
+    val_indices = sorted(permutation[:num_val])
+    train_indices = sorted(permutation[num_val:])
+    return train_indices, val_indices
+
     def load_state_dict(self, state_dict):
         self.module.load_state_dict(state_dict)
 
@@ -3100,8 +3256,19 @@ def main(args):
         lr_scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=warmup_hold_cosine_factor)
 
     # build dataset
+    validation_protocol = resolve_validation_protocol(args)
     dataset_train = build_dataset(image_set='train', args=args)
-    dataset_val = build_dataset(image_set='val', args=args)
+    if validation_protocol == 'train_holdout':
+        dataset_train_eval = build_dataset(image_set='train_eval', args=args)
+        train_indices, val_indices = build_train_holdout_indices(
+            len(dataset_train_eval),
+            getattr(args, 'train_holdout_fraction', 0.1),
+            getattr(args, 'train_holdout_seed', args.seed),
+        )
+        dataset_train = IndexedSubset(dataset_train, train_indices)
+        dataset_val = IndexedSubset(dataset_train_eval, val_indices)
+    else:
+        dataset_val = build_dataset(image_set='val', args=args)
 
     if args.distributed:
         sampler_train = DistributedSampler(dataset_train, seed=args.seed)
@@ -3151,8 +3318,18 @@ def main(args):
             f'accum_iter={accum_iter}',
             f'effective_batch_size={args.batch_size * accum_iter}',
             f'train_samples={len(dataset_train)}',
+            f'val_samples={len(dataset_val)}',
             f'train_batches={len(batch_sampler_train)}',
         )
+        print(
+            'validation protocol:',
+            validation_protocol,
+            f'dataset={args.dataset_file}',
+            f'nwpu_eval_split={getattr(args, "nwpu_eval_split", "")}',
+            f'jhu_eval_split={getattr(args, "jhu_eval_split", "")}',
+        )
+        if validation_protocol == 'benchmark_test' and args.dataset_file in ('SHA', 'SHB', 'QNRF', 'UCF'):
+            print('WARNING: benchmark_test validation selects checkpoints on the benchmark split for this dataset')
 
     # output directory and log
     output_dir = resolve_output_dir(args)
@@ -3448,6 +3625,7 @@ def main(args):
             'test_mse': pretrain_mse,
             'pred_cnt': float(test_stats.get('pred_cnt', 0.0)),
             'gt_cnt': float(test_stats.get('gt_cnt', 0.0)),
+            'validation_protocol': validation_protocol,
             'best_epoch': int(best_epoch),
             'best_test_mae': float(best_mae),
             'best_test_mse': float(best_mse),
@@ -3694,6 +3872,7 @@ def main(args):
                     'best_loc_epoch': int(best_loc_epoch),
                     'eval_time': float(t2 - t1),
                     'eval_model': eval_model_name,
+                    'validation_protocol': validation_protocol,
                     'eval_count_mode': getattr(args, 'eval_count_mode', 'threshold'),
                     'eval_count_source': getattr(args, 'eval_count_source', 'pet'),
                     'eval_count_blend_alpha': float(getattr(args, 'eval_count_blend_alpha', 0.5)),
@@ -3840,6 +4019,7 @@ def main(args):
             'best_loc_mae': float(best_loc_mae),
             'best_loc_mse': float(best_loc_mse),
             'best_loc_epoch': int(best_loc_epoch),
+            'validation_protocol': validation_protocol,
             'final': True,
             'eval_model': getattr(args, 'eval_model', 'auto'),
         }

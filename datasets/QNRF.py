@@ -19,6 +19,7 @@ class QNRF(Dataset):
         data_root,
         transform=None,
         train=False,
+        source_split=None,
         flip=False,
         patch_size=256,
         crop_attempts=1,
@@ -26,7 +27,11 @@ class QNRF(Dataset):
         eval_max_size=1536,
     ):
         self.root_path = data_root
-        self.split_name = 'Train' if train else 'Test'
+        if source_split is None:
+            source_split = 'train' if train else 'test'
+        if source_split not in ('train', 'test'):
+            raise ValueError("source_split must be 'train' or 'test'")
+        self.split_name = 'Train' if source_split == 'train' else 'Test'
         self.split_dir = find_split_dir(data_root, self.split_name)
         if not os.path.isdir(self.split_dir):
             raise FileNotFoundError(f'Could not find QNRF split directory: {self.split_dir}')
@@ -286,16 +291,26 @@ def build(image_set, args):
         return QNRF(
             data_root,
             train=True,
+            source_split='train',
             transform=transform,
             flip=True,
             patch_size=getattr(args, 'patch_size_choices', '') or args.patch_size,
             crop_attempts=getattr(args, 'crop_attempts', 1),
             min_crop_points=getattr(args, 'min_crop_points', 0),
         )
+    if image_set == 'train_eval':
+        return QNRF(
+            data_root,
+            train=False,
+            source_split='train',
+            transform=transform,
+            eval_max_size=0,
+        )
     if image_set == 'val':
         return QNRF(
             data_root,
             train=False,
+            source_split='test',
             transform=transform,
             eval_max_size=eval_max_size,
         )
