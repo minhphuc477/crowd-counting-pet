@@ -133,6 +133,8 @@ def run_eval(
         str(args.num_workers),
         "--results_file",
         str(results_file),
+        "--eval_image_set",
+        args.eval_image_set,
         "--override_score_threshold",
         str(score_threshold),
         "--override_split_threshold",
@@ -243,6 +245,7 @@ def run_eval(
             float(eval_foreground_gate_strength) if eval_foreground_gate_strength is not None else "checkpoint"
         ),
         "eval_protocol": args.eval_protocol,
+        "eval_image_set": args.eval_image_set,
         "tta_flip": bool(args.tta_flip),
         "tta_scales": args.tta_scales,
         "returncode": int(proc.returncode),
@@ -291,6 +294,7 @@ def write_outputs(records: list[dict], output_dir: Path) -> None:
         "eval_foreground_gate_mode",
         "eval_foreground_gate_strength",
         "eval_protocol",
+        "eval_image_set",
         "tta_flip",
         "tta_scales",
         "eval_mae",
@@ -365,6 +369,8 @@ def get_args() -> argparse.Namespace:
     parser.add_argument("--num_workers", default=2, type=int)
     parser.add_argument("--timeout", default=1800, type=int, help="Per-eval timeout in seconds; 0 disables")
     parser.add_argument("--output_dir", default="", help="Where to save sweep logs/results")
+    parser.add_argument("--eval_image_set", default="val", choices=("val", "train_eval", "train_holdout"),
+                        help="dataset split passed to eval.py")
     parser.add_argument("--tta_flip", action="store_true", help="average original and horizontal-flip counts")
     parser.add_argument("--tta_scales", default="1.0", help="comma-separated eval scales passed to eval.py")
     parser.add_argument("--no_localization_metrics", action="store_true", help="disable localization metrics in eval.py")

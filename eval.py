@@ -377,6 +377,12 @@ def get_args_parser():
                         help='where to save eval metrics; empty writes eval_results.json next to checkpoint')
     parser.add_argument('--per_image_results_file', default='',
                         help='optional JSON path for per-image count/localization errors')
+    parser.add_argument('--eval_image_set', default='val', choices=('val', 'train_eval', 'train_holdout'),
+                        help='dataset split used by eval.py; train_holdout reproduces main.py validation_protocol=train_holdout')
+    parser.add_argument('--train_holdout_fraction', default=0.1, type=float,
+                        help='fraction of training split used by --eval_image_set train_holdout')
+    parser.add_argument('--train_holdout_seed', default=42, type=int,
+                        help='seed used by --eval_image_set train_holdout')
     parser.add_argument('--eval_tile_size', default=0, type=int,
                         help='positive value enables tiled full-resolution eval for images larger than this size')
     parser.add_argument('--eval_tile_overlap', default=0, type=int,
@@ -434,7 +440,7 @@ def merge_checkpoint_args(args, checkpoint):
     always_runtime_keys = {
         'resume', 'device', 'vis_dir', 'results_file', 'data_path', 'dataset_file',
         'nwpu_eval_split', 'num_workers', 'seed',
-        'per_image_results_file',
+        'per_image_results_file', 'eval_image_set',
         'override_score_threshold', 'override_split_threshold', 'override_split_threshold_quantile',
         'override_query_prune_threshold',
         'checkpoint_model_key', 'deterministic', 'amp_dtype', 'strict_model_checks',
@@ -460,6 +466,7 @@ def merge_checkpoint_args(args, checkpoint):
         'no_localization_metrics', 'localization_large_threshold', 'localization_small_threshold',
         'localization_protocol', 'localization_large_scale', 'localization_small_scale',
         'eval_protocol', 'resume_allow_arch_change',
+        'train_holdout_fraction', 'train_holdout_seed',
     }
     explicit_args = set(getattr(args, '_explicit_args', set()))
     if 'eval_dense_start_epoch' in explicit_args:
@@ -564,6 +571,48 @@ def set_reproducibility(seed, deterministic=True):
         torch.backends.cudnn.benchmark = False
 
 
+class IndexedSubset(torch.utils.data.Dataset):
+    def __init__(self, dataset, indices):
+        self.dataset = dataset
+        self.indices = list(int(index) for index in indices)
+
+    def __getitem__(self, idx):
+        return self.dataset[self.indices[idx]]
+
+    def __len__(self):
+        return len(self.indices)
+
+    def __getattr__(self, name):
+        return getattr(self.dataset, name)
+
+
+def build_train_holdout_indices(num_samples, holdout_fraction, seed):
+    if num_samples < 2:
+        raise ValueError('train-holdout evaluation requires at least 2 training samples')
+    holdout_fraction = float(holdout_fraction)
+    if not (0.0 < holdout_fraction < 1.0):
+        raise ValueError('--train_holdout_fraction must be in (0, 1)')
+    num_val = int(round(num_samples * holdout_fraction))
+    num_val = max(1, min(num_samples - 1, num_val))
+    generator = torch.Generator()
+    generator.manual_seed(int(seed))
+    permutation = torch.randperm(num_samples, generator=generator).tolist()
+    return sorted(permutation[num_val:]), sorted(permutation[:num_val])
+
+
+def build_eval_dataset(args):
+    eval_image_set = getattr(args, 'eval_image_set', 'val')
+    if eval_image_set == 'train_holdout':
+        dataset = build_dataset(image_set='train_eval', args=args)
+        _, val_indices = build_train_holdout_indices(
+            len(dataset),
+            getattr(args, 'train_holdout_fraction', 0.1),
+            getattr(args, 'train_holdout_seed', args.seed),
+        )
+        return IndexedSubset(dataset, val_indices), eval_image_set
+    return build_dataset(image_set=eval_image_set, args=args), eval_image_set
+
+
 def main(args):
     utils.init_distributed_mode(args)
     device = torch.device(args.device)
@@ -598,8 +647,9 @@ def main(args):
     print('params:', n_parameters/1e6)
 
     # build dataset
-    val_image_set = 'val'
-    dataset_val = build_dataset(image_set=val_image_set, args=args)
+    dataset_val, eval_image_set = build_eval_dataset(args)
+    if utils.is_main_process():
+        print(f'eval image set: {eval_image_set}, samples={len(dataset_val)}')
 
     if args.distributed:
         sampler_val = DistributedSampler(dataset_val, shuffle=False)
@@ -699,6 +749,7 @@ def main(args):
             'gt_cnt': float(test_stats.get('gt_cnt', 0.0)),
             'checkpoint': args.resume,
             'eval_model': eval_model_key,
+            'eval_image_set': eval_image_set,
             'eval_protocol': args.eval_protocol,
             'tta_flip': bool(args.tta_flip),
             'tta_scales': list(tta_scales),
