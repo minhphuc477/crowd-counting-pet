@@ -632,6 +632,9 @@ def build(image_set, args):
             std=[0.229, 0.224, 0.225],
         ),
     ])
+    eval_max_size = int(getattr(args, 'eval_max_size', -1))
+    if eval_max_size < 0:
+        eval_max_size = 2048
     if image_set == 'train':
         return NWPU(
             args.data_path,
@@ -642,7 +645,7 @@ def build(image_set, args):
             patch_size=getattr(args, 'patch_size_choices', '') or args.patch_size,
             crop_attempts=getattr(args, 'crop_attempts', 1),
             min_crop_points=getattr(args, 'min_crop_points', 0),
-            eval_max_size=getattr(args, 'eval_max_size', 1536),
+            eval_max_size=eval_max_size,
             sigma_mode=getattr(args, 'nwpu_sigma_mode', 'area'),
             dense_crop_prob=getattr(args, 'nwpu_dense_crop_prob', 0.0),
             dense_crop_attempts=getattr(args, 'nwpu_dense_crop_attempts', 16),
@@ -654,7 +657,7 @@ def build(image_set, args):
             split=split,
             train=False,
             transform=transform,
-            eval_max_size=getattr(args, 'eval_max_size', 1536),
+            eval_max_size=eval_max_size,
             sigma_mode=getattr(args, 'nwpu_sigma_mode', 'area'),
         )
     raise ValueError(f'Unsupported image_set for NWPU: {image_set}')

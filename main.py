@@ -1072,6 +1072,38 @@ MODEL_RECIPES['vgg_pet_branch_ifi'] = {
     'ifi_end_epoch': -1,
 }
 
+# Residual Multi-scale IFI PET (RMI-PET).
+#
+# PET's validated quadtree, matcher, and inference contract remain unchanged.
+# One shared APGCC-style IFI reads projected 4x/8x features for both branches
+# and auxiliary points. Its contribution is LayerScale-initialized as a small
+# residual over each branch's native feature, avoiding the count-calibration
+# regression observed when IFI replaced PET features outright.
+MODEL_RECIPES['vgg_pet_rmi'] = {
+    **MODEL_RECIPES['vgg_pet_paper'],
+    'query_feature_interpolation': 'implicit',
+    'query_ifi_sharing': 'shared',
+    'query_ifi_feature_source': 'fpn4x8x',
+    'query_ifi_residual': True,
+    'query_ifi_residual_init': 1e-3,
+    'ifi_interpolation': 'implicit',
+    'ifi_feature_source': 'branch',
+    'ifi_pos_dim': 32,
+    'ifi_mlp_hidden_dim': 256,
+    'ifi_activation': 'gelu',
+    'ifi_loss_coef': 0.2,
+    'ifi_head_source': 'routed',
+    'ifi_point_coef': 0.2,
+    'ifi_pos_k': 2,
+    'ifi_pos_radius': 2.0,
+    'ifi_random_sampling': True,
+    'ifi_neg_k': 2,
+    'ifi_neg_radius': 8.0,
+    'ifi_neg_min_dist': 2.0,
+    'ifi_start_epoch': 0,
+    'ifi_end_epoch': -1,
+}
+
 MODEL_RECIPES['vgg_apglc_full_ifi_counthead_ft_legacy'] = {
     **MODEL_RECIPES['vgg_apglc_density_counthead_ft_legacy'],
     'query_feature_interpolation': 'implicit',
@@ -1308,8 +1340,11 @@ MODEL_RECIPES['vgg_apglc_unified_ifi_counthead_stage2_nwpu'] = {
 }
 
 EXPERIMENTAL_MODEL_RECIPES = {
-    # These paths are kept for audit/reproduction only. Session runs showed
-    # catastrophic over/under-counting before they could improve on APG+LC.
+    # RMI-PET is the current cross-dataset hypothesis. It is not promoted to a
+    # production recipe until fixed-protocol SHA/SHB/QNRF/JHU/NWPU runs pass.
+    'vgg_pet_rmi',
+    # The remaining paths are kept for audit/reproduction only. Session runs
+    # showed catastrophic drift or failed to improve on the PET/APG+LC baselines.
     'vgg_apglc_cbme_late_countreg',
     'vgg_apglc_foreground',
     'vgg_apglc_balanced_late_countreg',
@@ -1406,6 +1441,8 @@ ARCHITECTURE_OVERRIDE_KEYS = {
     'query_feature_interpolation',
     'query_ifi_sharing',
     'query_ifi_feature_source',
+    'query_ifi_residual',
+    'query_ifi_residual_init',
     'ifi_interpolation',
     'ifi_feature_source',
     'ifi_pos_dim',
@@ -1880,6 +1917,10 @@ def get_args_parser():
                         help='share one implicit interpolator across sparse, dense, and auxiliary point paths')
     parser.add_argument('--query_ifi_feature_source', default='branch', choices=('branch', 'fpn4x8x'),
                         help='shared IFI input: native branch feature or identity-initialized 4x/8x fusion')
+    parser.add_argument('--query_ifi_residual', action='store_true',
+                        help='learn shared IFI as a residual over PET native branch features')
+    parser.add_argument('--query_ifi_residual_init', default=1e-3, type=float,
+                        help='initial residual IFI contribution before tanh; must be non-negative')
     parser.add_argument('--ifi_interpolation', default='bilinear', choices=('bilinear', 'implicit'),
                         help='feature interpolation used by IFI auxiliary supervision')
     parser.add_argument('--ifi_feature_source', default='encoded', choices=('encoded', 'branch'),
@@ -2077,10 +2118,18 @@ def get_args_parser():
                         help='number of random crop candidates tried per positive training image')
     parser.add_argument('--min_crop_points', default=0, type=int,
                         help='minimum people desired in a positive training crop')
-    parser.add_argument('--eval_max_size', default=1536, type=int,
-                        help='QNRF/UCF validation long-side cap; non-positive disables resizing')
+    parser.add_argument('--eval_max_size', default=-1, type=int,
+                        help='validation long-side cap; -1 selects the published dataset default (QNRF 1536, JHU/NWPU 2048), 0 disables resizing')
     parser.add_argument('--nwpu_eval_split', default='val', choices=('val', 'test', 'train'),
                         help='NWPU split used for validation/evaluation')
+    parser.add_argument('--jhu_eval_split', default='val', choices=('val', 'test', 'train'),
+                        help='JHU-Crowd++ split used for validation/evaluation')
+    parser.add_argument('--partial_annotation_ratio', default=1.0, type=float,
+                        help='Shanghai train-only fixed annotated-region ratio in (0,1]; 1 keeps full supervision')
+    parser.add_argument('--partial_annotation_seed', default=0, type=int,
+                        help='seed for deterministic per-image partial annotation rectangles')
+    parser.add_argument('--partial_annotation_height_ratio', default=0.5, type=float,
+                        help='preferred height fraction of each fixed partial annotation rectangle')
     parser.add_argument('--nwpu_sigma_mode', default='area', choices=('area', 'diag', 'min_diag', 'official'),
                         help='fallback localization sigma derived from NWPU boxes when annotation sigma is absent')
     parser.add_argument('--nwpu_dense_crop_prob', default=0.0, type=float,
@@ -2177,8 +2226,9 @@ def apply_model_recipe(args):
     ):
         raise ValueError(
             f'model_recipe={recipe_name!r} is experimental and blocked by default '
-            'because it produced severe SHA count drift in this repo. Use '
-            '--allow_experimental_model_recipe only for isolated ablations.'
+            'because it is unvalidated or previously regressed counting in this '
+            'repository. Use --allow_experimental_model_recipe only for a '
+            'declared ablation.'
         )
     recipe = MODEL_RECIPES[recipe_name]
     explicit_args = set(getattr(args, '_explicit_args', set()))
@@ -2186,6 +2236,42 @@ def apply_model_recipe(args):
         if key in explicit_args:
             continue
         setattr(args, key, value)
+
+
+def validate_partial_annotation_contract(args):
+    ratio = float(getattr(args, 'partial_annotation_ratio', 1.0))
+    if not 0.0 < ratio <= 1.0:
+        raise ValueError('--partial_annotation_ratio must be in (0, 1]')
+    if ratio >= 1.0:
+        return
+    if getattr(args, 'dataset_file', '') not in ('SHA', 'SHB'):
+        raise ValueError(
+            'fixed partial-region supervision is currently implemented only '
+            'for ShanghaiTech SHA/SHB'
+        )
+
+    incompatible = {
+        'count_loss_coef': getattr(args, 'count_loss_coef', 0.0),
+        'region_count_loss_coef': getattr(args, 'region_count_loss_coef', 0.0),
+        'count_head_loss_coef': getattr(args, 'count_head_loss_coef', 0.0),
+        'density_map_loss_coef': getattr(args, 'density_map_loss_coef', 0.0),
+        'zip_count_loss_coef': getattr(args, 'zip_count_loss_coef', 0.0),
+        'local_zip_loss_coef': getattr(args, 'local_zip_loss_coef', 0.0),
+        'foreground_loss_coef': getattr(args, 'foreground_loss_coef', 0.0),
+        'apg_soft_loss_coef': getattr(args, 'apg_soft_loss_coef', 0.0),
+        'qd_apg_loss_coef': getattr(args, 'qd_apg_loss_coef', 0.0),
+        'routed_apg_loss_coef': getattr(args, 'routed_apg_loss_coef', 0.0),
+        'inheritance_loss_coef': getattr(args, 'inheritance_loss_coef', 0.0),
+    }
+    enabled = [
+        name for name, value in incompatible.items()
+        if float(value or 0.0) > 0.0
+    ]
+    if enabled:
+        raise ValueError(
+            'partial-region training cannot use losses whose targets include '
+            'the unannotated image area: ' + ', '.join(enabled)
+        )
 
 
 def is_safe_fresh_count_head(args):
@@ -2463,7 +2549,7 @@ def merge_checkpoint_args(args, checkpoint):
         'strict_model_checks',
         # allow overriding schedule/eval settings at resume time
         'epochs', 'batch_size', 'accum_iter', 'eval_freq', 'eval_start_epoch', 'eval_model',
-        'eval_before_train', 'data_path', 'nwpu_eval_split',
+        'eval_before_train', 'data_path', 'nwpu_eval_split', 'jhu_eval_split',
         'bad_count_direction', 'bad_count_ratio_max', 'bad_count_mae_min', 'bad_count_start_epoch',
     }
     if getattr(args, 'resume_model_only', False):
@@ -2528,6 +2614,7 @@ def merge_checkpoint_args(args, checkpoint):
             'apg_consistency_coef', 'apg_consistency_k', 'apg_consistency_sigma',
             'apg_soft_loss_coef', 'apg_soft_pos_k', 'apg_soft_sigma', 'apg_soft_point_coef',
             'query_feature_interpolation', 'query_ifi_sharing', 'query_ifi_feature_source',
+            'query_ifi_residual', 'query_ifi_residual_init',
             'ifi_interpolation', 'ifi_feature_source', 'ifi_pos_dim',
             'ifi_mlp_hidden_dim', 'ifi_activation',
             'ifi_loss_coef', 'ifi_head_source', 'ifi_point_coef',
@@ -2932,6 +3019,7 @@ def main(args):
         apply_backbone_recipe(args)
     apply_model_recipe(args)
     args = sanitize_unstable_training_args(args)
+    validate_partial_annotation_contract(args)
     print(args)
     device = torch.device(args.device)
 

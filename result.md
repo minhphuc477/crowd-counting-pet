@@ -38,3 +38,54 @@ conda activate crowd_counting
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
 
+CUDA_VISIBLE_DEVICES=0 python main.py \
+  --resume outputs/NWPU/vgg16_bn_apglc_unified_ifi_stage1_seed42/checkpoint.pth \
+  --output_dir outputs/NWPU/vgg16_bn_apglc_unified_ifi_stage1_seed42 \
+  --device cuda --num_workers 2 --batch_size 16 --amp
+
+
+
+
+RUN="outputs/SHB/vgg_pet_branch_ifi_seed42_$(date +%Y%m%d_%H%M%S)"
+
+CUDA_VISIBLE_DEVICES=0 python main.py \
+  --model_recipe vgg_pet_branch_ifi \
+  --dataset_file SHB \
+  --data_path data/ShanghaiTech/part_B \
+  --output_dir "$RUN" \
+  --device cuda \
+  --num_workers 2 \
+  --batch_size 16 \
+  --epochs 1500 \
+  --lr 0.0001 \
+  --lr_backbone 0.00001 \
+  --lr_scheduler step \
+  --lr_drop -1 \
+  --patch_size 256 \
+  --pet_loss_variant paper \
+  --split_loss_variant paper \
+  --query_feature_interpolation implicit \
+  --query_ifi_sharing independent \
+  --ifi_interpolation implicit \
+  --ifi_feature_source branch \
+  --ifi_loss_coef 0.02 \
+  --ifi_head_source routed \
+  --ifi_point_coef 0.2 \
+  --ifi_pos_k 2 \
+  --ifi_pos_radius 2 \
+  --ifi_random_sampling \
+  --ifi_neg_k 2 \
+  --ifi_neg_radius 8 \
+  --ifi_neg_min_dist 2 \
+  --ifi_start_epoch 0 \
+  --ifi_end_epoch -1 \
+  --apg_loss_coef 0 \
+  --count_head_loss_coef 0 \
+  --density_map_loss_coef 0 \
+  --branch_target_routing none \
+  --score_threshold 0.5 \
+  --split_threshold 0.5 \
+  --query_prune_threshold 0.5 \
+  --eval_freq 5 \
+  --eval_start_epoch 0 \
+  --seed 42

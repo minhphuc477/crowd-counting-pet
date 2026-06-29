@@ -15,6 +15,46 @@ def _disable_autocast_for(device):
         return torch.amp.autocast('cuda', enabled=False)
     return torch.cuda.amp.autocast(enabled=False)
 
+
+def get_query_supervision_mask(outputs, target, batch_index=0):
+    """Return queries whose centers fall inside the annotated image region."""
+    points_queries = outputs.get("points_queries")
+    if points_queries is None:
+        return None
+    if points_queries.ndim == 3:
+        points_queries = points_queries[batch_index]
+    supervision_mask = target.get("supervision_mask")
+    if supervision_mask is None:
+        return torch.ones(
+            points_queries.shape[0],
+            dtype=torch.bool,
+            device=points_queries.device,
+        )
+
+    supervision_mask = supervision_mask.to(
+        device=points_queries.device,
+        dtype=torch.bool,
+    )
+    if supervision_mask.ndim != 2:
+        raise ValueError(
+            "target supervision_mask must have shape [H, W], "
+            f"got {tuple(supervision_mask.shape)}"
+        )
+    img_h, img_w = outputs["img_shape"]
+    query_y = torch.floor(points_queries[:, 0] * float(img_h)).long()
+    query_x = torch.floor(points_queries[:, 1] * float(img_w)).long()
+    valid = (
+        (query_y >= 0)
+        & (query_y < supervision_mask.shape[0])
+        & (query_x >= 0)
+        & (query_x < supervision_mask.shape[1])
+    )
+    result = torch.zeros_like(valid)
+    if valid.any():
+        result[valid] = supervision_mask[query_y[valid], query_x[valid]]
+    return result
+
+
 class HungarianMatcher(nn.Module):
     """
     This class computes an assignment between the targets and the predictions of the network
@@ -52,61 +92,86 @@ class HungarianMatcher(nn.Module):
             For each batch element, it holds:
                 len(index_i) = len(index_j) = min(num_queries, num_target_points)
         """
-        bs, num_queries = outputs["pred_logits"].shape[:2]
-        sizes = [len(v["points"]) for v in targets]
-        total_targets = sum(sizes)
+        bs, _ = outputs["pred_logits"].shape[:2]
         device = outputs["pred_logits"].device
-        if total_targets == 0:
-            empty = torch.empty(0, dtype=torch.int64, device=device)
-            return [(empty, empty) for _ in range(bs)]
 
         # The matcher can be called inside AMP autocast. Keep the assignment
         # cost in fp32: fp16 cdist can overflow on 256/512 pixel distances.
+        indices = []
         with _disable_autocast_for(device):
-            # flatten to compute the cost matrices in a batch
             pred_logits = outputs["pred_logits"].detach().float()
             pred_points = outputs["pred_points"].detach().float()
             if not torch.isfinite(pred_logits).all():
                 raise ValueError('HungarianMatcher received non-finite pred_logits')
             if not torch.isfinite(pred_points).all():
                 raise ValueError('HungarianMatcher received non-finite pred_points')
-            out_prob = pred_logits.flatten(0, 1).softmax(-1)  # [batch_size * num_queries, 2]
-            out_points = pred_points.flatten(0, 1)  # [batch_size * num_queries, 2]
-
-            # concat target labels and points
-            tgt_ids = torch.cat([v["labels"] for v in targets]).to(device=device)
-            tgt_points = torch.cat([v["points"] for v in targets]).to(device=device, dtype=torch.float32)
-            if not torch.isfinite(tgt_points).all():
-                raise ValueError('HungarianMatcher received non-finite target points')
-
-            # compute the classification cost, i.e., - prob[target class]
-            cost_class = -out_prob[:, tgt_ids]
-
-            # compute the L2 cost between points
             img_h, img_w = outputs['img_shape']
-            out_points_abs = out_points.clone()
-            out_points_abs[:, 0] *= float(img_h)
-            out_points_abs[:, 1] *= float(img_w)
-            cost_point = torch.cdist(out_points_abs, tgt_points, p=2)
+            for batch_index in range(bs):
+                target = targets[batch_index]
+                target_count = len(target["points"])
+                valid_queries = get_query_supervision_mask(
+                    outputs,
+                    target,
+                    batch_index,
+                )
+                valid_query_indices = torch.nonzero(
+                    valid_queries,
+                    as_tuple=False,
+                ).flatten()
+                if target_count == 0 or valid_query_indices.numel() == 0:
+                    empty = torch.empty(0, dtype=torch.int64, device=device)
+                    indices.append((empty, empty))
+                    continue
 
-            # final cost matrix
-            C = self.cost_point * cost_point + self.cost_class * cost_class
-            if not torch.isfinite(C).all():
-                raise ValueError('HungarianMatcher produced a non-finite cost matrix')
-            C = C.view(bs, num_queries, total_targets).cpu()
-
-        indices = []
-        for i, c in enumerate(C.split(sizes, -1)):
-            if sizes[i] == 0:
+                target_ids = target["labels"].to(device=device)
+                target_points = target["points"].to(
+                    device=device,
+                    dtype=torch.float32,
+                )
+                if not torch.isfinite(target_points).all():
+                    raise ValueError(
+                        'HungarianMatcher received non-finite target points'
+                    )
+                probabilities = pred_logits[
+                    batch_index,
+                    valid_query_indices,
+                ].softmax(-1)
+                source_points = pred_points[
+                    batch_index,
+                    valid_query_indices,
+                ].clone()
+                source_points[:, 0] *= float(img_h)
+                source_points[:, 1] *= float(img_w)
+                cost_class = -probabilities[:, target_ids]
+                cost_point = torch.cdist(
+                    source_points,
+                    target_points,
+                    p=2,
+                )
+                cost = (
+                    self.cost_point * cost_point
+                    + self.cost_class * cost_class
+                )
+                if not torch.isfinite(cost).all():
+                    raise ValueError(
+                        'HungarianMatcher produced a non-finite cost matrix'
+                    )
+                source_local, target_index = linear_sum_assignment(
+                    cost.cpu()
+                )
+                source_local = torch.as_tensor(
+                    source_local,
+                    dtype=torch.int64,
+                    device=device,
+                )
+                target_index = torch.as_tensor(
+                    target_index,
+                    dtype=torch.int64,
+                    device=device,
+                )
                 indices.append((
-                    torch.empty(0, dtype=torch.int64, device=device),
-                    torch.empty(0, dtype=torch.int64, device=device),
-                ))
-            else:
-                src_idx, tgt_idx = linear_sum_assignment(c[i])
-                indices.append((
-                    torch.as_tensor(src_idx, dtype=torch.int64, device=device),
-                    torch.as_tensor(tgt_idx, dtype=torch.int64, device=device),
+                    valid_query_indices[source_local],
+                    target_index,
                 ))
         return indices
 

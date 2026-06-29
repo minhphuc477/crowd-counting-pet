@@ -279,6 +279,9 @@ def build(image_set, args):
     ])
 
     data_root = args.data_path
+    eval_max_size = int(getattr(args, 'eval_max_size', -1))
+    if eval_max_size < 0:
+        eval_max_size = 1536
     if image_set == 'train':
         return QNRF(
             data_root,
@@ -294,6 +297,6 @@ def build(image_set, args):
             data_root,
             train=False,
             transform=transform,
-            eval_max_size=getattr(args, 'eval_max_size', 1536),
+            eval_max_size=eval_max_size,
         )
     raise ValueError(f'Unsupported image_set for QNRF: {image_set}')

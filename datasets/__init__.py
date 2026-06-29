@@ -1,6 +1,7 @@
 from .SHA import build as build_sha
 from .QNRF import build as build_qnrf
 from .NWPU import build as build_nwpu
+from .JHU import build as build_jhu
 from pathlib import Path
 
 data_paths = {
@@ -11,6 +12,9 @@ data_paths = {
     'NWPU': ('./data/NWPU-Crowd/', './data/NWPU/'),
     'NWPU_Crowd': ('./data/NWPU-Crowd/', './data/NWPU/'),
     'NWPU-Crowd': ('./data/NWPU-Crowd/', './data/NWPU/'),
+    'JHU': ('./data/jhu_crowd_v2.0/', './data/JHU-Crowd++/', './data/JHU/'),
+    'JHU_Crowd': ('./data/jhu_crowd_v2.0/', './data/JHU-Crowd++/', './data/JHU/'),
+    'JHU-Crowd++': ('./data/jhu_crowd_v2.0/', './data/JHU-Crowd++/', './data/JHU/'),
 }
 
 dataset_dir_names = {
@@ -21,6 +25,9 @@ dataset_dir_names = {
     'NWPU': ('NWPU-Crowd', 'NWPU'),
     'NWPU_Crowd': ('NWPU-Crowd', 'NWPU'),
     'NWPU-Crowd': ('NWPU-Crowd', 'NWPU'),
+    'JHU': ('jhu_crowd_v2.0', 'JHU-Crowd++', 'JHU'),
+    'JHU_Crowd': ('jhu_crowd_v2.0', 'JHU-Crowd++', 'JHU'),
+    'JHU-Crowd++': ('jhu_crowd_v2.0', 'JHU-Crowd++', 'JHU'),
 }
 
 
@@ -30,6 +37,9 @@ def _split_images_dir(data_root, image_set, dataset_file):
         return Path(data_root) / split
     if dataset_file in ('NWPU', 'NWPU_Crowd', 'NWPU-Crowd'):
         return Path(data_root) / 'images'
+    if dataset_file in ('JHU', 'JHU_Crowd', 'JHU-Crowd++'):
+        split = 'train' if image_set == 'train' else 'val'
+        return Path(data_root) / split / 'images'
     split = 'train_data' if image_set == 'train' else 'test_data'
     return Path(data_root) / split / 'images'
 
@@ -110,4 +120,7 @@ def build_dataset(image_set, args):
     if args.dataset_file in ('NWPU', 'NWPU_Crowd', 'NWPU-Crowd'):
         args.data_path = _resolve_data_path(args.dataset_file, getattr(args, 'data_path', None), image_set)
         return build_nwpu(image_set, args)
+    if args.dataset_file in ('JHU', 'JHU_Crowd', 'JHU-Crowd++'):
+        args.data_path = _resolve_data_path(args.dataset_file, getattr(args, 'data_path', None), image_set)
+        return build_jhu(image_set, args)
     raise ValueError(f'dataset {args.dataset_file} not supported')

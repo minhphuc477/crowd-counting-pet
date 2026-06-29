@@ -7,7 +7,7 @@ from torch import nn
 
 import main
 from models import build_model
-from models.pet import ImplicitFeatureInterpolator
+from models.pet import ImplicitFeatureInterpolator, SharedMultiScaleIFI
 
 
 class _KeepFeature(nn.Module):
@@ -15,9 +15,9 @@ class _KeepFeature(nn.Module):
         return value[..., :1]
 
 
-def _branch_ifi_args():
+def _recipe_args(recipe):
     argv = [
-        '--model_recipe', 'vgg_pet_branch_ifi',
+        '--model_recipe', recipe,
         '--dataset_file', 'SHB',
         '--data_path', 'unused',
         '--output_dir', 'outputs/_ifi_test',
@@ -27,10 +27,16 @@ def _branch_ifi_args():
         '--dim_feedforward', '128',
         '--nheads', '8',
     ]
+    if recipe in main.EXPERIMENTAL_MODEL_RECIPES:
+        argv.append('--allow_experimental_model_recipe')
     args = main.get_args_parser().parse_args(argv)
     args._explicit_args = main.get_explicit_arg_names(argv)
     main.apply_model_recipe(args)
     return main.sanitize_unstable_training_args(args)
+
+
+def _branch_ifi_args():
+    return _recipe_args('vgg_pet_branch_ifi')
 
 
 class IFIContractTest(unittest.TestCase):
@@ -43,6 +49,35 @@ class IFIContractTest(unittest.TestCase):
         sampled = interpolator.sample_points(feature, 0, points, 32, 32).squeeze(1)
 
         torch.testing.assert_close(sampled, torch.tensor([0.0, 5.0]), rtol=0.0, atol=0.0)
+
+    def test_residual_multiscale_ifi_starts_as_native_pet_features(self):
+        interpolator = SharedMultiScaleIFI(
+            1,
+            pos_dim=2,
+            mlp_hidden_dim=1,
+            residual_base=True,
+            residual_init=0.0,
+        )
+        feature_maps = {
+            '8x': torch.arange(16, dtype=torch.float32).reshape(1, 1, 4, 4),
+            '4x': torch.arange(64, dtype=torch.float32).reshape(1, 1, 8, 8),
+        }
+        points = torch.tensor([[4.0, 4.0], [12.0, 12.0]])
+
+        sampled = interpolator.sample_batch(feature_maps, points, (32, 32), primary='8x')
+
+        torch.testing.assert_close(
+            sampled.squeeze(0).squeeze(-1),
+            torch.tensor([0.0, 5.0]),
+            rtol=0.0,
+            atol=0.0,
+        )
+
+    def test_residual_mode_preserves_shared_ifi_checkpoint_keys(self):
+        legacy = SharedMultiScaleIFI(8, residual_base=False)
+        residual = SharedMultiScaleIFI(8, residual_base=True)
+
+        self.assertEqual(set(legacy.state_dict()), set(residual.state_dict()))
 
     def test_branch_recipe_is_a_controlled_scratch_ablation(self):
         args = _branch_ifi_args()
@@ -85,6 +120,55 @@ class IFIContractTest(unittest.TestCase):
             ]
             self.assertTrue(gradients)
             self.assertTrue(all(torch.isfinite(gradient).all() for gradient in gradients))
+
+    def test_rmi_recipe_is_shared_residual_and_trains_both_paths(self):
+        torch.manual_seed(0)
+        args = _recipe_args('vgg_pet_rmi')
+        self.assertEqual(args.epochs, 1500)
+        self.assertEqual(args.apg_loss_coef, 0.0)
+        self.assertEqual(args.count_head_loss_coef, 0.0)
+        self.assertEqual(args.ifi_loss_coef, 0.2)
+        self.assertEqual(args.query_ifi_sharing, 'shared')
+        self.assertEqual(args.query_ifi_feature_source, 'fpn4x8x')
+        self.assertTrue(args.query_ifi_residual)
+        self.assertEqual(args.split_loss_variant, 'paper')
+
+        model, criterion = build_model(args)
+        model.train()
+        image = torch.rand(3, 128, 128)
+        points = torch.tensor([[30.0, 30.0], [34.0, 34.0], [90.0, 80.0]])
+        target = {
+            'points': points,
+            'labels': torch.ones(points.shape[0], dtype=torch.long),
+            'density': torch.tensor(float(points.shape[0])),
+        }
+
+        output = model([image], train=True, criterion=criterion, targets=[target], epoch=0)
+
+        self.assertTrue(torch.isfinite(output['losses']))
+        self.assertIn('loss_ifi', output['loss_dict'])
+        self.assertNotIn('loss_apg_sp', output['loss_dict'])
+        self.assertNotIn('loss_apg_ds', output['loss_dict'])
+        output['losses'].backward()
+
+        shared_ifi = model.shared_query_feature_interpolator
+        self.assertIsNotNone(shared_ifi)
+        self.assertIsNotNone(shared_ifi.fusion_scale.grad)
+        self.assertTrue(torch.isfinite(shared_ifi.fusion_scale.grad).all())
+        for module in (shared_ifi.interpolator, shared_ifi.fusion):
+            gradients = [
+                parameter.grad
+                for parameter in module.parameters()
+                if parameter.grad is not None
+            ]
+            self.assertTrue(gradients)
+            self.assertTrue(all(torch.isfinite(gradient).all() for gradient in gradients))
+
+        model.eval()
+        with torch.no_grad():
+            eval_output = model([image], test=True, epoch=0)
+        self.assertTrue(torch.isfinite(eval_output['pred_logits']).all())
+        self.assertTrue(torch.isfinite(eval_output['pred_points']).all())
 
     def test_scratch_run_rejects_existing_checkpoint_directory(self):
         with tempfile.TemporaryDirectory() as tmp:

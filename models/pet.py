@@ -10,7 +10,7 @@ from torch import nn
 from util.misc import (NestedTensor, nested_tensor_from_tensor_list,
                        get_world_size, is_dist_avail_and_initialized)
 
-from .matcher import build_matcher
+from .matcher import build_matcher, get_query_supervision_mask
 from .backbones import *
 from .transformer import *
 from .position_encoding import build_position_encoding
@@ -478,9 +478,9 @@ class ImplicitFeatureInterpolator(nn.Module):
 class SharedMultiScaleIFI(nn.Module):
     """One IFI shared by sparse, dense, and auxiliary point supervision.
 
-    APGCC applies the same implicit representation across feature levels. PET
-    additionally needs to retain branch identity, so multi-scale fusion is an
-    identity-initialized residual around the branch's native 4x or 8x feature.
+    APGCC applies a continuous representation across feature levels. PET also
+    needs to preserve the calibrated native branch representation, so the
+    residual mode learns IFI refinement from an identity-preserving start.
     """
 
     def __init__(
@@ -490,11 +490,17 @@ class SharedMultiScaleIFI(nn.Module):
         mlp_hidden_dim=None,
         activation='gelu',
         feature_source='fpn4x8x',
+        residual_base=False,
+        residual_init=1e-3,
     ):
         super().__init__()
         if feature_source not in ('branch', 'fpn4x8x'):
             raise ValueError('query_ifi_feature_source must be one of "branch" or "fpn4x8x"')
         self.feature_source = feature_source
+        self.residual_base = bool(residual_base)
+        residual_init = float(residual_init)
+        if residual_init < 0:
+            raise ValueError('query_ifi_residual_init must be non-negative')
         self.interpolator = ImplicitFeatureInterpolator(
             hidden_dim,
             pos_dim=pos_dim,
@@ -512,7 +518,32 @@ class SharedMultiScaleIFI(nn.Module):
             act,
             nn.Linear(hidden_dim, hidden_dim),
         )
-        self.fusion_scale = nn.Parameter(torch.zeros(1))
+        scale_init = residual_init if self.residual_base else 0.0
+        self.fusion_scale = nn.Parameter(torch.full((1,), scale_init))
+
+    @staticmethod
+    def sample_native(feature, points_abs, image_shape):
+        """Bilinearly sample the unmodified projected feature map."""
+        if points_abs.numel() == 0:
+            return feature.new_zeros((feature.shape[0], 0, feature.shape[1]))
+        img_h, img_w = image_shape
+        if torch.is_tensor(img_h):
+            img_h = float(img_h.detach().item())
+        if torch.is_tensor(img_w):
+            img_w = float(img_w.detach().item())
+        points = points_abs.to(device=feature.device, dtype=feature.dtype)
+        grid_x = points[:, 1] / max(float(img_w), 1.0) * 2.0 - 1.0
+        grid_y = points[:, 0] / max(float(img_h), 1.0) * 2.0 - 1.0
+        grid = torch.stack([grid_x, grid_y], dim=-1).view(1, -1, 1, 2)
+        grid = grid.expand(feature.shape[0], -1, -1, -1)
+        sampled = F.grid_sample(
+            feature,
+            grid,
+            mode='bilinear',
+            padding_mode='border',
+            align_corners=False,
+        )
+        return sampled.squeeze(-1).transpose(1, 2).contiguous()
 
     def sample_batch(self, feature_maps, points_abs, image_shape, primary):
         if feature_maps is None or primary not in feature_maps:
@@ -523,6 +554,9 @@ class SharedMultiScaleIFI(nn.Module):
             image_shape,
         )
         if self.feature_source == 'branch':
+            if self.residual_base:
+                native = self.sample_native(feature_maps[primary], points_abs, image_shape)
+                return native + torch.tanh(self.fusion_scale) * primary_features
             return primary_features
         secondary = '4x' if primary == '8x' else '8x'
         secondary_features = self.interpolator.sample_batch(
@@ -531,6 +565,9 @@ class SharedMultiScaleIFI(nn.Module):
             image_shape,
         )
         delta = self.fusion(torch.cat([primary_features, secondary_features], dim=-1))
+        if self.residual_base:
+            native = self.sample_native(feature_maps[primary], points_abs, image_shape)
+            return native + torch.tanh(self.fusion_scale) * delta
         return primary_features + torch.tanh(self.fusion_scale) * delta
 
     def sample_points(self, feature_maps, batch_idx, points_abs, img_h, img_w, primary):
@@ -1260,6 +1297,8 @@ class PET(nn.Module):
                 mlp_hidden_dim=getattr(args, 'ifi_mlp_hidden_dim', hidden_dim),
                 activation=getattr(args, 'ifi_activation', 'gelu'),
                 feature_source=self.query_ifi_feature_source,
+                residual_base=getattr(args, 'query_ifi_residual', False),
+                residual_init=getattr(args, 'query_ifi_residual_init', 1e-3),
             )
         transformer = build_decoder(args)
         self.quadtree_sparse = BasePETCount(backbone, num_classes, quadtree_layer='sparse', args=args, transformer=transformer)
@@ -2027,16 +2066,22 @@ class PET(nn.Module):
         den = torch.stack([target['density'].reshape(()) for target in targets]).to(outputs['split_map_raw'].device)
         bs = len(den)
         ds_idx = den < 2 * self.quadtree_sparse.pq_stride   # dense regions index
+        split_valid = self.build_split_supervision_mask(
+            targets,
+            outputs['split_map_raw'],
+        )
         ds_div = outputs['split_map_raw'][ds_idx]
         sp_div = 1 - outputs['split_map_raw']
 
         # constrain sparse regions
-        loss_split_sp = 1 - sp_div.view(bs, -1).max(dim=1)[0].mean()
+        loss_split_sp = self.masked_split_max_loss(sp_div, split_valid)
 
         # constrain dense regions
         if ds_idx.any():
-            ds_num = ds_div.shape[0]
-            loss_split_ds = 1 - ds_div.view(ds_num, -1).max(dim=1)[0].mean()
+            loss_split_ds = self.masked_split_max_loss(
+                ds_div,
+                split_valid[ds_idx],
+            )
         else:
             loss_split_ds = outputs['split_map_raw'].sum() * 0.0
 
@@ -2254,6 +2299,7 @@ class PET(nn.Module):
             split_target,
             pos_weight=self.split_pos_weight,
             neg_weight=self.negative_loss_coef,
+            valid_mask=split_valid,
         )
         weight_split_quality = self.quadtree_loss_coef if epoch >= warmup_ep else 0.0
         loss_dict['loss_split_gt'] = loss_split_quality
@@ -2319,10 +2365,27 @@ class PET(nn.Module):
             gt_points = target['points'].to(device=device, dtype=pred_points.dtype)
             if gt_points.numel() == 0:
                 continue
-            query_dist = torch.cdist(gt_points, query_abs, p=2)
-            k = min(self.apg_pos_k, query_abs.shape[0])
-            nearest = query_dist.topk(k, largest=False).indices.reshape(-1)
+            supervised_queries = get_query_supervision_mask(
+                output,
+                target,
+                batch_idx,
+            )
+            valid_query_idx = torch.nonzero(
+                supervised_queries,
+                as_tuple=False,
+            ).flatten()
+            if valid_query_idx.numel() == 0:
+                continue
+            valid_query_abs = query_abs[valid_query_idx]
+            query_dist_valid = torch.cdist(gt_points, valid_query_abs, p=2)
+            k = min(self.apg_pos_k, valid_query_abs.shape[0])
+            nearest_local = query_dist_valid.topk(
+                k,
+                largest=False,
+            ).indices.reshape(-1)
+            nearest = valid_query_idx[nearest_local]
             nearest = torch.unique(nearest)
+            query_dist = torch.cdist(gt_points, query_abs, p=2)
 
             cls_target = torch.ones(nearest.shape[0], dtype=torch.long, device=device)
             cls_losses.append(self.point_classification_loss(logits[batch_idx, nearest], cls_target))
@@ -2332,7 +2395,11 @@ class PET(nn.Module):
 
             if self.apg_bg_coef > 0 and self.apg_bg_k > 0:
                 min_query_dist = query_dist.min(dim=0).values
-                bg_mask = (~positive_mask) & (min_query_dist >= self.apg_bg_min_dist)
+                bg_mask = (
+                    supervised_queries
+                    & (~positive_mask)
+                    & (min_query_dist >= self.apg_bg_min_dist)
+                )
                 bg_candidates = torch.nonzero(bg_mask, as_tuple=False).flatten()
                 if bg_candidates.numel() > 0:
                     bg_count = min(bg_candidates.numel(), max(1, int(gt_points.shape[0]) * self.apg_bg_k))
@@ -2357,7 +2424,11 @@ class PET(nn.Module):
                 max_dist = self.apg_local_neg_max_dist
                 for gt_idx in range(gt_points.shape[0]):
                     dist = query_dist[gt_idx]
-                    ring_mask = (~positive_mask) & (dist >= self.apg_local_neg_min_dist)
+                    ring_mask = (
+                        supervised_queries
+                        & (~positive_mask)
+                        & (dist >= self.apg_local_neg_min_dist)
+                    )
                     if max_dist > 0:
                         ring_mask = ring_mask & (dist <= max_dist)
                     candidates = torch.nonzero(ring_mask, as_tuple=False).flatten()
@@ -2366,7 +2437,11 @@ class PET(nn.Module):
                         # ring. Fall back to the nearest non-positive query
                         # outside the exclusion radius instead of silently
                         # dropping the APGCC negative for that GT point.
-                        fallback_mask = (~positive_mask) & (dist >= self.apg_local_neg_min_dist)
+                        fallback_mask = (
+                            supervised_queries
+                            & (~positive_mask)
+                            & (dist >= self.apg_local_neg_min_dist)
+                        )
                         candidates = torch.nonzero(fallback_mask, as_tuple=False).flatten()
                     if candidates.numel() == 0:
                         continue
@@ -2656,6 +2731,40 @@ class PET(nn.Module):
             neg_points = neg_points[min_dist >= self.ifi_neg_min_dist]
         return neg_points
 
+    @staticmethod
+    def _points_in_supervision_mask(points, target):
+        supervision_mask = target.get('supervision_mask')
+        if supervision_mask is None:
+            return torch.ones(
+                points.shape[0],
+                dtype=torch.bool,
+                device=points.device,
+            )
+        supervision_mask = supervision_mask.to(
+            device=points.device,
+            dtype=torch.bool,
+        )
+        if supervision_mask.ndim != 2:
+            raise ValueError(
+                'target supervision_mask must have shape [H, W], '
+                f'got {tuple(supervision_mask.shape)}'
+            )
+        point_y = torch.floor(points[:, 0]).long()
+        point_x = torch.floor(points[:, 1]).long()
+        valid = (
+            (point_y >= 0)
+            & (point_y < supervision_mask.shape[0])
+            & (point_x >= 0)
+            & (point_x < supervision_mask.shape[1])
+        )
+        result = torch.zeros_like(valid)
+        if valid.any():
+            result[valid] = supervision_mask[
+                point_y[valid],
+                point_x[valid],
+            ]
+        return result
+
     def compute_ifi_apg_loss(self, outputs, targets, samples):
         """Interpolated Feature Guidance for APG.
 
@@ -2674,8 +2783,14 @@ class PET(nn.Module):
             if gt_points.numel() == 0:
                 continue
             pos_points, pos_gt_points = self._build_ifi_positives(gt_points, img_h, img_w)
+            pos_valid = self._points_in_supervision_mask(
+                pos_points,
+                target,
+            )
+            pos_points = pos_points[pos_valid]
+            pos_gt_points = pos_gt_points[pos_valid]
             pos_dense_mask = None
-            if self.ifi_head_source == 'routed':
+            if pos_points.numel() > 0 and self.ifi_head_source == 'routed':
                 pos_dense_mask = self._ifi_dense_route_mask(
                     pos_points,
                     outputs['split_map_raw'],
@@ -2686,28 +2801,32 @@ class PET(nn.Module):
                 )
             if pos_dense_mask is None:
                 pos_dense_mask = torch.zeros(pos_points.shape[0], dtype=torch.bool, device=encode_src.device)
-            pos_feats = self._sample_routed_ifi_features(
-                outputs,
-                batch_idx,
-                pos_points,
-                pos_dense_mask,
-                img_h,
-                img_w,
-            )
-            pos_target = torch.ones(pos_feats.shape[0], dtype=torch.long, device=encode_src.device)
-            pos_offsets = pos_gt_points - pos_points
-            pos_offsets[:, 0] /= max(float(img_h), 1.0)
-            pos_offsets[:, 1] /= max(float(img_w), 1.0)
-            self._append_ifi_losses(
-                pos_feats,
-                pos_target,
-                cls_losses,
-                point_losses,
-                pos_dense_mask,
-                offset_targets=pos_offsets,
-            )
+            if pos_points.numel() > 0:
+                pos_feats = self._sample_routed_ifi_features(
+                    outputs,
+                    batch_idx,
+                    pos_points,
+                    pos_dense_mask,
+                    img_h,
+                    img_w,
+                )
+                pos_target = torch.ones(pos_feats.shape[0], dtype=torch.long, device=encode_src.device)
+                pos_offsets = pos_gt_points - pos_points
+                pos_offsets[:, 0] /= max(float(img_h), 1.0)
+                pos_offsets[:, 1] /= max(float(img_w), 1.0)
+                self._append_ifi_losses(
+                    pos_feats,
+                    pos_target,
+                    cls_losses,
+                    point_losses,
+                    pos_dense_mask,
+                    offset_targets=pos_offsets,
+                )
 
             neg_points = self._build_ifi_negatives(gt_points, img_h, img_w)
+            neg_points = neg_points[
+                self._points_in_supervision_mask(neg_points, target)
+            ]
             if neg_points.numel() > 0:
                 neg_dense_mask = None
                 if self.ifi_head_source == 'routed':
@@ -3497,12 +3616,26 @@ class PET(nn.Module):
 
             for batch_idx, target in enumerate(targets):
                 gt_points = target['points'].to(device=device, dtype=torch.float32)
-                branch_scores = weighted_scores[batch_idx]
+                supervised_queries = get_query_supervision_mask(
+                    output,
+                    target,
+                    batch_idx,
+                )
+                if not supervised_queries.any():
+                    continue
+                branch_scores = weighted_scores[
+                    batch_idx,
+                    supervised_queries,
+                ]
+                branch_pred_abs = pred_abs[
+                    batch_idx,
+                    supervised_queries,
+                ]
                 if gt_points.numel() == 0:
                     bg_losses.append(branch_scores.mean())
                     continue
 
-                distances = torch.cdist(gt_points, pred_abs[batch_idx], p=2)
+                distances = torch.cdist(gt_points, branch_pred_abs, p=2)
                 weights = torch.exp(-0.5 * (distances / sigma).pow(2))
                 expected = (weights * branch_scores.unsqueeze(0)).sum(dim=1)
                 pos_losses.append(F.smooth_l1_loss(expected, torch.ones_like(expected)))
@@ -3520,6 +3653,45 @@ class PET(nn.Module):
             loss = loss + self.bayesian_bg_coef * torch.stack(bg_losses).mean()
         return loss
 
+    def build_split_supervision_mask(self, targets, split_map):
+        """Project optional annotated-region masks onto the splitter grid."""
+        valid_masks = []
+        for target in targets[:split_map.shape[0]]:
+            supervision_mask = target.get('supervision_mask')
+            if supervision_mask is None:
+                valid_masks.append(torch.ones_like(split_map[0]))
+                continue
+            supervision_mask = supervision_mask.to(
+                device=split_map.device,
+                dtype=split_map.dtype,
+            )
+            if supervision_mask.ndim != 2:
+                raise ValueError(
+                    'target supervision_mask must have shape [H, W], '
+                    f'got {tuple(supervision_mask.shape)}'
+                )
+            projected = F.interpolate(
+                supervision_mask[None, None],
+                size=split_map.shape[-2:],
+                mode='nearest',
+            )[0]
+            valid_masks.append(projected)
+        return torch.stack(valid_masks, dim=0) >= 0.5
+
+    @staticmethod
+    def masked_split_max_loss(values, valid_mask):
+        values = values.reshape(values.shape[0], -1)
+        valid_mask = valid_mask.to(
+            device=values.device,
+            dtype=torch.bool,
+        ).reshape_as(values)
+        has_valid = valid_mask.any(dim=1)
+        if not has_valid.any():
+            return values.sum() * 0.0
+        masked_values = values.masked_fill(~valid_mask, -torch.inf)
+        maxima = masked_values[has_valid].max(dim=1).values
+        return 1.0 - maxima.mean()
+
     def build_split_targets(self, targets, split_map, img_shape):
         bs, _, split_h, split_w = split_map.shape
         img_h, img_w = img_shape
@@ -3536,14 +3708,27 @@ class PET(nn.Module):
             split_target[batch_idx, 0] = (counts.view(split_h, split_w) >= self.split_count_threshold).to(split_map.dtype)
         return split_target
 
-    def balanced_binary_loss(self, pred, target, pos_weight=1.0, neg_weight=1.0, eps=1e-6):
+    def balanced_binary_loss(
+        self,
+        pred,
+        target,
+        pos_weight=1.0,
+        neg_weight=1.0,
+        valid_mask=None,
+        eps=1e-6,
+    ):
         # This receives sigmoid probabilities, not logits. Avoid
         # F.binary_cross_entropy here because PyTorch rejects it under AMP.
         pred = pred.float().clamp(eps, 1.0 - eps)
         target = target.to(device=pred.device, dtype=pred.dtype)
         raw_loss = -(target * pred.log() + (1.0 - target) * (1.0 - pred).log())
-        pos_mask = target >= 0.5
-        neg_mask = ~pos_mask
+        valid = (
+            torch.ones_like(target, dtype=torch.bool)
+            if valid_mask is None
+            else valid_mask.to(device=pred.device, dtype=torch.bool)
+        )
+        pos_mask = (target >= 0.5) & valid
+        neg_mask = (target < 0.5) & valid
         loss = raw_loss.sum() * 0.0
         if pos_mask.any():
             loss = loss + pos_weight * raw_loss[pos_mask].mean()
@@ -4279,6 +4464,16 @@ class SetCriterion(nn.Module):
         if not valid.any():
             return raw_loss.sum() * 0.0
         return (raw_loss[valid] * weights[valid]).sum() / (weights[valid].sum() + eps)
+
+    def query_supervision_masks(self, outputs, targets):
+        masks = [
+            get_query_supervision_mask(outputs, target, batch_index)
+            for batch_index, target in enumerate(targets)
+        ]
+        return torch.stack(masks, dim=0).to(
+            device=outputs['pred_logits'].device,
+            dtype=torch.bool,
+        )
     
     def loss_labels(self, outputs, targets, indices, num_points, log=True, **kwargs):
         """
@@ -4295,7 +4490,9 @@ class SetCriterion(nn.Module):
             ]).to(src_logits.device)
         else:
             target_classes_o = torch.empty(0, dtype=torch.int64, device=src_logits.device)
+        supervised_queries = self.query_supervision_masks(outputs, targets)
         target_classes = torch.zeros(src_logits.shape[:2], dtype=torch.int64, device=src_logits.device)
+        target_classes[~supervised_queries] = -1
         target_classes[idx] = target_classes_o
 
         # compute classification loss
@@ -4307,9 +4504,9 @@ class SetCriterion(nn.Module):
                 sp_idx = den_sort[len(den_sort)//2:]
                 eps = 1e-5
 
-                weights = target_classes.clone().float()
-                weights[weights == 0] = self.empty_weight[0]
-                weights[weights == 1] = self.empty_weight[1]
+                weights = torch.zeros_like(target_classes, dtype=src_logits.dtype)
+                weights[target_classes == 0] = self.empty_weight[0]
+                weights[target_classes == 1] = self.empty_weight[1]
                 raw_ce_loss = self.classification_loss_per_query(src_logits, target_classes)
 
                 split_map = kwargs['div'].to(src_logits.device)
@@ -4324,26 +4521,33 @@ class SetCriterion(nn.Module):
             else:
                 raw_ce_loss = self.classification_loss_per_query(src_logits, target_classes)
                 if self.class_loss_type == 'ce':
-                    weights = target_classes.clone().float()
-                    weights[weights == 0] = self.empty_weight[0]
-                    weights[weights == 1] = self.empty_weight[1]
+                    weights = torch.zeros_like(target_classes, dtype=src_logits.dtype)
+                    weights[target_classes == 0] = self.empty_weight[0]
+                    weights[target_classes == 1] = self.empty_weight[1]
                     loss_ce = self.weighted_mean_loss(raw_ce_loss, weights)
                 else:
-                    loss_ce = self.weighted_mean_loss(raw_ce_loss)
+                    loss_ce = self.weighted_mean_loss(
+                        raw_ce_loss,
+                        supervised_queries,
+                    )
             return {'loss_ce': loss_ce}
 
         raw_ce_loss = self.classification_loss_per_query(src_logits, target_classes)
         if self.class_loss_type == 'ce':
-            class_weight = target_classes.clone().float()
-            class_weight[class_weight == 0] = self.empty_weight[0]
-            class_weight[class_weight == 1] = self.empty_weight[1]
+            class_weight = torch.zeros_like(target_classes, dtype=src_logits.dtype)
+            class_weight[target_classes == 0] = self.empty_weight[0]
+            class_weight[target_classes == 1] = self.empty_weight[1]
             raw_ce_loss = raw_ce_loss * class_weight
         if 'div' in kwargs:
             split_weight = kwargs['div'].to(src_logits.device, dtype=raw_ce_loss.dtype).reshape_as(raw_ce_loss).clamp(0, 1)
             region_weight = split_weight + self.non_div_loss_coef * (1.0 - split_weight)
+            region_weight = region_weight * supervised_queries.to(region_weight.dtype)
             loss_ce = self.weighted_mean_loss(raw_ce_loss, region_weight)
         else:
-            loss_ce = self.weighted_mean_loss(raw_ce_loss)
+            loss_ce = self.weighted_mean_loss(
+                raw_ce_loss,
+                supervised_queries,
+            )
 
         losses = {'loss_ce': loss_ce}
         return losses
@@ -4361,6 +4565,8 @@ class SetCriterion(nn.Module):
         pred_points = outputs['pred_points']
         quality_targets = src_logits.new_zeros(src_logits.shape[:2])
         weights = src_logits.new_full(src_logits.shape[:2], self.quality_loss_bg_weight)
+        supervised_queries = self.query_supervision_masks(outputs, targets)
+        weights[~supervised_queries] = 0.0
         idx = self._get_src_permutation_idx(indices)
         idx = (idx[0].to(src_logits.device), idx[1].to(src_logits.device))
         if idx[0].numel() > 0:
