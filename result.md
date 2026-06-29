@@ -74,12 +74,12 @@ python scripts/sweep_eval_thresholds.py \
   --eval_image_set train_holdout \
   --device cuda \
   --num_workers 2 \
-  --output_dir eval_results/SHB/stage2_holdout_sweep `
-  --eval_nms_radii 0 `
-  --eval_branch_gates none `
-  --eval_soft_split_gates none `
-  --eval_count_modes threshold `
-  --eval_count_sources pet `
-  --score_thresholds 0.48 0.50 0.52 0.54 0.56 `
-  --split_thresholds 0.45 0.47 0.50 `
+  --output_dir eval_results/SHB/stage2_holdout_sweep \
+  --eval_nms_radii 0 \
+  --eval_branch_gates none \
+  --eval_soft_split_gates none \
+  --eval_count_modes threshold \
+  --eval_count_sources pet \
+  --score_thresholds 0.48 0.50 0.52 0.54 0.56 \
+  --split_thresholds 0.45 0.47 0.50 \
   --query_prune_thresholds 0.5
