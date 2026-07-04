@@ -29,6 +29,8 @@ def _recipe_args(recipe):
     ]
     if recipe in main.EXPERIMENTAL_MODEL_RECIPES:
         argv.append('--allow_experimental_model_recipe')
+    if 'counthead_stage2' in recipe:
+        argv.append('--allow_count_head_fresh_train')
     args = main.get_args_parser().parse_args(argv)
     args._explicit_args = main.get_explicit_arg_names(argv)
     main.apply_model_recipe(args)
@@ -50,6 +52,8 @@ class IFIContractTest(unittest.TestCase):
         self.assertEqual(args.ifi_neg_min_dist, 2.0)
         self.assertEqual(args.ifi_neg_radius, 8.0)
         self.assertTrue(args.ifi_random_sampling)
+        self.assertEqual(args.ifi_point_loss_type, 'mse')
+        self.assertTrue(args.ifi_balance_pos_neg)
         self.assertEqual(args.ifi_end_epoch, -1)
 
         model, _ = build_model(args)
@@ -70,6 +74,90 @@ class IFIContractTest(unittest.TestCase):
         displacement = (negatives - isolated_gt).abs()
         self.assertTrue((displacement >= 2.0).all())
         self.assertTrue((displacement <= 8.0).all())
+
+        features = torch.randn(3, args.hidden_dim)
+        labels = torch.ones(3, dtype=torch.long)
+        dense_mask = torch.tensor([False, True, True])
+        cls_losses = []
+        point_losses = []
+        model._append_ifi_losses(
+            features,
+            labels,
+            cls_losses,
+            point_losses,
+            dense_mask=dense_mask,
+            offset_targets=torch.zeros(3, 2),
+        )
+        self.assertEqual(sum(loss.numel() for loss in cls_losses), 3)
+        self.assertEqual(sum(loss.numel() for loss in point_losses), 3)
+
+    def test_paper_count_head_stage_keeps_stage_one_ifi_architecture(self):
+        stage1 = _recipe_args('vgg_apgcc_paper_ifi')
+        stage2 = _recipe_args('vgg_apgcc_paper_ifi_counthead_stage2')
+        architecture_keys = (
+            'query_feature_interpolation',
+            'query_ifi_sharing',
+            'query_ifi_feature_source',
+            'query_ifi_residual',
+            'ifi_interpolation',
+            'ifi_feature_source',
+            'ifi_pos_dim',
+            'ifi_mlp_hidden_dim',
+            'ifi_activation',
+            'ifi_head_source',
+        )
+        for key in architecture_keys:
+            self.assertEqual(getattr(stage1, key), getattr(stage2, key), key)
+        self.assertEqual(stage2.ifi_loss_coef, 0.0)
+        self.assertGreater(stage2.count_head_loss_coef, 0.0)
+
+    def test_robust_apg_ifi_starts_from_pet_identity_and_keeps_stage_architecture(self):
+        stage1 = _recipe_args('vgg_pet_apg_rifi')
+        stage2 = _recipe_args('vgg_pet_apg_rifi_counthead_stage2')
+        self.assertTrue(stage1.query_ifi_residual)
+        self.assertEqual(stage1.query_ifi_residual_init, 0.0)
+        self.assertEqual(stage1.ifi_loss_coef, 0.02)
+        self.assertTrue(stage1.ifi_balance_pos_neg)
+        self.assertEqual(stage1.ifi_point_loss_type, 'mse')
+        for key in (
+            'query_feature_interpolation',
+            'query_ifi_sharing',
+            'query_ifi_feature_source',
+            'query_ifi_residual',
+            'query_ifi_residual_init',
+            'ifi_interpolation',
+            'ifi_feature_source',
+            'ifi_pos_dim',
+            'ifi_mlp_hidden_dim',
+            'ifi_activation',
+            'ifi_head_source',
+        ):
+            self.assertEqual(getattr(stage1, key), getattr(stage2, key), key)
+
+        interpolator = SharedMultiScaleIFI(
+            1,
+            pos_dim=2,
+            mlp_hidden_dim=1,
+            residual_base=True,
+            residual_init=stage1.query_ifi_residual_init,
+        )
+        feature_maps = {
+            '8x': torch.arange(16, dtype=torch.float32).reshape(1, 1, 4, 4),
+            '4x': torch.arange(64, dtype=torch.float32).reshape(1, 1, 8, 8),
+        }
+        points = torch.tensor([[4.0, 4.0], [12.0, 12.0]])
+        sampled = interpolator.sample_batch(
+            feature_maps,
+            points,
+            (32, 32),
+            primary='8x',
+        )
+        torch.testing.assert_close(
+            sampled.squeeze(0).squeeze(-1),
+            torch.tensor([0.0, 5.0]),
+            rtol=0.0,
+            atol=0.0,
+        )
 
     def test_image_centers_map_exactly_to_feature_centers(self):
         interpolator = ImplicitFeatureInterpolator(1, pos_dim=2, mlp_hidden_dim=1)
@@ -232,10 +320,32 @@ class IFIContractTest(unittest.TestCase):
     def test_scratch_run_rejects_existing_checkpoint_directory(self):
         with tempfile.TemporaryDirectory() as tmp:
             output_dir = Path(tmp)
-            (output_dir / 'best_checkpoint.pth').write_bytes(b'checkpoint')
+            checkpoint_path = output_dir / 'best_checkpoint.pth'
+            checkpoint_path.write_bytes(b'checkpoint')
             with self.assertRaises(FileExistsError):
                 main.validate_training_output_dir(output_dir, checkpoint=None)
-            main.validate_training_output_dir(output_dir, checkpoint={'model': {}})
+            main.validate_training_output_dir(
+                output_dir,
+                checkpoint={'model': {}},
+                resume_path=checkpoint_path,
+            )
+
+    def test_cross_run_resume_rejects_existing_checkpoint_directory(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            output_dir = root / 'target'
+            source_dir = root / 'source'
+            output_dir.mkdir()
+            source_dir.mkdir()
+            (output_dir / 'best_checkpoint.pth').write_bytes(b'target')
+            source_checkpoint = source_dir / 'best_checkpoint.pth'
+            source_checkpoint.write_bytes(b'source')
+            with self.assertRaises(FileExistsError):
+                main.validate_training_output_dir(
+                    output_dir,
+                    checkpoint={'model': {}},
+                    resume_path=source_checkpoint,
+                )
 
 
 if __name__ == '__main__':

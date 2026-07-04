@@ -12,6 +12,20 @@ sys.path.insert(0, str(REPO_ROOT))
 from datasets.UCFCC50 import build_folds, find_images_dir  # noqa: E402
 from datasets.SHA import IMAGE_EXTENSIONS  # noqa: E402
 
+RESERVED_FORWARD_FLAGS = {
+    '--dataset_file',
+    '--data_path',
+    '--model_recipe',
+    '--ucfcc50_fold',
+    '--ucfcc50_fold_seed',
+    '--ucfcc50_fold_manifest',
+    '--validation_protocol',
+    '--output_dir',
+    '--resume',
+    '--resume_model_only',
+    '--resume_allow_arch_change',
+}
+
 
 def run(command):
     print('+', ' '.join(str(part) for part in command), flush=True)
@@ -44,7 +58,7 @@ def main():
     parser.add_argument('--data_path', default='data/UCF_CC_50')
     parser.add_argument('--output_root', default='outputs/UCFCC50')
     parser.add_argument('--results_dir', default='eval_results/UCFCC50/five_fold')
-    parser.add_argument('--model_recipe', default='vgg_apgcc_paper_ifi')
+    parser.add_argument('--model_recipe', default='vgg_pet_apg_rifi')
     parser.add_argument('--fold_seed', default=42, type=int)
     parser.add_argument('--folds', nargs='+', type=int, default=list(range(5)))
     parser.add_argument('--device', default='cuda')
@@ -55,6 +69,17 @@ def main():
 
     if any(fold not in range(5) for fold in args.folds):
         raise ValueError('--folds values must be in [0, 4]')
+    forwarded_flags = {
+        token.split('=', 1)[0]
+        for token in forwarded
+        if token.startswith('--')
+    }
+    forbidden = sorted(forwarded_flags & RESERVED_FORWARD_FLAGS)
+    if forbidden:
+        raise ValueError(
+            'UCF-CC-50 fold isolation owns these arguments and will not '
+            f'forward them: {", ".join(forbidden)}'
+        )
 
     images_dir = find_images_dir(args.data_path)
     stems = [
@@ -87,6 +112,7 @@ def main():
             train_command = [
                 sys.executable,
                 REPO_ROOT / 'main.py',
+                *forwarded,
                 '--dataset_file', 'UCFCC50',
                 '--data_path', args.data_path,
                 '--model_recipe', args.model_recipe,
@@ -98,7 +124,6 @@ def main():
                 '--output_dir', output_dir,
                 '--device', args.device,
                 '--num_workers', args.num_workers,
-                *forwarded,
             ]
             latest = output_dir / 'checkpoint.pth'
             if args.resume_existing and latest.is_file():

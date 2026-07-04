@@ -101,12 +101,9 @@ class JHUCrowd(Dataset):
                 points,
                 self.eval_max_size,
             )
-            factor = max(
-                old_width / float(image.width),
-                old_height / float(image.height),
-                1.0,
-            )
-            sigma = sigma / factor
+            scale_x = image.width / float(old_width)
+            scale_y = image.height / float(old_height)
+            sigma = sigma * np.sqrt(scale_x * scale_y)
 
         if self.transform is not None:
             image = self.transform(image)

@@ -35,7 +35,8 @@ class NWPU(Dataset):
         crop_attempts=1,
         min_crop_points=0,
         eval_max_size=2048,
-        sigma_mode='area',
+        sigma_mode='official',
+        require_official_sigma=False,
         dense_crop_prob=0.0,
         dense_crop_attempts=16,
     ):
@@ -51,11 +52,16 @@ class NWPU(Dataset):
         self.min_crop_points = max(0, int(min_crop_points))
         self.eval_max_size = int(eval_max_size) if eval_max_size is not None else 2048
         self.sigma_mode = sigma_mode
+        self.require_official_sigma = bool(require_official_sigma)
         self.dense_crop_prob = max(0.0, min(1.0, float(dense_crop_prob)))
         self.dense_crop_attempts = max(1, int(dense_crop_attempts))
-        self.official_sigma = load_official_localization_sigma(
+        self.official_localization = load_official_localization_data(
             self.data_root / f'{split}_gt_loc.txt'
         )
+        self.official_sigma = {
+            image_id: record['sigma']
+            for image_id, record in self.official_localization.items()
+        }
 
         self.images_dir = find_dir(self.data_root, ('images', 'Images'))
         self.jsons_dir = find_optional_dir(self.data_root, ('jsons', 'json', 'Jsons'))
@@ -69,6 +75,14 @@ class NWPU(Dataset):
                 f'No NWPU image ids found for split={split} in {self.data_root}. '
                 f'The official split file {split}.txt is required to prevent '
                 'train/validation/test leakage.'
+            )
+        if require_official_sigma and not self.official_sigma:
+            expected = self.data_root / f'{split}_gt_loc.txt'
+            raise FileNotFoundError(
+                f'Official NWPU localization evaluation requires {expected}. '
+                'Download it with: python scripts/download_nwpu_crowd.py '
+                '--official_localization_only --data_root '
+                f'{self.data_root}'
             )
 
         image_index = build_image_index(self.data_root)
@@ -145,10 +159,29 @@ class NWPU(Dataset):
             if has_annotation
             else {'points': np.empty((0, 2), dtype=np.float32)}
         )
-        official_sigma = self.official_sigma.get(Path(str(image_id)).stem)
+        official_record = self.official_localization.get(Path(str(image_id)).stem)
+        official_sigma = None if official_record is None else official_record['sigma']
         if official_sigma is not None and official_sigma.shape[0] == ann['points'].shape[0]:
+            official_points_yx = official_record['points_xy'][:, ::-1]
+            if not np.allclose(
+                ann['points'],
+                official_points_yx,
+                rtol=0.0,
+                atol=0.51,
+            ):
+                raise ValueError(
+                    f'Official NWPU localization point order does not match '
+                    f'the annotation for image {image_id}'
+                )
             ann['sigma'] = official_sigma.copy()
             ann['sigma_source'] = 'official_localization_file'
+        elif self.require_official_sigma:
+            actual = None if official_sigma is None else official_sigma.shape[0]
+            raise ValueError(
+                f'Official NWPU localization thresholds for image {image_id} '
+                f'have count={actual}, but annotations have '
+                f'count={ann["points"].shape[0]}'
+            )
         points = ann['points'].astype(np.float32, copy=True)
         sigma = ann.get('sigma')
 
@@ -255,12 +288,12 @@ def read_split_ids(root, split):
     return []
 
 
-def load_official_localization_sigma(path):
-    """Read NWPU's ``*_gt_loc.txt`` per-head small/large radii."""
+def load_official_localization_data(path):
+    """Read NWPU's released point order and per-head localization radii."""
     path = Path(path)
     if not path.is_file():
         return {}
-    sigma_by_id = {}
+    localization_by_id = {}
     for line_number, line in enumerate(
         path.read_text(encoding='utf-8', errors='ignore').splitlines(),
         start=1,
@@ -280,12 +313,28 @@ def load_official_localization_sigma(path):
                 f'Invalid NWPU localization line {line_number} in {path}: '
                 f'expected {expected} values after count, found {values.size}'
             )
-        sigma_by_id[image_id] = (
-            values.reshape(count, 5)[:, 2:4].copy()
-            if count > 0
-            else np.empty((0, 2), dtype=np.float32)
-        )
-    return sigma_by_id
+        records = values.reshape(count, 5)
+        localization_by_id[image_id] = {
+            'points_xy': (
+                records[:, :2].copy()
+                if count > 0
+                else np.empty((0, 2), dtype=np.float32)
+            ),
+            'sigma': (
+                records[:, 2:4].copy()
+                if count > 0
+                else np.empty((0, 2), dtype=np.float32)
+            ),
+        }
+    return localization_by_id
+
+
+def load_official_localization_sigma(path):
+    """Backward-compatible sigma-only view of NWPU localization data."""
+    return {
+        image_id: record['sigma']
+        for image_id, record in load_official_localization_data(path).items()
+    }
 
 
 def find_image_path(images_dir, image_id):
@@ -336,7 +385,7 @@ def build_annotation_index(root, suffix):
     return index
 
 
-def load_annotation(json_path=None, mat_path=None, image_size=None, sigma_mode='area'):
+def load_annotation(json_path=None, mat_path=None, image_size=None, sigma_mode='official'):
     data = None
     source_path = None
     if json_path is not None and Path(json_path).exists():
@@ -394,16 +443,22 @@ def load_annotation(json_path=None, mat_path=None, image_size=None, sigma_mode='
 
 def resize_long_side_with_sigma(img, points, sigma, max_size):
     width, height = img.size
+    if int(max_size) <= 0:
+        raise ValueError('max_size must be positive when resize_long_side_with_sigma is called')
     factor = max(width / float(max_size), height / float(max_size), 1.0)
     if factor <= 1.0:
         return img, points, sigma
     new_width = max(1, int(width / factor))
     new_height = max(1, int(height / factor))
     img = img.resize((new_width, new_height), Image.BILINEAR)
+    scale_x = new_width / float(width)
+    scale_y = new_height / float(height)
     if points.shape[0] > 0:
-        points = points / factor
+        points = points.copy()
+        points[:, 0] *= scale_y
+        points[:, 1] *= scale_x
     if sigma is not None:
-        sigma = sigma / factor
+        sigma = sigma * np.sqrt(scale_x * scale_y)
     return img, points, sigma
 
 
@@ -593,19 +648,20 @@ def _extract_box_from_record(record):
 
 
 def _sigma_from_boxes(boxes, count, mode='area'):
+    """Derive NWPU localization radii from official ``[x1,y1,x2,y2]`` boxes."""
     boxes = _normalize_boxes_array(boxes)
     if boxes is None or boxes.shape[0] != count:
         return None
     if mode not in ('area', 'diag', 'min_diag', 'official'):
         raise ValueError(f'Unsupported NWPU sigma mode: {mode}')
     boxes = boxes.astype(np.float32)
-    x1, y1, a, b = boxes[:, 0], boxes[:, 1], boxes[:, 2], boxes[:, 3]
-    wh_xyxy = np.stack([np.maximum(a - x1, 1.0), np.maximum(b - y1, 1.0)], axis=1)
-    wh_xywh = np.stack([np.maximum(a, 1.0), np.maximum(b, 1.0)], axis=1)
-    use_xyxy = (a > x1) & (b > y1)
-    wh = np.where(use_xyxy[:, None], wh_xyxy, wh_xywh)
-    width = np.maximum(wh[:, 0], 1.0)
-    height = np.maximum(wh[:, 1], 1.0)
+    width = boxes[:, 2] - boxes[:, 0]
+    height = boxes[:, 3] - boxes[:, 1]
+    if np.any(width <= 0) or np.any(height <= 0):
+        raise ValueError(
+            'NWPU boxes must use the official [x1, y1, x2, y2] format '
+            'with positive width and height'
+        )
     if mode == 'official':
         # NWPU's localization protocol uses integer radii derived from half
         # the annotated head-box size and half its diagonal.
@@ -656,7 +712,7 @@ def build(image_set, args):
             crop_attempts=getattr(args, 'crop_attempts', 1),
             min_crop_points=getattr(args, 'min_crop_points', 0),
             eval_max_size=eval_max_size,
-            sigma_mode=getattr(args, 'nwpu_sigma_mode', 'area'),
+            sigma_mode=getattr(args, 'nwpu_sigma_mode', 'official'),
             dense_crop_prob=getattr(args, 'nwpu_dense_crop_prob', 0.0),
             dense_crop_attempts=getattr(args, 'nwpu_dense_crop_attempts', 16),
         )
@@ -667,7 +723,7 @@ def build(image_set, args):
             train=False,
             transform=transform,
             eval_max_size=eval_max_size,
-            sigma_mode=getattr(args, 'nwpu_sigma_mode', 'area'),
+            sigma_mode=getattr(args, 'nwpu_sigma_mode', 'official'),
         )
     if image_set == 'val':
         split = getattr(args, 'nwpu_eval_split', 'val') or 'val'
@@ -677,6 +733,7 @@ def build(image_set, args):
             train=False,
             transform=transform,
             eval_max_size=eval_max_size,
-            sigma_mode=getattr(args, 'nwpu_sigma_mode', 'area'),
+            sigma_mode=getattr(args, 'nwpu_sigma_mode', 'official'),
+            require_official_sigma=split == 'val',
         )
     raise ValueError(f'Unsupported image_set for NWPU: {image_set}')

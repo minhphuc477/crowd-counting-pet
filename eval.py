@@ -375,7 +375,7 @@ def get_args_parser():
                         help='seed used to create UCF-CC-50 folds without a manifest')
     parser.add_argument('--ucfcc50_fold_manifest', default='', type=str,
                         help='JSON file containing the exact five UCF-CC-50 folds')
-    parser.add_argument('--nwpu_sigma_mode', default='area', choices=('area', 'diag', 'min_diag', 'official'),
+    parser.add_argument('--nwpu_sigma_mode', default='official', choices=('area', 'diag', 'min_diag', 'official'),
                         help='fallback localization sigma derived from NWPU boxes when annotation sigma is absent')
 
     # misc parameters

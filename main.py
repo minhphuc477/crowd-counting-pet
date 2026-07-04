@@ -1097,6 +1097,8 @@ MODEL_RECIPES['vgg_apgcc_paper_ifi'] = {
     # regression. Keep PET's established point coefficient for usable offset
     # gradients while preserving APGCC's outer lambda_5=0.2.
     'ifi_point_coef': 5.0,
+    'ifi_point_loss_type': 'mse',
+    'ifi_balance_pos_neg': True,
     'ifi_pos_k': 2,
     'ifi_pos_radius': 2.0,
     'ifi_random_sampling': True,
@@ -1105,6 +1107,57 @@ MODEL_RECIPES['vgg_apgcc_paper_ifi'] = {
     'ifi_neg_min_dist': 2.0,
     'ifi_start_epoch': 0,
     'ifi_end_epoch': -1,
+}
+
+# Count-head adaptation that keeps the full APGCC/PET query architecture from
+# stage 1. APG auxiliary samples are training-only, so stage 2 disables their
+# loss but retains the same shared IFI module and routed PET prediction heads.
+MODEL_RECIPES['vgg_apgcc_paper_ifi_counthead_stage2'] = {
+    **MODEL_RECIPES['vgg_apglc_counthead_stage2_adapt'],
+    'split_loss_variant': 'paper',
+    'query_feature_interpolation': 'implicit',
+    'query_ifi_sharing': 'shared',
+    'query_ifi_feature_source': 'fpn4x8x',
+    'query_ifi_residual': False,
+    'ifi_interpolation': 'implicit',
+    'ifi_feature_source': 'branch',
+    'ifi_pos_dim': 32,
+    'ifi_mlp_hidden_dim': 256,
+    'ifi_activation': 'gelu',
+    'ifi_loss_coef': 0.0,
+    'ifi_head_source': 'routed',
+    'ifi_point_coef': 5.0,
+    'ifi_point_loss_type': 'mse',
+    'ifi_balance_pos_neg': True,
+    'ifi_pos_k': 2,
+    'ifi_pos_radius': 2.0,
+    'ifi_random_sampling': True,
+    'ifi_neg_k': 2,
+    'ifi_neg_radius': 8.0,
+    'ifi_neg_min_dist': 2.0,
+}
+
+# PET-preserving APG with residual implicit feature interpolation.
+#
+# Replacing PET query features with a random implicit interpolator can regress
+# counting before the new representation is learned. This variant keeps the
+# native PET feature as an exact identity path and learns the shared 4x/8x IFI
+# correction through a zero-initialized ReZero-style residual. The APG objective is
+# otherwise the corrected per-point positive/negative formulation above.
+MODEL_RECIPES['vgg_pet_apg_rifi'] = {
+    **MODEL_RECIPES['vgg_apgcc_paper_ifi'],
+    'query_ifi_residual': True,
+    'query_ifi_residual_init': 0.0,
+    # APGCC's 0.2 coefficient is normalized for a different proposal network.
+    # PET has two full CE branches, so retain the empirically stable PET APG
+    # scale while keeping the auxiliary active for the complete run.
+    'ifi_loss_coef': 0.02,
+}
+
+MODEL_RECIPES['vgg_pet_apg_rifi_counthead_stage2'] = {
+    **MODEL_RECIPES['vgg_apgcc_paper_ifi_counthead_stage2'],
+    'query_ifi_residual': True,
+    'query_ifi_residual_init': 0.0,
 }
 
 # APG+LC + branch-local IFI.
@@ -1326,6 +1379,57 @@ MODEL_RECIPES['vgg_apglc_counthead_stage2_nwpu'] = {
     'eval_tile_trigger_area': 0,
 }
 
+MODEL_RECIPES['vgg_apgcc_paper_ifi_nwpu'] = {
+    **MODEL_RECIPES['vgg_apgcc_paper_ifi'],
+    'crop_attempts': 12,
+    'min_crop_points': 1,
+    'eval_max_size': 0,
+    'nwpu_dense_crop_prob': 0.5,
+    'nwpu_dense_crop_attempts': 32,
+    'train_count_weight_power': 0.5,
+    'train_count_weight_max': 8.0,
+    'nwpu_sigma_mode': 'official',
+    'localization_protocol': 'target_sigma',
+    'eval_tile_size': 1536,
+    'eval_tile_overlap': 128,
+    'eval_tile_nms_radius': 8.0,
+    'eval_tile_max_tiles': 16,
+    'eval_tile_trigger_count': 1500.0,
+    'eval_tile_trigger_area': 0,
+}
+
+MODEL_RECIPES['vgg_apgcc_paper_ifi_counthead_stage2_nwpu'] = {
+    **MODEL_RECIPES['vgg_apgcc_paper_ifi_counthead_stage2'],
+    'crop_attempts': 12,
+    'min_crop_points': 1,
+    'eval_max_size': 0,
+    'nwpu_dense_crop_prob': 0.5,
+    'nwpu_dense_crop_attempts': 32,
+    'train_count_weight_power': 0.5,
+    'train_count_weight_max': 8.0,
+    'nwpu_sigma_mode': 'official',
+    'localization_protocol': 'target_sigma',
+    'eval_tile_size': 1536,
+    'eval_tile_overlap': 128,
+    'eval_tile_nms_radius': 8.0,
+    'eval_tile_max_tiles': 16,
+    'eval_tile_trigger_count': 1500.0,
+    'eval_tile_trigger_area': 0,
+}
+
+MODEL_RECIPES['vgg_pet_apg_rifi_nwpu'] = {
+    **MODEL_RECIPES['vgg_apgcc_paper_ifi_nwpu'],
+    'query_ifi_residual': True,
+    'query_ifi_residual_init': 0.0,
+    'ifi_loss_coef': 0.02,
+}
+
+MODEL_RECIPES['vgg_pet_apg_rifi_counthead_stage2_nwpu'] = {
+    **MODEL_RECIPES['vgg_apgcc_paper_ifi_counthead_stage2_nwpu'],
+    'query_ifi_residual': True,
+    'query_ifi_residual_init': 0.0,
+}
+
 MODEL_RECIPES['vgg_apglc_full_ifi_nwpu'] = {
     **MODEL_RECIPES['vgg_apglc_nwpu_tail'],
     'query_feature_interpolation': 'implicit',
@@ -1484,6 +1588,13 @@ EXPERIMENTAL_MODEL_RECIPES = {
     # Paper-aligned sampling is implemented and contract-tested, but its PET
     # integration still requires fixed-protocol cross-dataset falsification.
     'vgg_apgcc_paper_ifi',
+    'vgg_apgcc_paper_ifi_counthead_stage2',
+    'vgg_apgcc_paper_ifi_nwpu',
+    'vgg_apgcc_paper_ifi_counthead_stage2_nwpu',
+    'vgg_pet_apg_rifi',
+    'vgg_pet_apg_rifi_counthead_stage2',
+    'vgg_pet_apg_rifi_nwpu',
+    'vgg_pet_apg_rifi_counthead_stage2_nwpu',
     # The remaining paths are kept for audit/reproduction only. Session runs
     # showed catastrophic drift or failed to improve on the PET/APG+LC baselines.
     'vgg_apglc_cbme_late_countreg',
@@ -2078,6 +2189,10 @@ def get_args_parser():
                         help='prediction head used by IFI: separate auxiliary head, sparse PET head, dense PET head, both PET heads, or one routed PET head per point')
     parser.add_argument('--ifi_point_coef', default=1.0, type=float,
                         help='positive-to-GT and negative-to-zero offset coefficient inside full IFI/APG loss')
+    parser.add_argument('--ifi_point_loss_type', default='smooth_l1', choices=('smooth_l1', 'mse'),
+                        help='offset loss inside IFI/APG; the APGCC paper recipe uses mse')
+    parser.add_argument('--ifi_balance_pos_neg', action='store_true',
+                        help='average positive and negative APG groups separately, then sum them as in APGCC')
     parser.add_argument('--ifi_pos_k', default=1, type=int,
                         help='auxiliary positive points sampled per GT for IFI/APG guidance')
     parser.add_argument('--ifi_pos_radius', default=0.0, type=float,
@@ -2272,8 +2387,8 @@ def get_args_parser():
     parser.add_argument('--ucfcc50_fold_manifest', default='', type=str,
                         help='JSON file containing the exact five UCF-CC-50 folds')
     parser.add_argument('--validation_protocol', default='auto',
-                        choices=('auto', 'benchmark_test', 'train_holdout'),
-                        help='checkpoint-selection protocol; auto uses train_holdout for SHA/SHB/QNRF and benchmark_test for NWPU/JHU')
+                        choices=('auto', 'official_val', 'benchmark_test', 'train_holdout'),
+                        help='checkpoint-selection protocol; auto uses train_holdout for SHA/SHB/QNRF and official_val for NWPU/JHU')
     parser.add_argument('--train_holdout_fraction', default=0.1, type=float,
                         help='fraction of the training split reserved for checkpoint selection under train_holdout validation')
     parser.add_argument('--train_holdout_seed', default=42, type=int,
@@ -2286,7 +2401,7 @@ def get_args_parser():
                         help='preferred height fraction of each fixed partial annotation rectangle')
     parser.add_argument('--annotation_override_dir', default='', type=str,
                         help='directory of complete GT_<image>.mat training annotations produced by refinement or partial-label completion')
-    parser.add_argument('--nwpu_sigma_mode', default='area', choices=('area', 'diag', 'min_diag', 'official'),
+    parser.add_argument('--nwpu_sigma_mode', default='official', choices=('area', 'diag', 'min_diag', 'official'),
                         help='fallback localization sigma derived from NWPU boxes when annotation sigma is absent')
     parser.add_argument('--nwpu_dense_crop_prob', default=0.0, type=float,
                         help='NWPU train only: probability of choosing the densest crop among random candidates')
@@ -2308,6 +2423,8 @@ def get_args_parser():
                         help='load only model weights from --resume and reset optimizer/scheduler/epoch counters')
     parser.add_argument('--resume_allow_arch_change', action='store_true',
                         help='with --resume_model_only, allow explicitly passed architecture flags to override checkpoint args')
+    parser.add_argument('--allow_output_overwrite', action='store_true',
+                        help='explicitly permit writing a resumed run into an unrelated non-empty output directory')
     parser.add_argument('--start_epoch', default=0, type=int, metavar='N',
                         help='start epoch')
     parser.add_argument('--num_workers', default=2, type=int)
@@ -2682,6 +2799,8 @@ def merge_checkpoint_args(args, checkpoint):
     explicit_only_runtime_keys = {
         'model_recipe', 'allow_experimental_model_recipe', 'auto_backbone_recipe',
         'eval_protocol', 'eval_max_size', 'nwpu_sigma_mode',
+        'validation_protocol', 'train_holdout_fraction', 'train_holdout_seed',
+        'allow_output_overwrite',
         'patch_size', 'patch_size_choices', 'crop_attempts', 'min_crop_points',
         'nwpu_dense_crop_prob', 'nwpu_dense_crop_attempts',
         'train_count_weight_power', 'train_count_weight_max',
@@ -2781,6 +2900,7 @@ def merge_checkpoint_args(args, checkpoint):
             'ifi_interpolation', 'ifi_feature_source', 'ifi_pos_dim',
             'ifi_mlp_hidden_dim', 'ifi_activation',
             'ifi_loss_coef', 'ifi_head_source', 'ifi_point_coef',
+            'ifi_point_loss_type', 'ifi_balance_pos_neg',
             'ifi_pos_k', 'ifi_pos_radius', 'ifi_random_sampling',
             'ifi_neg_k', 'ifi_neg_radius',
             'ifi_neg_min_dist', 'ifi_start_epoch', 'ifi_end_epoch',
@@ -2817,9 +2937,14 @@ def resolve_output_dir(args):
     return Path("./outputs") / args.dataset_file / output_arg
 
 
-def validate_training_output_dir(output_dir, checkpoint):
-    """Prevent a scratch run from inheriting or replacing an earlier run."""
-    if checkpoint is not None or not output_dir.exists():
+def validate_training_output_dir(
+    output_dir,
+    checkpoint,
+    resume_path='',
+    allow_output_overwrite=False,
+):
+    """Prevent scratch or cross-run resumes from replacing earlier results."""
+    if not output_dir.exists():
         return
     protected_names = (
         'checkpoint.pth',
@@ -2837,12 +2962,36 @@ def validate_training_output_dir(output_dir, checkpoint):
     existing = {output_dir / name for name in protected_names if (output_dir / name).exists()}
     existing.update(output_dir.glob('*.pth'))
     existing = sorted(existing)
-    if existing:
-        preview = '\n  - '.join(str(path) for path in existing[:8])
+    if not existing:
+        return
+
+    preview = '\n  - '.join(str(path) for path in existing[:8])
+    if checkpoint is None:
         raise FileExistsError(
             'Refusing to start scratch training in an existing result directory. '
             'This prevents old checkpoints or metrics from being reused or overwritten. '
-            'Choose a new --output_dir, or pass --resume explicitly to continue the run. '
+            'Choose a new --output_dir. '
+            f'Found:\n  - {preview}'
+        )
+    if allow_output_overwrite:
+        return
+
+    resume_path = str(resume_path or '')
+    same_run_resume = False
+    if resume_path and not resume_path.startswith(('http://', 'https://')):
+        try:
+            same_run_resume = (
+                Path(resume_path).expanduser().resolve().parent
+                == output_dir.expanduser().resolve()
+            )
+        except OSError:
+            same_run_resume = False
+    if not same_run_resume:
+        raise FileExistsError(
+            'Refusing to write a resumed checkpoint into an unrelated existing '
+            'result directory. Resume that directory from its own checkpoint, '
+            'choose a new --output_dir, or pass --allow_output_overwrite after '
+            'manually preserving the existing run. '
             f'Found:\n  - {preview}'
         )
 
@@ -3156,6 +3305,9 @@ class ModelEma:
     def state_dict(self):
         return self.module.state_dict()
 
+    def load_state_dict(self, state_dict):
+        self.module.load_state_dict(state_dict)
+
 
 class IndexedSubset(torch.utils.data.Dataset):
     def __init__(self, dataset, indices):
@@ -3180,14 +3332,36 @@ class IndexedSubset(torch.utils.data.Dataset):
 
 def resolve_validation_protocol(args):
     protocol = str(getattr(args, 'validation_protocol', 'auto'))
-    if protocol != 'auto':
-        return protocol
-    if args.dataset_file in (
-        'NWPU', 'NWPU_Crowd', 'NWPU-Crowd',
-        'JHU', 'JHU_Crowd', 'JHU-Crowd++',
-    ):
-        return 'benchmark_test'
-    return 'train_holdout'
+    nwpu_names = ('NWPU', 'NWPU_Crowd', 'NWPU-Crowd')
+    jhu_names = ('JHU', 'JHU_Crowd', 'JHU-Crowd++')
+    if protocol == 'auto':
+        protocol = (
+            'official_val'
+            if args.dataset_file in nwpu_names + jhu_names
+            else 'train_holdout'
+        )
+    if protocol == 'official_val':
+        if args.dataset_file not in nwpu_names + jhu_names:
+            raise ValueError(
+                'validation_protocol=official_val is only valid for NWPU or JHU'
+            )
+        if (
+            args.dataset_file in nwpu_names
+            and str(getattr(args, 'nwpu_eval_split', 'val')) != 'val'
+        ):
+            raise ValueError(
+                'validation_protocol=official_val requires '
+                '--nwpu_eval_split val'
+            )
+        if (
+            args.dataset_file in jhu_names
+            and str(getattr(args, 'jhu_eval_split', 'val')) != 'val'
+        ):
+            raise ValueError(
+                'validation_protocol=official_val requires '
+                '--jhu_eval_split val'
+            )
+    return protocol
 
 
 def build_train_holdout_indices(num_samples, holdout_fraction, seed):
@@ -3204,9 +3378,6 @@ def build_train_holdout_indices(num_samples, holdout_fraction, seed):
     val_indices = sorted(permutation[:num_val])
     train_indices = sorted(permutation[num_val:])
     return train_indices, val_indices
-
-    def load_state_dict(self, state_dict):
-        self.module.load_state_dict(state_dict)
 
 
 def main(args):
@@ -3391,7 +3562,12 @@ def main(args):
 
     # output directory and log
     output_dir = resolve_output_dir(args)
-    validate_training_output_dir(output_dir, checkpoint)
+    validate_training_output_dir(
+        output_dir,
+        checkpoint,
+        resume_path=args.resume,
+        allow_output_overwrite=getattr(args, 'allow_output_overwrite', False),
+    )
     run_log_name = output_dir / 'run_log.txt'
     if utils.is_main_process():
         os.makedirs(output_dir, exist_ok=True)

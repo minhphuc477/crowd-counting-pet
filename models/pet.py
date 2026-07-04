@@ -1621,6 +1621,10 @@ class PET(nn.Module):
         self.apg_soft_sigma = float(getattr(args, 'apg_soft_sigma', 6.0))
         self.apg_soft_point_coef = float(getattr(args, 'apg_soft_point_coef', 2.0))
         self.ifi_point_coef = float(getattr(args, 'ifi_point_coef', 1.0))
+        self.ifi_point_loss_type = getattr(args, 'ifi_point_loss_type', 'smooth_l1')
+        if self.ifi_point_loss_type not in ('smooth_l1', 'mse'):
+            raise ValueError('ifi_point_loss_type must be one of "smooth_l1" or "mse"')
+        self.ifi_balance_pos_neg = bool(getattr(args, 'ifi_balance_pos_neg', False))
         self.ifi_pos_k = max(1, int(getattr(args, 'ifi_pos_k', 1)))
         self.ifi_pos_radius = max(0.0, float(getattr(args, 'ifi_pos_radius', 0.0)))
         self.ifi_random_sampling = bool(getattr(args, 'ifi_random_sampling', False))
@@ -2403,6 +2407,19 @@ class PET(nn.Module):
         alpha_t = torch.where(target == 1, alpha, 1.0 - alpha)
         return (-alpha_t * (1.0 - pt).pow(self.focal_gamma) * log_pt).mean()
 
+    def point_classification_loss_per_item(self, logits, target):
+        if logits.numel() == 0:
+            return logits.new_zeros((0,))
+        if self.class_loss_type == 'ce':
+            return F.cross_entropy(logits, target, reduction='none')
+
+        log_probs = F.log_softmax(logits, dim=-1)
+        log_pt = log_probs.gather(-1, target.unsqueeze(-1)).squeeze(-1)
+        pt = log_pt.exp()
+        alpha = logits.new_tensor(self.focal_alpha).clamp(0.0, 1.0)
+        alpha_t = torch.where(target == 1, alpha, 1.0 - alpha)
+        return -alpha_t * (1.0 - pt).pow(self.focal_gamma) * log_pt
+
     def compute_apg_loss(self, output, targets, positive_scale=None):
         """Legacy nearest-query guidance retained for old PET checkpoints.
 
@@ -2852,8 +2869,10 @@ class PET(nn.Module):
         if encode_src is None:
             return outputs['split_map_raw'].sum() * 0.0
         img_h, img_w = samples.tensors.shape[-2:]
-        cls_losses = []
-        point_losses = []
+        pos_cls_losses = []
+        pos_point_losses = []
+        neg_cls_losses = []
+        neg_point_losses = []
         for batch_idx, target in enumerate(targets):
             gt_points = target['points'].to(device=encode_src.device, dtype=encode_src.dtype)
             if gt_points.numel() == 0:
@@ -2893,8 +2912,8 @@ class PET(nn.Module):
                 self._append_ifi_losses(
                     pos_feats,
                     pos_target,
-                    cls_losses,
-                    point_losses,
+                    pos_cls_losses,
+                    pos_point_losses,
                     pos_dense_mask,
                     offset_targets=pos_offsets,
                 )
@@ -2932,14 +2951,27 @@ class PET(nn.Module):
                 self._append_ifi_losses(
                     neg_feats,
                     neg_target,
-                    cls_losses,
-                    point_losses,
+                    neg_cls_losses,
+                    neg_point_losses,
                     neg_dense_mask,
                     offset_targets=torch.zeros_like(neg_points),
                 )
 
+        cls_losses = pos_cls_losses + neg_cls_losses
+        point_losses = pos_point_losses + neg_point_losses
         if not cls_losses:
             return outputs['split_map_raw'].sum() * 0.0
+        if self.ifi_balance_pos_neg:
+            loss = outputs['split_map_raw'].sum() * 0.0
+            if pos_cls_losses:
+                loss = loss + torch.cat(pos_cls_losses).mean()
+                if pos_point_losses:
+                    loss = loss + self.ifi_point_coef * torch.cat(pos_point_losses).mean()
+            if neg_cls_losses:
+                loss = loss + torch.cat(neg_cls_losses).mean()
+                if neg_point_losses:
+                    loss = loss + self.ifi_point_coef * torch.cat(neg_point_losses).mean()
+            return loss
         loss = torch.stack(cls_losses).mean()
         if point_losses:
             loss = loss + self.ifi_point_coef * torch.stack(point_losses).mean()
@@ -2962,14 +2994,15 @@ class PET(nn.Module):
             offset_targets = offset_targets.to(device=feats.device, dtype=feats.dtype)
         if self.ifi_head_source != 'routed':
             for logits, offsets in self._ifi_head_predictions(feats):
-                cls_losses.append(self.point_classification_loss(logits, target))
+                if self.ifi_balance_pos_neg:
+                    cls_losses.append(self.point_classification_loss_per_item(logits, target))
+                else:
+                    cls_losses.append(self.point_classification_loss(logits, target))
                 if target.numel() > 0:
                     point_losses.append(
-                        F.smooth_l1_loss(
-                            offsets,
-                            offset_targets,
-                            reduction='none',
-                        ).sum(dim=-1).mean()
+                        self._ifi_offset_loss_per_item(offsets, offset_targets)
+                        if self.ifi_balance_pos_neg
+                        else self._ifi_offset_loss(offsets, offset_targets)
                     )
             return
 
@@ -2984,15 +3017,26 @@ class PET(nn.Module):
             branch_target = target[mask]
             branch_offsets = offset_targets[mask]
             for logits, offsets in self._ifi_head_predictions(branch_feats, source):
-                cls_losses.append(self.point_classification_loss(logits, branch_target))
+                if self.ifi_balance_pos_neg:
+                    cls_losses.append(self.point_classification_loss_per_item(logits, branch_target))
+                else:
+                    cls_losses.append(self.point_classification_loss(logits, branch_target))
                 if branch_target.numel() > 0:
                     point_losses.append(
-                        F.smooth_l1_loss(
-                            offsets,
-                            branch_offsets,
-                            reduction='none',
-                        ).sum(dim=-1).mean()
+                        self._ifi_offset_loss_per_item(offsets, branch_offsets)
+                        if self.ifi_balance_pos_neg
+                        else self._ifi_offset_loss(offsets, branch_offsets)
                     )
+
+    def _ifi_offset_loss(self, prediction, target):
+        return self._ifi_offset_loss_per_item(prediction, target).mean()
+
+    def _ifi_offset_loss_per_item(self, prediction, target):
+        if self.ifi_point_loss_type == 'mse':
+            elementwise = F.mse_loss(prediction, target, reduction='none')
+        else:
+            elementwise = F.smooth_l1_loss(prediction, target, reduction='none')
+        return elementwise.sum(dim=-1)
 
     def _ifi_dense_route_mask(
         self,

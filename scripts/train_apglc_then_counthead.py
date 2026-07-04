@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Run APG+LC/IFI training followed by count-head adaptation.
+"""Run PET with paper-aligned APG/IFI followed by count-head adaptation.
 
 The detector architecture is identical in both stages. Stage 2 initializes the
-additional scalar count head and applies its low-gradient auxiliary objective;
+additional density-sum count head and applies its low-gradient auxiliary objective;
 inference continues to use normal PET point thresholding.
 """
 
@@ -18,6 +18,13 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
+def resolve_output_path(value: str, dataset_file: str) -> Path:
+    path = Path(value)
+    if path.is_absolute() or (path.parts and path.parts[0] == "outputs"):
+        return path
+    return Path("outputs") / dataset_file / path
+
+
 def run(cmd: list[str]) -> None:
     print("\n" + " ".join(cmd) + "\n", flush=True)
     subprocess.run(cmd, cwd=REPO_ROOT, check=True)
@@ -25,7 +32,7 @@ def run(cmd: list[str]) -> None:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Train unified APG+LC/IFI from scratch, then adapt it with a scalar count head."
+        description="Train PET with APG/IFI, then adapt it with an auxiliary density-sum count head."
     )
     parser.add_argument("--data_path", default="./data/ShanghaiTech/part_A")
     parser.add_argument("--dataset_file", default="SHA")
@@ -38,11 +45,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--stage2_output", default=None)
     parser.add_argument("--stage1_recipe", default=None)
     parser.add_argument("--stage2_recipe", default=None)
-    parser.add_argument("--ifi_variant", default="branch", choices=("branch", "unified"),
-                        help="branch uses branch-local IFI; unified uses one shared IFI for both branches")
+    parser.add_argument("--ifi_variant", default="robust", choices=("robust", "paper", "branch", "unified"),
+                        help="robust preserves native PET features with residual IFI; paper/branch/unified are ablations")
     parser.add_argument("--seed", default=42, type=int)
     parser.add_argument("--stage1_epochs", default=1500, type=int)
-    parser.add_argument("--stage2_epochs", default=80, type=int)
+    parser.add_argument("--stage2_epochs", default=120, type=int)
     parser.add_argument("--batch_size", default=8, type=int)
     parser.add_argument("--patch_size", default=256, type=int)
     parser.add_argument("--patch_size_choices", default="")
@@ -58,9 +65,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--eval_tile_trigger_area", default=0, type=int)
     parser.add_argument("--nwpu_eval_split", default="val", choices=("val", "test", "train"))
     parser.add_argument("--jhu_eval_split", default="val", choices=("val", "test", "train"))
-    parser.add_argument("--nwpu_sigma_mode", default="area", choices=("area", "diag", "min_diag", "official"))
+    parser.add_argument("--nwpu_sigma_mode", default="official", choices=("area", "diag", "min_diag", "official"))
     parser.add_argument("--validation_protocol", default="auto",
-                        choices=("auto", "benchmark_test", "train_holdout"))
+                        choices=("auto", "official_val", "benchmark_test", "train_holdout"))
     parser.add_argument("--train_holdout_fraction", default=0.1, type=float)
     parser.add_argument("--train_holdout_seed", default=None, type=int)
     parser.add_argument("--nwpu_dense_crop_prob", default=0.0, type=float)
@@ -70,6 +77,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--eval_freq", default=5, type=int)
     parser.add_argument("--skip_stage1", action="store_true",
                         help="reuse stage1_output/best_checkpoint.pth and only run the count-head stage")
+    parser.add_argument("--resume_existing", action="store_true",
+                        help="resume each stage from its own checkpoint.pth when present")
     parser.add_argument("--stage1_extra_args", default="",
                         help="extra args appended to the APG+LC stage, shell-style quoted")
     parser.add_argument("--stage2_extra_args", default="",
@@ -82,7 +91,19 @@ def parse_args() -> argparse.Namespace:
     }
     is_nwpu = args.dataset_file in ("NWPU", "NWPU_Crowd", "NWPU-Crowd")
     if args.stage1_recipe is None:
-        if args.ifi_variant == "unified":
+        if args.ifi_variant == "robust":
+            args.stage1_recipe = (
+                "vgg_pet_apg_rifi_nwpu"
+                if is_nwpu
+                else "vgg_pet_apg_rifi"
+            )
+        elif args.ifi_variant == "paper":
+            args.stage1_recipe = (
+                "vgg_apgcc_paper_ifi_nwpu"
+                if is_nwpu
+                else "vgg_apgcc_paper_ifi"
+            )
+        elif args.ifi_variant == "unified":
             args.stage1_recipe = (
                 "vgg_apglc_unified_ifi_nwpu"
                 if is_nwpu
@@ -95,7 +116,19 @@ def parse_args() -> argparse.Namespace:
                 else "vgg_apglc_branch_ifi"
             )
     if args.stage2_recipe is None:
-        if args.ifi_variant == "unified":
+        if args.ifi_variant == "robust":
+            args.stage2_recipe = (
+                "vgg_pet_apg_rifi_counthead_stage2_nwpu"
+                if is_nwpu
+                else "vgg_pet_apg_rifi_counthead_stage2"
+            )
+        elif args.ifi_variant == "paper":
+            args.stage2_recipe = (
+                "vgg_apgcc_paper_ifi_counthead_stage2_nwpu"
+                if is_nwpu
+                else "vgg_apgcc_paper_ifi_counthead_stage2"
+            )
+        elif args.ifi_variant == "unified":
             args.stage2_recipe = (
                 "vgg_apglc_unified_ifi_counthead_stage2_nwpu"
                 if is_nwpu
@@ -166,7 +199,7 @@ def main() -> int:
             if key in args._explicit_args:
                 common.extend([flag, value])
 
-    stage1_output = Path(args.stage1_output)
+    stage1_output = resolve_output_path(args.stage1_output, args.dataset_file)
     if args.stage1_checkpoint:
         stage1_best = Path(args.stage1_checkpoint)
     else:
@@ -175,16 +208,21 @@ def main() -> int:
     if not args.skip_stage1:
         if args.stage1_checkpoint:
             raise ValueError("--stage1_checkpoint is only valid with --skip_stage1")
-        run([
+        stage1_command = [
             python, "main.py",
             "--model_recipe", args.stage1_recipe,
+            "--allow_experimental_model_recipe",
             "--output_dir", args.stage1_output,
             "--epochs", str(args.stage1_epochs),
             "--eval_freq", str(args.eval_freq),
             "--eval_start_epoch", "0",
             *common,
             *shlex.split(args.stage1_extra_args),
-        ])
+        ]
+        stage1_latest = stage1_output / "checkpoint.pth"
+        if args.resume_existing and stage1_latest.is_file():
+            stage1_command.extend(["--resume", str(stage1_latest)])
+        run(stage1_command)
 
     if not args.stage1_checkpoint:
         complete_best = stage1_output / "best_complete_checkpoint.pth"
@@ -193,18 +231,29 @@ def main() -> int:
     if not stage1_best.is_file():
         raise FileNotFoundError(f"stage-1 best checkpoint not found: {stage1_best}")
 
-    run([
+    stage2_command = [
         python, "main.py",
         "--model_recipe", args.stage2_recipe,
-        "--resume", str(stage1_best),
-        "--resume_model_only",
+        "--allow_experimental_model_recipe",
         "--output_dir", args.stage2_output,
         "--epochs", str(args.stage2_epochs),
         "--eval_freq", "2",
         "--eval_start_epoch", "0",
         *common,
         *shlex.split(args.stage2_extra_args),
-    ])
+    ]
+    stage2_latest = resolve_output_path(
+        args.stage2_output,
+        args.dataset_file,
+    ) / "checkpoint.pth"
+    if args.resume_existing and stage2_latest.is_file():
+        stage2_command.extend(["--resume", str(stage2_latest)])
+    else:
+        stage2_command.extend([
+            "--resume", str(stage1_best),
+            "--resume_model_only",
+        ])
+    run(stage2_command)
     return 0
 
 

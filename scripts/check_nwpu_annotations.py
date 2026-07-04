@@ -67,7 +67,7 @@ def main():
     parser.add_argument('--min_crop_points', default=0, type=int)
     parser.add_argument('--eval_max_size', default=-1, type=int)
     parser.add_argument('--nwpu_eval_split', default='val', choices=('val', 'test', 'train'))
-    parser.add_argument('--nwpu_sigma_mode', default='area', choices=('area', 'diag', 'min_diag', 'official'),
+    parser.add_argument('--nwpu_sigma_mode', default='official', choices=('area', 'diag', 'min_diag', 'official'),
                         help='fallback localization sigma derived from boxes when annotation sigma is absent')
     parser.add_argument('--splits', default='train,val',
                         help='comma-separated logical splits to check; use val to skip train')

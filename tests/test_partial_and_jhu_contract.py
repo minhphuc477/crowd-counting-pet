@@ -12,10 +12,12 @@ from scipy.io import savemat
 from datasets.JHU import build as build_jhu
 from datasets.JHU import load_jhu_annotation
 from datasets.NWPU import build as build_nwpu
+from datasets.NWPU import _sigma_from_boxes
 from datasets.QNRF import build as build_qnrf
+from datasets.QNRF import resize_long_side
 from datasets.SHA import fixed_partial_annotation_mask
 from datasets import build_dataset
-from main import resolve_validation_protocol
+from main import ModelEma, resolve_validation_protocol
 from models.matcher import HungarianMatcher, get_query_supervision_mask
 
 
@@ -159,6 +161,31 @@ class HighResolutionDatasetContractTests(unittest.TestCase):
             self.assertEqual(tuple(image.shape[-2:]), (50, 100))
             self.assertEqual(target['points'].tolist(), [[25.0, 50.0]])
 
+    def test_resize_uses_real_rounded_axis_scales(self):
+        image = Image.new('RGB', (101, 53))
+        points = np.asarray([[52.0, 100.0]], dtype=np.float32)
+        resized, resized_points = resize_long_side(image, points, 50)
+        self.assertEqual(resized.size, (50, 26))
+        self.assertTrue(np.allclose(
+            resized_points,
+            [[52.0 * 26.0 / 53.0, 100.0 * 50.0 / 101.0]],
+        ))
+
+    def test_nwpu_official_xyxy_box_sigma_matches_benchmark_file(self):
+        # Official sample 3110: the first 29.7x32.4 box maps to [15, 23]
+        # in the released val_gt_loc.txt localization file.
+        boxes = np.asarray(
+            [[843.15, 1292.8, 872.85, 1325.2]],
+            dtype=np.float32,
+        )
+        sigma = _sigma_from_boxes(boxes, 1, mode='official')
+        self.assertEqual(sigma.tolist(), [[15.0, 23.0]])
+
+    def test_nwpu_rejects_non_xyxy_boxes(self):
+        boxes = np.asarray([[20.0, 30.0, 10.0, 12.0]], dtype=np.float32)
+        with self.assertRaisesRegex(ValueError, 'official.*x1'):
+            _sigma_from_boxes(boxes, 1, mode='official')
+
     def test_nwpu_train_eval_resizes_points_and_sigma(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -213,6 +240,54 @@ class HighResolutionDatasetContractTests(unittest.TestCase):
             with self.assertRaisesRegex(FileNotFoundError, 'val.txt'):
                 build_nwpu('val', args)
 
+    def test_nwpu_val_requires_released_localization_thresholds(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            image_dir = root / 'images'
+            json_dir = root / 'jsons'
+            image_dir.mkdir()
+            json_dir.mkdir()
+            Image.new('RGB', (32, 32)).save(image_dir / '0001.jpg')
+            (json_dir / '0001.json').write_text(
+                json.dumps({
+                    'points': [[16.0, 16.0]],
+                    'boxes': [[12.0, 12.0, 20.0, 20.0]],
+                }),
+                encoding='utf-8',
+            )
+            (root / 'val.txt').write_text('0001\n', encoding='utf-8')
+            args = self._args(root)
+            args.nwpu_eval_split = 'val'
+            with self.assertRaisesRegex(FileNotFoundError, 'val_gt_loc.txt'):
+                build_nwpu('val', args)
+
+    def test_nwpu_val_rejects_mismatched_official_point_order(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            image_dir = root / 'images'
+            json_dir = root / 'jsons'
+            image_dir.mkdir()
+            json_dir.mkdir()
+            Image.new('RGB', (32, 32)).save(image_dir / '0001.jpg')
+            (json_dir / '0001.json').write_text(
+                json.dumps({
+                    'points': [[16.0, 16.0]],
+                    'boxes': [[12.0, 12.0, 20.0, 20.0]],
+                }),
+                encoding='utf-8',
+            )
+            (root / 'val.txt').write_text('0001\n', encoding='utf-8')
+            # x/y differ by more than NWPU's integer-coordinate rounding.
+            (root / 'val_gt_loc.txt').write_text(
+                '0001 1 14 14 4 6 1\n',
+                encoding='utf-8',
+            )
+            args = self._args(root)
+            args.nwpu_eval_split = 'val'
+            dataset = build_nwpu('val', args)
+            with self.assertRaisesRegex(ValueError, 'point order'):
+                dataset[0]
+
     def test_nwpu_hidden_test_split_does_not_require_annotations(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -241,7 +316,7 @@ class DatasetRegistryContractTests(unittest.TestCase):
                 dataset_file=dataset_file,
                 validation_protocol='auto',
             )
-            self.assertEqual(resolve_validation_protocol(args), 'benchmark_test')
+            self.assertEqual(resolve_validation_protocol(args), 'official_val')
 
     def test_ambiguous_ucf_alias_is_rejected(self):
         args = argparse.Namespace(dataset_file='UCF')
@@ -254,6 +329,30 @@ class DatasetRegistryContractTests(unittest.TestCase):
             validation_protocol='auto',
         )
         self.assertEqual(resolve_validation_protocol(args), 'train_holdout')
+
+    def test_official_validation_rejects_non_validation_splits(self):
+        with self.assertRaisesRegex(ValueError, 'nwpu_eval_split val'):
+            resolve_validation_protocol(argparse.Namespace(
+                dataset_file='NWPU',
+                validation_protocol='official_val',
+                nwpu_eval_split='test',
+            ))
+        with self.assertRaisesRegex(ValueError, 'jhu_eval_split val'):
+            resolve_validation_protocol(argparse.Namespace(
+                dataset_file='JHU',
+                validation_protocol='auto',
+                jhu_eval_split='test',
+            ))
+
+
+class CheckpointContractTests(unittest.TestCase):
+    def test_model_ema_state_can_be_restored(self):
+        source = torch.nn.Linear(2, 1)
+        target = torch.nn.Linear(2, 1)
+        ema = ModelEma(target, decay=0.99)
+        ema.load_state_dict(source.state_dict())
+        for expected, actual in zip(source.parameters(), ema.module.parameters()):
+            self.assertTrue(torch.equal(expected, actual))
 
 
 if __name__ == '__main__':

@@ -175,6 +175,8 @@ def load_data(img_gt_path):
 
 def resize_long_side(img, points, max_size):
     width, height = img.size
+    if int(max_size) <= 0:
+        raise ValueError('max_size must be positive when resize_long_side is called')
     factor = max(width / float(max_size), height / float(max_size), 1.0)
     if factor <= 1.0:
         return img, points
@@ -182,7 +184,9 @@ def resize_long_side(img, points, max_size):
     new_height = max(1, int(height / factor))
     img = img.resize((new_width, new_height), Image.BILINEAR)
     if points.shape[0] > 0:
-        points = points / factor
+        points = points.copy()
+        points[:, 0] *= new_height / float(height)
+        points[:, 1] *= new_width / float(width)
     return img, points
 
 
