@@ -29,11 +29,26 @@ sampling.
 - arbitrary positions use four-neighbor implicit feature interpolation;
 - positive queries learn confidence and displacement to the ground truth;
 - negative queries learn background confidence and zero displacement;
+- positive and negative groups are averaged separately and then summed;
+- auxiliary offsets use MSE, matching the released APGCC criterion;
 - PET Hungarian matching remains active for the normal point queries.
 
 This is an experimental PET/APG integration, not the published APGCC network.
 It must beat `vgg_pet_paper` and `vgg_apglc` under the same protocol before it
 can be claimed as an improvement.
+
+### Robust Residual IFI Candidate
+
+`vgg_pet_apg_rifi` is the maintained improvement candidate. It keeps PET's
+native sparse/dense query feature as an identity path and adds shared 4x/8x IFI
+through a zero-initialized learned residual. APG still trains from epoch zero
+through the full run with the corrected per-point positive/negative loss and
+PET's stable `0.02` auxiliary scale. This avoids replacing PET's usable
+representation with a random interpolator at initialization or importing an
+incompatible loss normalization from another network.
+
+It is still experimental. No architecture can be claimed to improve every
+dataset until fixed-protocol multi-seed runs beat the PET and APG+LC controls.
 
 ## Localization Metric Correction
 
@@ -41,7 +56,22 @@ PET predicts coordinates relative to the padded tensor. Evaluation now converts
 those coordinates with the padded tensor dimensions, then validates them
 against each image's unpadded size. Older localization F1/precision/recall
 numbers produced by this repository are invalid when an image dimension was
-not a multiple of the padding divisor. Counting MAE/MSE is unaffected.
+not a multiple of the padding divisor. MAE/MSE can also change when invalid
+point filtering removed coordinates produced with the old conversion.
+
+NWPU uses the official `[x1, y1, x2, y2]` head boxes. For scale-aware training
+and diagnostics, the `official` fallback derives
+`sigma_s = ceil(min(width, height) / 2)` and
+`sigma_l = ceil(sqrt(width^2 + height^2) / 2)`. This approximation is not
+accepted for benchmark reporting: validation requires the released
+`val_gt_loc.txt`, which always takes priority. Its stored point order is checked
+against the JSON annotations before evaluation.
+
+JHU-Crowd++ provides head boxes, but APGCC does not define a JHU localization
+table/protocol comparable to NWPU's released evaluator. JHU `target_sigma`
+values in this repository are therefore labeled approximate. Report JHU
+counting MAE/RMSE as the benchmark result and identify any localization
+protocol explicitly.
 
 ## Standard Training
 
@@ -51,9 +81,9 @@ Full APG integration on ShanghaiTech Part A:
 python main.py \
   --dataset_file SHA \
   --data_path ./data/ShanghaiTech/part_A \
-  --model_recipe vgg_apgcc_paper_ifi \
+  --model_recipe vgg_pet_apg_rifi \
   --allow_experimental_model_recipe \
-  --output_dir outputs/SHA/vgg_apgcc_paper_ifi_seed42 \
+  --output_dir outputs/SHA/vgg_pet_apg_rifi_seed42 \
   --batch_size 8 \
   --epochs 1500 \
   --device cuda \
@@ -65,6 +95,117 @@ Run the same command with `--model_recipe vgg_pet_paper` and
 different image-size caps, validation splits, thresholds, or pretrained
 backbone settings.
 
+## Complete Cross-Dataset Commands
+
+These commands run full APG/IFI stage 1 followed by a structurally compatible
+count-head stage 2. Stage 2 is an ablation, not an automatic replacement for
+stage 1: report whichever checkpoint wins on the declared validation split.
+The count head remains auxiliary; inference counts PET points.
+
+Add `--resume_existing` to any two-stage command to continue each stage from
+its own `checkpoint.pth`. Without that flag, an existing output directory is
+rejected; a checkpoint from another run cannot overwrite it silently.
+
+ShanghaiTech Part A:
+
+```bash
+python scripts/train_apglc_then_counthead.py \
+  --dataset_file SHA \
+  --data_path ./data/ShanghaiTech/part_A \
+  --ifi_variant robust \
+  --validation_protocol train_holdout \
+  --batch_size 8 \
+  --stage1_epochs 1500 \
+  --stage2_epochs 120 \
+  --stage1_output outputs/SHA/vgg_pet_apg_rifi_seed42 \
+  --stage2_output outputs/SHA/vgg_pet_apg_rifi_counthead_stage2_seed42 \
+  --device cuda \
+  --num_workers 2 \
+  --seed 42
+```
+
+ShanghaiTech Part B:
+
+```bash
+python scripts/train_apglc_then_counthead.py \
+  --dataset_file SHB \
+  --data_path ./data/ShanghaiTech/part_B \
+  --ifi_variant robust \
+  --validation_protocol train_holdout \
+  --batch_size 8 \
+  --stage1_epochs 1500 \
+  --stage2_epochs 120 \
+  --stage1_output outputs/SHB/vgg_pet_apg_rifi_seed42 \
+  --stage2_output outputs/SHB/vgg_pet_apg_rifi_counthead_stage2_seed42 \
+  --device cuda \
+  --num_workers 2 \
+  --seed 42
+```
+
+UCF-QNRF:
+
+```bash
+python scripts/train_apglc_then_counthead.py \
+  --dataset_file QNRF \
+  --data_path ./data/UCF-QNRF_ECCV18 \
+  --ifi_variant robust \
+  --validation_protocol train_holdout \
+  --batch_size 8 \
+  --stage1_epochs 1500 \
+  --stage2_epochs 120 \
+  --stage1_output outputs/QNRF/vgg_pet_apg_rifi_seed42 \
+  --stage2_output outputs/QNRF/vgg_pet_apg_rifi_counthead_stage2_seed42 \
+  --device cuda \
+  --num_workers 2 \
+  --seed 42
+```
+
+NWPU-Crowd uses the official validation split and the NWPU-specific recipe,
+which retains the same APG/IFI architecture while configuring dense crop
+sampling and bounded tail tiling:
+
+```bash
+python scripts/train_apglc_then_counthead.py \
+  --dataset_file NWPU \
+  --data_path ./data/NWPU-Crowd \
+  --ifi_variant robust \
+  --validation_protocol official_val \
+  --nwpu_eval_split val \
+  --batch_size 8 \
+  --stage1_epochs 1500 \
+  --stage2_epochs 120 \
+  --stage1_output outputs/NWPU/vgg_pet_apg_rifi_seed42 \
+  --stage2_output outputs/NWPU/vgg_pet_apg_rifi_counthead_stage2_seed42 \
+  --device cuda \
+  --num_workers 2 \
+  --seed 42
+```
+
+JHU-Crowd++ uses its official validation split:
+
+```bash
+python scripts/train_apglc_then_counthead.py \
+  --dataset_file JHU \
+  --data_path ./data/jhu_crowd_v2.0 \
+  --ifi_variant robust \
+  --validation_protocol official_val \
+  --jhu_eval_split val \
+  --batch_size 8 \
+  --stage1_epochs 1500 \
+  --stage2_epochs 120 \
+  --stage1_output outputs/JHU/vgg_pet_apg_rifi_seed42 \
+  --stage2_output outputs/JHU/vgg_pet_apg_rifi_counthead_stage2_seed42 \
+  --device cuda \
+  --num_workers 2 \
+  --seed 42
+```
+
+For SHA, SHB, and QNRF, `train_holdout` is the development protocol because
+the datasets have no official validation split. Do not publish the lowest
+benchmark-test epoch after repeatedly evaluating the test set. Freeze the
+architecture and thresholds using the holdout, then run a separately declared
+final experiment.
+
 ## UCF-CC-50
 
 UCF-CC-50 has only 50 images and must be evaluated with five-fold
@@ -75,9 +216,9 @@ evaluates each untouched 10-image fold once.
 ```bash
 python scripts/run_ucfcc50_folds.py \
   --data_path data/UCF_CC_50 \
-  --model_recipe vgg_apgcc_paper_ifi \
+  --model_recipe vgg_pet_apg_rifi \
   --output_root outputs/UCFCC50 \
-  --results_dir eval_results/UCFCC50/vgg_apgcc_paper_ifi_seed42 \
+  --results_dir eval_results/UCFCC50/vgg_pet_apg_rifi_seed42 \
   --fold_seed 42 \
   --device cuda \
   --num_workers 2 \
@@ -96,7 +237,7 @@ Stage one uses only the deterministic observed rectangle:
 python main.py \
   --dataset_file SHA \
   --data_path ./data/ShanghaiTech/part_A \
-  --model_recipe vgg_apgcc_paper_ifi \
+  --model_recipe vgg_pet_apg_rifi \
   --allow_experimental_model_recipe \
   --partial_annotation_ratio 0.1 \
   --partial_annotation_seed 42 \
@@ -129,7 +270,7 @@ python main.py \
   --dataset_file SHA \
   --data_path ./data/ShanghaiTech/part_A \
   --annotation_override_dir data/ShanghaiTech/part_A/completed_r010_seed42 \
-  --model_recipe vgg_apgcc_paper_ifi \
+  --model_recipe vgg_pet_apg_rifi \
   --allow_experimental_model_recipe \
   --output_dir outputs/SHA/partial_r010_stage2_scratch_seed42 \
   --epochs 1500 \
@@ -147,7 +288,7 @@ annotation. It does not threshold or NMS the point set.
 
 ```bash
 python scripts/refine_point_annotations.py \
-  --resume outputs/SHA/vgg_apgcc_paper_ifi_seed42/best_checkpoint.pth \
+  --resume outputs/SHA/vgg_pet_apg_rifi_seed42/best_checkpoint.pth \
   --dataset_file SHA \
   --data_path ./data/ShanghaiTech/part_A \
   --output_dir data/ShanghaiTech/part_A/refined_seed42 \
@@ -180,6 +321,7 @@ For every dataset, retain identical data and evaluation settings and compare:
 2. `vgg_apglc`
 3. `vgg_pet_branch_ifi`
 4. `vgg_apgcc_paper_ifi`
+5. `vgg_pet_apg_rifi`
 
 Then isolate APG/IFI parameters:
 
