@@ -13,7 +13,12 @@ from torch.utils.data import DataLoader, DistributedSampler
 import datasets
 from datasets import build_dataset
 import util.misc as utils
-from engine import evaluate, evaluate_crowd_no_overlap, format_localization_metrics
+from engine import (
+    evaluate,
+    evaluate_crowd_no_overlap,
+    export_point_refinements,
+    format_localization_metrics,
+)
 from models import build_model
 
 
@@ -358,10 +363,18 @@ def get_args_parser():
     parser.add_argument('--patch_size_choices', default='', type=str)
     parser.add_argument('--crop_attempts', default=1, type=int)
     parser.add_argument('--min_crop_points', default=0, type=int)
-    parser.add_argument('--eval_max_size', default=1536, type=int,
-                        help='QNRF/UCF validation long-side cap; non-positive disables resizing')
+    parser.add_argument('--eval_max_size', default=-1, type=int,
+                        help='high-resolution long-side cap; -1 uses PET defaults (QNRF 1536, JHU/NWPU 2048), 0 disables resizing')
     parser.add_argument('--nwpu_eval_split', default='val', choices=('val', 'test', 'train'),
                         help='NWPU split used when --dataset_file NWPU is evaluated')
+    parser.add_argument('--jhu_eval_split', default='val', choices=('val', 'test', 'train'),
+                        help='JHU-Crowd++ split used when --dataset_file JHU is evaluated')
+    parser.add_argument('--ucfcc50_fold', default=0, type=int, choices=range(5),
+                        help='held-out UCF-CC-50 fold index (0-4)')
+    parser.add_argument('--ucfcc50_fold_seed', default=42, type=int,
+                        help='seed used to create UCF-CC-50 folds without a manifest')
+    parser.add_argument('--ucfcc50_fold_manifest', default='', type=str,
+                        help='JSON file containing the exact five UCF-CC-50 folds')
     parser.add_argument('--nwpu_sigma_mode', default='area', choices=('area', 'diag', 'min_diag', 'official'),
                         help='fallback localization sigma derived from NWPU boxes when annotation sigma is absent')
 
@@ -377,6 +390,10 @@ def get_args_parser():
                         help='where to save eval metrics; empty writes eval_results.json next to checkpoint')
     parser.add_argument('--per_image_results_file', default='',
                         help='optional JSON path for per-image count/localization errors')
+    parser.add_argument('--per_image_predictions_file', default='',
+                        help='optional JSON path for final filtered point coordinates and scores')
+    parser.add_argument('--refinement_predictions_file', default='',
+                        help='run original annotations as custom PET queries and export refined points to JSON')
     parser.add_argument('--eval_image_set', default='val', choices=('val', 'train_eval', 'train_holdout'),
                         help='dataset split used by eval.py; train_holdout reproduces main.py validation_protocol=train_holdout')
     parser.add_argument('--train_holdout_fraction', default=0.1, type=float,
@@ -439,8 +456,11 @@ def merge_checkpoint_args(args, checkpoint):
             setattr(merged, key, value)
     always_runtime_keys = {
         'resume', 'device', 'vis_dir', 'results_file', 'data_path', 'dataset_file',
-        'nwpu_eval_split', 'num_workers', 'seed',
-        'per_image_results_file', 'eval_image_set',
+        'nwpu_eval_split', 'jhu_eval_split',
+        'num_workers', 'seed',
+        'per_image_results_file', 'per_image_predictions_file',
+        'refinement_predictions_file',
+        'eval_image_set',
         'override_score_threshold', 'override_split_threshold', 'override_split_threshold_quantile',
         'override_query_prune_threshold',
         'checkpoint_model_key', 'deterministic', 'amp_dtype', 'strict_model_checks',
@@ -467,6 +487,7 @@ def merge_checkpoint_args(args, checkpoint):
         'localization_protocol', 'localization_large_scale', 'localization_small_scale',
         'eval_protocol', 'resume_allow_arch_change',
         'train_holdout_fraction', 'train_holdout_seed',
+        'ucfcc50_fold', 'ucfcc50_fold_seed', 'ucfcc50_fold_manifest',
     }
     explicit_args = set(getattr(args, '_explicit_args', set()))
     if 'eval_dense_start_epoch' in explicit_args:
@@ -633,6 +654,20 @@ def main(args):
         args = merge_checkpoint_args(args, checkpoint)
         args.no_pretrained_backbone = should_skip_pretrained_backbone(args, checkpoint)
     args = apply_eval_overrides(args)
+    if (
+        getattr(args, 'per_image_predictions_file', '')
+        or getattr(args, 'refinement_predictions_file', '')
+    ) and (
+        bool(getattr(args, 'tta_flip', False))
+        or any(
+            abs(scale - 1.0) > 1e-6
+            for scale in parse_tta_scales(getattr(args, 'tta_scales', '1.0'))
+        )
+    ):
+        raise ValueError(
+            'point-coordinate export does not support count-only TTA; use '
+            '--tta_scales 1.0 without --tta_flip'
+        )
     print(args)
 
     # build model
@@ -684,6 +719,20 @@ def main(args):
                 print('  unexpected:', unexpected[:20])
         print(f'loaded checkpoint model state: {eval_model_key}')
         cur_epoch = checkpoint['epoch'] if 'epoch' in checkpoint else 0
+
+    if args.refinement_predictions_file:
+        rows = export_point_refinements(
+            model,
+            data_loader_val,
+            device,
+            args.refinement_predictions_file,
+            epoch=cur_epoch,
+        )
+        print(
+            f'point refinements saved to: {args.refinement_predictions_file} '
+            f'({len(rows)} images)'
+        )
+        return
     
     # evaluation
     vis_dir = None if args.vis_dir == "" else args.vis_dir
@@ -721,6 +770,7 @@ def main(args):
             localization_large_scale=args.localization_large_scale,
             localization_small_scale=args.localization_small_scale,
             per_image_results_file=args.per_image_results_file,
+            per_image_predictions_file=args.per_image_predictions_file,
             eval_tile_size=args.eval_tile_size,
             eval_tile_overlap=args.eval_tile_overlap,
             eval_tile_nms_radius=args.eval_tile_nms_radius,

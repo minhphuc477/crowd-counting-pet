@@ -10,6 +10,17 @@ This folder contains the maintained scripts for training, evaluating, and checki
 - `find_best_checkpoint.py`: scans checkpoints and logs for stored MAE/MSE metadata.
 - `optuna_search.py`: runs Optuna for one backbone and writes `optuna_best.json`.
 - `ensemble_evaluate.py`: evaluates a set of seed checkpoints for one backbone.
+- `run_ucfcc50_folds.py`: runs leakage-safe UCF-CC-50 five-fold training and
+  aggregates the five held-out folds.
+- `complete_partial_annotations.py`: creates auditable pseudo-completed
+  ShanghaiTech training annotations from a partial-label stage-one model.
+- `refine_point_annotations.py`: refines existing annotations with exactly one
+  custom PET query per source point.
+- `export_nwpu_test.py`: exports 1,500 ordered count predictions in the
+  NWPU-Crowd hidden-test submission format.
+
+The full protocols and their limitations are documented in
+`docs/full_scope_protocols.md`.
 
 ## Paper Baseline
 

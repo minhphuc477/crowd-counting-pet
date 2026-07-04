@@ -196,12 +196,109 @@ def _predict_count(model, samples, targets, epoch=0):
     return outputs, float(len(outputs_scores))
 
 
+@torch.no_grad()
+def export_point_refinements(
+    model,
+    data_loader,
+    device,
+    output_file,
+    epoch=0,
+):
+    """Run PET with each original annotation as an explicit decoder query."""
+    if utils.get_world_size() != 1:
+        raise ValueError('point refinement export requires single-process evaluation')
+    model.eval()
+    rows = []
+    metric_logger = utils.MetricLogger(delimiter='  ')
+    for samples, targets in metric_logger.log_every(
+        data_loader,
+        10,
+        'Refine:',
+    ):
+        if len(targets) != 1 or samples.tensors.shape[0] != 1:
+            raise ValueError('point refinement expects batch_size=1')
+        samples = samples.to(device)
+        img_h, img_w = _valid_hw(samples)
+        original = targets[0]['points'].to(
+            device=device,
+            dtype=torch.float32,
+        )
+        outputs = model(
+            samples,
+            test=True,
+            epoch=epoch,
+            custom_query_points=original,
+        )
+        refined = _pred_points_to_image_pixels(
+            outputs['pred_points'][0],
+            samples,
+        )
+        refined[:, 0].clamp_(0, max(float(img_h) - 1.0, 0.0))
+        refined[:, 1].clamp_(0, max(float(img_w) - 1.0, 0.0))
+        scores = torch.softmax(
+            outputs['pred_logits'][0].detach().float(),
+            dim=-1,
+        )[:, 1]
+        displacement = torch.linalg.vector_norm(
+            refined - original,
+            dim=1,
+        )
+        rows.append({
+            'image_id': str(targets[0].get('image_id', '')),
+            'image_path': str(targets[0].get('image_path', '')),
+            'image_height': int(img_h),
+            'image_width': int(img_w),
+            'original_points_yx': original.cpu().tolist(),
+            'refined_points_yx': refined.cpu().tolist(),
+            'person_scores': scores.cpu().tolist(),
+            'dense_branch': outputs['custom_dense_mask'][0].cpu().tolist(),
+            'mean_displacement': (
+                float(displacement.mean().item())
+                if displacement.numel()
+                else 0.0
+            ),
+            'max_displacement': (
+                float(displacement.max().item())
+                if displacement.numel()
+                else 0.0
+            ),
+        })
+    rows.sort(key=lambda row: (row['image_id'], row['image_path']))
+    os.makedirs(os.path.dirname(output_file) or '.', exist_ok=True)
+    with open(output_file, 'w', encoding='utf-8') as handle:
+        json.dump(rows, handle, indent=2)
+    return rows
+
+
 def _valid_hw(samples):
     if samples.mask is None:
         return samples.tensors.shape[-2:]
     valid_h = int((~samples.mask[0]).any(dim=1).sum().item())
     valid_w = int((~samples.mask[0]).any(dim=0).sum().item())
     return max(valid_h, 1), max(valid_w, 1)
+
+
+def _pred_points_to_image_pixels(
+    pred_points,
+    samples,
+    reference_samples=None,
+):
+    """Undo PET normalization and optionally map a resized pass to its source."""
+    if pred_points.numel() == 0:
+        return pred_points.detach().reshape(0, 2).float()
+    model_h, model_w = samples.tensors.shape[-2:]
+    points = pred_points.detach().float()
+    points = points * points.new_tensor(
+        [float(model_h), float(model_w)]
+    )
+    if reference_samples is not None and reference_samples is not samples:
+        source_h, source_w = _valid_hw(samples)
+        reference_h, reference_w = _valid_hw(reference_samples)
+        points = points * points.new_tensor([
+            float(reference_h) / max(float(source_h), 1.0),
+            float(reference_w) / max(float(source_w), 1.0),
+        ])
+    return points
 
 
 def _greedy_match_count(distances, threshold):
@@ -478,8 +575,13 @@ def _predict_count_tiled(
             points = outputs['pred_points'][0].detach()
             if points.numel() == 0:
                 continue
-            tile_h, tile_w = y1 - y0, x1 - x0
-            points_abs = points.to(dtype=torch.float32) * points.new_tensor([float(tile_h), float(tile_w)])
+            # PET normalizes coordinates by the padded tensor passed through
+            # the model, not by the unpadded crop extent.
+            tile_model_h, tile_model_w = tile_samples.tensors.shape[-2:]
+            points_abs = points.to(dtype=torch.float32) * points.new_tensor([
+                float(tile_model_h),
+                float(tile_model_w),
+            ])
             points_abs[:, 0] += float(y0)
             points_abs[:, 1] += float(x0)
             pred_points_abs_parts.append(points_abs)
@@ -493,7 +595,11 @@ def _predict_count_tiled(
         pred_points_abs = torch.cat(pred_points_abs_parts, dim=0)
         scores = torch.cat(score_parts, dim=0) if score_parts else None
         pred_points_abs = _nms_points_abs(pred_points_abs, scores=scores, radius=tile_nms_radius)
-        pred_points_norm = pred_points_abs / pred_points_abs.new_tensor([float(img_h), float(img_w)])
+        model_h, model_w = samples.tensors.shape[-2:]
+        pred_points_norm = pred_points_abs / pred_points_abs.new_tensor([
+            float(model_h),
+            float(model_w),
+        ])
     else:
         pred_points_norm = torch.empty((0, 2), dtype=samples.tensors.dtype, device=samples.tensors.device)
 
@@ -568,6 +674,7 @@ def evaluate(
     localization_large_scale=1.0,
     localization_small_scale=0.5,
     per_image_results_file=None,
+    per_image_predictions_file=None,
     eval_tile_size=0,
     eval_tile_overlap=0,
     eval_tile_nms_radius=0.0,
@@ -605,6 +712,12 @@ def evaluate(
     loc_threshold_counts = {name: 0.0 for name in loc_thresholds}
     loc_protocol_used = {name: localization_protocol for name in loc_thresholds}
     per_image_rows = [] if per_image_results_file else None
+    prediction_rows = [] if per_image_predictions_file else None
+    if prediction_rows is not None and utils.get_world_size() != 1:
+        raise ValueError(
+            'per-image prediction export currently requires single-process '
+            'evaluation to avoid gathering millions of point coordinates'
+        )
     for samples, targets in metric_logger.log_every(data_loader, print_freq, header):
         samples = samples.to(device)
         if len(targets) != 1 or samples.tensors.shape[0] != 1:
@@ -628,6 +741,7 @@ def evaluate(
 
         outputs = None
         predict_cnt = None
+        output_samples = samples
         trigger_count = float(eval_tile_trigger_count or 0.0)
         trigger_area = int(eval_tile_trigger_area or 0)
         needs_trigger_count_pass = tile_candidate and trigger_count > 0.0
@@ -638,6 +752,7 @@ def evaluate(
             # before this point prevents tiling from ever activating.
             trigger_samples = _resize_nested_long_side(samples, int(eval_tile_size))
             outputs, predict_cnt = _predict_count(model, trigger_samples, targets, epoch=epoch)
+            output_samples = trigger_samples
             use_tiled_eval = True
             outputs.setdefault('eval_count_debug', {})['tile_trigger_count'] = float(predict_cnt)
             use_tiled_eval = use_tiled_eval and float(predict_cnt) >= trigger_count
@@ -652,6 +767,7 @@ def evaluate(
             if tile_candidate_by_size and not use_tiled_eval:
                 trigger_samples = _resize_nested_long_side(samples, int(eval_tile_size))
                 outputs, predict_cnt = _predict_count(model, trigger_samples, targets, epoch=epoch)
+                output_samples = trigger_samples
                 outputs.setdefault('eval_count_debug', {})['tile_trigger_skipped'] = 1.0
 
         if use_tiled_eval:
@@ -664,9 +780,11 @@ def evaluate(
                 tile_overlap=eval_tile_overlap,
                 tile_nms_radius=eval_tile_nms_radius,
             )
+            output_samples = samples
             outputs.setdefault('eval_count_debug', {})['tile_used'] = 1.0
         elif outputs is None or predict_cnt is None:
             outputs, predict_cnt = _predict_count(model, samples, targets, epoch=epoch)
+            output_samples = samples
         # outputs_scores: per-query person probability, shape [N_queries]
         # test_forward() already applies score thresholding and returns only
         # surviving (person) queries in pred_logits, so len(outputs_scores) is
@@ -688,6 +806,12 @@ def evaluate(
             predict_cnt = float(sum(tta_counts) / len(tta_counts))
         gt_cnt = targets[0]['points'].shape[0]
 
+        pred_points_abs = _pred_points_to_image_pixels(
+            outputs_points,
+            output_samples,
+            reference_samples=samples,
+        ).to(device=device)
+
         # compute error
         mae = abs(predict_cnt - gt_cnt)
         mse_sq = (predict_cnt - gt_cnt) * (predict_cnt - gt_cnt)
@@ -703,11 +827,6 @@ def evaluate(
 
         if localization_metrics:
             per_image_loc = {}
-            if outputs_points.numel() == 0:
-                pred_points_abs = outputs_points.detach().reshape(0, 2).to(device=device, dtype=torch.float32)
-            else:
-                pred_points_abs = outputs_points.detach().to(device=device, dtype=torch.float32)
-                pred_points_abs = pred_points_abs * pred_points_abs.new_tensor([float(img_h), float(img_w)])
             gt_points_abs = targets[0]['points'].to(device=device, dtype=torch.float32)
             for name, threshold in loc_thresholds.items():
                 match_threshold = threshold
@@ -766,6 +885,30 @@ def evaluate(
                 row.update(per_image_loc)
             per_image_rows.append(row)
 
+        if prediction_rows is not None:
+            target = targets[0]
+            logits = outputs.get('pred_logits')
+            if logits is not None and logits.numel() > 0:
+                pred_scores = torch.softmax(
+                    logits[0].detach().float(),
+                    dim=-1,
+                )[:, 1]
+            else:
+                pred_scores = torch.ones(
+                    pred_points_abs.shape[0],
+                    dtype=torch.float32,
+                    device=pred_points_abs.device,
+                )
+            prediction_rows.append({
+                'image_id': str(target.get('image_id', '')),
+                'image_path': str(target.get('image_path', '')),
+                'image_height': int(img_h),
+                'image_width': int(img_w),
+                'pred_cnt': float(predict_cnt),
+                'pred_points_yx': pred_points_abs.cpu().tolist(),
+                'pred_scores': pred_scores.cpu().tolist(),
+            })
+
         if 'eval_count_debug' in outputs:
             metric_logger.update(**{
                 f'dbg_{key}': float(value)
@@ -774,7 +917,7 @@ def evaluate(
 
         # visualize predictions
         if vis_dir: 
-            points = [[point[0]*img_h, point[1]*img_w] for point in outputs_points]     # recover to actual points
+            points = pred_points_abs.detach().cpu().tolist()
             split_threshold = outputs.get('split_threshold', 0.5)
             if torch.is_tensor(split_threshold):
                 split_threshold = float(split_threshold.detach().cpu().item())
@@ -818,4 +961,18 @@ def evaluate(
         os.makedirs(os.path.dirname(per_image_results_file) or '.', exist_ok=True)
         with open(per_image_results_file, 'w', encoding='utf-8') as handle:
             json.dump(per_image_rows, handle, indent=2)
+    if prediction_rows is not None and utils.is_main_process():
+        prediction_rows.sort(
+            key=lambda row: (row['image_id'], row['image_path'])
+        )
+        os.makedirs(
+            os.path.dirname(per_image_predictions_file) or '.',
+            exist_ok=True,
+        )
+        with open(
+            per_image_predictions_file,
+            'w',
+            encoding='utf-8',
+        ) as handle:
+            json.dump(prediction_rows, handle, indent=2)
     return results

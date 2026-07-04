@@ -73,6 +73,22 @@ def resolve_runtime_args(args: argparse.Namespace) -> argparse.Namespace:
         args.data_path = _checkpoint_arg(checkpoint_args, "data_path") or ""
     if not args.backbone:
         args.backbone = _checkpoint_arg(checkpoint_args, "backbone") or "vgg16_bn"
+    if args.ucfcc50_fold is None:
+        args.ucfcc50_fold = int(
+            _checkpoint_arg(checkpoint_args, "ucfcc50_fold") or 0
+        )
+    if args.ucfcc50_fold_seed is None:
+        checkpoint_seed = _checkpoint_arg(
+            checkpoint_args,
+            "ucfcc50_fold_seed",
+        )
+        args.ucfcc50_fold_seed = int(
+            42 if checkpoint_seed is None else checkpoint_seed
+        )
+    if not args.ucfcc50_fold_manifest:
+        args.ucfcc50_fold_manifest = (
+            _checkpoint_arg(checkpoint_args, "ucfcc50_fold_manifest") or ""
+        )
     if not args.output_dir:
         args.output_dir = str(checkpoint_path.resolve().parent / "threshold_sweep")
     return args
@@ -135,6 +151,14 @@ def run_eval(
         str(results_file),
         "--eval_image_set",
         args.eval_image_set,
+        "--nwpu_eval_split",
+        args.nwpu_eval_split,
+        "--jhu_eval_split",
+        args.jhu_eval_split,
+        "--ucfcc50_fold",
+        str(args.ucfcc50_fold),
+        "--ucfcc50_fold_seed",
+        str(args.ucfcc50_fold_seed),
         "--override_score_threshold",
         str(score_threshold),
         "--override_split_threshold",
@@ -150,6 +174,11 @@ def run_eval(
         "--eval_count_mode",
         eval_count_mode,
     ]
+    if args.ucfcc50_fold_manifest:
+        cmd.extend([
+            "--ucfcc50_fold_manifest",
+            args.ucfcc50_fold_manifest,
+        ])
     if eval_count_source != "checkpoint":
         cmd.extend(["--eval_count_source", eval_count_source])
     cmd.extend(["--eval_count_blend_alpha", str(eval_count_blend_alpha)])
@@ -371,6 +400,11 @@ def get_args() -> argparse.Namespace:
     parser.add_argument("--output_dir", default="", help="Where to save sweep logs/results")
     parser.add_argument("--eval_image_set", default="val", choices=("val", "train_eval", "train_holdout"),
                         help="dataset split passed to eval.py")
+    parser.add_argument("--nwpu_eval_split", default="val", choices=("val", "test", "train"))
+    parser.add_argument("--jhu_eval_split", default="val", choices=("val", "test", "train"))
+    parser.add_argument("--ucfcc50_fold", default=None, type=int, choices=range(5))
+    parser.add_argument("--ucfcc50_fold_seed", default=None, type=int)
+    parser.add_argument("--ucfcc50_fold_manifest", default="")
     parser.add_argument("--tta_flip", action="store_true", help="average original and horizontal-flip counts")
     parser.add_argument("--tta_scales", default="1.0", help="comma-separated eval scales passed to eval.py")
     parser.add_argument("--no_localization_metrics", action="store_true", help="disable localization metrics in eval.py")

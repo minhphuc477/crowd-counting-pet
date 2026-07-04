@@ -1072,6 +1072,41 @@ MODEL_RECIPES['vgg_pet_branch_ifi'] = {
     'ifi_end_epoch': -1,
 }
 
+# PET with paper-aligned APG sampling and structural multi-scale IFI.
+#
+# This is an integration of APGCC's two mechanisms into PET, not a claim that
+# PET has become the published APGCC architecture. Unlike the legacy
+# --apg_loss_coef path, every GT independently creates two positive and two
+# negative auxiliary positions. The shared continuous representation reads
+# PET's projected 4x/8x features and the normal Hungarian point-query losses
+# remain active, matching APGCC's "Matcher + APG" optimization principle.
+MODEL_RECIPES['vgg_apgcc_paper_ifi'] = {
+    **MODEL_RECIPES['vgg_pet_paper'],
+    'query_feature_interpolation': 'implicit',
+    'query_ifi_sharing': 'shared',
+    'query_ifi_feature_source': 'fpn4x8x',
+    'query_ifi_residual': False,
+    'ifi_interpolation': 'implicit',
+    'ifi_feature_source': 'branch',
+    'ifi_pos_dim': 32,
+    'ifi_mlp_hidden_dim': 256,
+    'ifi_activation': 'gelu',
+    'ifi_loss_coef': 0.2,
+    'ifi_head_source': 'routed',
+    # PET predicts image-normalized offsets, unlike APGCC's pixel-scaled
+    # regression. Keep PET's established point coefficient for usable offset
+    # gradients while preserving APGCC's outer lambda_5=0.2.
+    'ifi_point_coef': 5.0,
+    'ifi_pos_k': 2,
+    'ifi_pos_radius': 2.0,
+    'ifi_random_sampling': True,
+    'ifi_neg_k': 2,
+    'ifi_neg_radius': 8.0,
+    'ifi_neg_min_dist': 2.0,
+    'ifi_start_epoch': 0,
+    'ifi_end_epoch': -1,
+}
+
 # APG+LC + branch-local IFI.
 #
 # This is the missing combination that the repo did not expose cleanly before:
@@ -1446,6 +1481,9 @@ EXPERIMENTAL_MODEL_RECIPES = {
     # RMI-PET is the current cross-dataset hypothesis. It is not promoted to a
     # production recipe until fixed-protocol SHA/SHB/QNRF/JHU/NWPU runs pass.
     'vgg_pet_rmi',
+    # Paper-aligned sampling is implemented and contract-tested, but its PET
+    # integration still requires fixed-protocol cross-dataset falsification.
+    'vgg_apgcc_paper_ifi',
     # The remaining paths are kept for audit/reproduction only. Session runs
     # showed catastrophic drift or failed to improve on the PET/APG+LC baselines.
     'vgg_apglc_cbme_late_countreg',
@@ -1945,7 +1983,7 @@ def get_args_parser():
     parser.add_argument('--bayesian_end_epoch', default=-1, type=int,
                         help='epoch after which Bayesian auxiliary turns off; negative keeps it on')
     parser.add_argument('--apg_loss_coef', default=0.0, type=float,
-                        help='Auxiliary Point Guidance loss weight; 0 disables it')
+                        help='legacy nearest-grid-query guidance weight; this is not APGCC auxiliary-point sampling (use --ifi_loss_coef for full APG sampling)')
     parser.add_argument('--apg_pos_k', default=1, type=int,
                         help='nearest point queries per GT point supervised by APG')
     parser.add_argument('--apg_point_coef', default=5.0, type=float,
@@ -2035,11 +2073,11 @@ def get_args_parser():
     parser.add_argument('--ifi_activation', default='gelu', choices=('relu', 'gelu'),
                         help='activation used by implicit IFI MLP')
     parser.add_argument('--ifi_loss_coef', default=0.0, type=float,
-                        help='Interpolated Feature Guidance auxiliary loss weight; 0 disables it')
+                        help='APGCC-style independent auxiliary-point guidance weight through interpolated features; 0 disables it')
     parser.add_argument('--ifi_head_source', default='separate', choices=('separate', 'sparse', 'dense', 'both', 'routed'),
                         help='prediction head used by IFI: separate auxiliary head, sparse PET head, dense PET head, both PET heads, or one routed PET head per point')
     parser.add_argument('--ifi_point_coef', default=1.0, type=float,
-                        help='zero-offset coefficient inside IFI-lite APG loss')
+                        help='positive-to-GT and negative-to-zero offset coefficient inside full IFI/APG loss')
     parser.add_argument('--ifi_pos_k', default=1, type=int,
                         help='auxiliary positive points sampled per GT for IFI/APG guidance')
     parser.add_argument('--ifi_pos_radius', default=0.0, type=float,
@@ -2047,15 +2085,15 @@ def get_args_parser():
     parser.add_argument('--ifi_random_sampling', action='store_true',
                         help='randomize IFI/APG positive and negative points as in APGCC')
     parser.add_argument('--ifi_neg_k', default=4, type=int,
-                        help='local negative interpolated points per GT for IFI-lite')
+                        help='independent negative auxiliary points per GT for IFI/APG')
     parser.add_argument('--ifi_neg_radius', default=12.0, type=float,
-                        help='pixel radius for IFI-lite local negative ring')
+                        help='maximum per-axis displacement for IFI/APG negative points')
     parser.add_argument('--ifi_neg_min_dist', default=4.0, type=float,
-                        help='discard IFI-lite negatives closer than this many pixels to any GT')
+                        help='minimum per-axis random displacement and final distance from every GT for IFI/APG negatives')
     parser.add_argument('--ifi_start_epoch', default=0, type=int,
                         help='epoch when IFI-lite auxiliary supervision starts')
     parser.add_argument('--ifi_end_epoch', default=-1, type=int,
-                        help='epoch after which IFI-lite turns off; negative keeps it on')
+                        help='epoch after which IFI/APG supervision turns off; negative keeps it on')
     parser.add_argument('--qd_apg_loss_coef', default=0.0, type=float,
                         help='Quadtree-Dual APG loss weight; 0 disables it')
     parser.add_argument('--qd_apg_point_coef', default=5.0, type=float,
@@ -2222,11 +2260,17 @@ def get_args_parser():
     parser.add_argument('--min_crop_points', default=0, type=int,
                         help='minimum people desired in a positive training crop')
     parser.add_argument('--eval_max_size', default=-1, type=int,
-                        help='validation long-side cap; -1 selects the published dataset default (QNRF 1536, JHU/NWPU 2048), 0 disables resizing')
+                        help='high-resolution dataset long-side cap applied before training crops and evaluation; -1 selects the published default (QNRF 1536, JHU/NWPU 2048), 0 disables resizing')
     parser.add_argument('--nwpu_eval_split', default='val', choices=('val', 'test', 'train'),
                         help='NWPU split used for validation/evaluation')
     parser.add_argument('--jhu_eval_split', default='val', choices=('val', 'test', 'train'),
                         help='JHU-Crowd++ split used for validation/evaluation')
+    parser.add_argument('--ucfcc50_fold', default=0, type=int, choices=range(5),
+                        help='held-out UCF-CC-50 fold index (0-4)')
+    parser.add_argument('--ucfcc50_fold_seed', default=42, type=int,
+                        help='seed used to create five UCF-CC-50 folds when no manifest is supplied')
+    parser.add_argument('--ucfcc50_fold_manifest', default='', type=str,
+                        help='JSON file containing the exact five UCF-CC-50 folds')
     parser.add_argument('--validation_protocol', default='auto',
                         choices=('auto', 'benchmark_test', 'train_holdout'),
                         help='checkpoint-selection protocol; auto uses train_holdout for SHA/SHB/QNRF and benchmark_test for NWPU/JHU')
@@ -2240,6 +2284,8 @@ def get_args_parser():
                         help='seed for deterministic per-image partial annotation rectangles')
     parser.add_argument('--partial_annotation_height_ratio', default=0.5, type=float,
                         help='preferred height fraction of each fixed partial annotation rectangle')
+    parser.add_argument('--annotation_override_dir', default='', type=str,
+                        help='directory of complete GT_<image>.mat training annotations produced by refinement or partial-label completion')
     parser.add_argument('--nwpu_sigma_mode', default='area', choices=('area', 'diag', 'min_diag', 'official'),
                         help='fallback localization sigma derived from NWPU boxes when annotation sigma is absent')
     parser.add_argument('--nwpu_dense_crop_prob', default=0.0, type=float,
@@ -2352,6 +2398,11 @@ def validate_partial_annotation_contract(args):
     ratio = float(getattr(args, 'partial_annotation_ratio', 1.0))
     if not 0.0 < ratio <= 1.0:
         raise ValueError('--partial_annotation_ratio must be in (0, 1]')
+    if getattr(args, 'annotation_override_dir', '') and ratio < 1.0:
+        raise ValueError(
+            '--annotation_override_dir contains completed/refined full-image '
+            'labels and must be trained with --partial_annotation_ratio 1.0'
+        )
     if ratio >= 1.0:
         return
     if getattr(args, 'dataset_file', '') not in ('SHA', 'SHB'):
@@ -2651,6 +2702,8 @@ def merge_checkpoint_args(args, checkpoint):
         'eval_score_calibration_count_ratio_min',
         'eval_score_calibration_count_ratio_max',
         'no_eval_filter_invalid_points', 'eval_debug_counting',
+        'ucfcc50_fold', 'ucfcc50_fold_seed', 'ucfcc50_fold_manifest',
+        'annotation_override_dir',
     }
     runtime_keys = {
         'resume', 'device', 'output_dir', 'seed', 'start_epoch',
@@ -3129,7 +3182,10 @@ def resolve_validation_protocol(args):
     protocol = str(getattr(args, 'validation_protocol', 'auto'))
     if protocol != 'auto':
         return protocol
-    if args.dataset_file in ('NWPU', 'JHU'):
+    if args.dataset_file in (
+        'NWPU', 'NWPU_Crowd', 'NWPU-Crowd',
+        'JHU', 'JHU_Crowd', 'JHU-Crowd++',
+    ):
         return 'benchmark_test'
     return 'train_holdout'
 
@@ -3328,7 +3384,9 @@ def main(args):
             f'nwpu_eval_split={getattr(args, "nwpu_eval_split", "")}',
             f'jhu_eval_split={getattr(args, "jhu_eval_split", "")}',
         )
-        if validation_protocol == 'benchmark_test' and args.dataset_file in ('SHA', 'SHB', 'QNRF', 'UCF'):
+        if validation_protocol == 'benchmark_test' and args.dataset_file in (
+            'SHA', 'SHB', 'QNRF', 'UCFCC50', 'UCF_CC_50', 'UCF-CC-50',
+        ):
             print('WARNING: benchmark_test validation selects checkpoints on the benchmark split for this dataset')
 
     # output directory and log

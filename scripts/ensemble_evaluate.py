@@ -67,7 +67,11 @@ def get_args():
         "--dataset_file",
         type=str,
         default="SHA",
-        choices=("SHA", "SHB", "QNRF", "UCF"),
+        choices=(
+            "SHA", "SHB", "QNRF",
+            "NWPU", "NWPU_Crowd", "NWPU-Crowd",
+            "JHU", "JHU_Crowd", "JHU-Crowd++",
+        ),
         help="Dataset to evaluate on",
     )
     parser.add_argument(
@@ -104,8 +108,8 @@ def get_args():
     parser.add_argument(
         "--eval_max_size",
         type=int,
-        default=1536,
-        help="QNRF/UCF validation long-side cap; non-positive disables resizing",
+        default=-1,
+        help="high-resolution long-side cap; -1 uses PET dataset defaults and 0 disables resizing",
     )
     parser.add_argument(
         "--override_score_threshold",

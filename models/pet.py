@@ -270,6 +270,72 @@ class BasePETCount(nn.Module):
         points_queries_win = points_queries_win[:, v_idx].reshape(-1, 2)
 
         return query_embed_win, points_queries_win, query_feats_win, v_idx
+
+    def custom_points_embed_inference(
+        self,
+        samples,
+        src,
+        query_feature_interpolator=None,
+        query_feature_maps=None,
+        **kwargs,
+    ):
+        """Build one decoder query window per supplied (y, x) point."""
+        points_queries = kwargs['custom_query_points']
+        if points_queries.ndim == 3:
+            if points_queries.shape[0] != 1:
+                raise ValueError('custom point refinement supports batch_size=1')
+            points_queries = points_queries[0]
+        if points_queries.ndim != 2 or points_queries.shape[-1] != 2:
+            raise ValueError('custom_query_points must have shape [N, 2]')
+        if samples.tensors.shape[0] != 1:
+            raise ValueError('custom point refinement supports batch_size=1')
+
+        points_queries = points_queries.to(
+            device=src.device,
+            dtype=src.dtype,
+        ).clone()
+        img_h, img_w = samples.tensors.shape[-2:]
+        if points_queries.numel() == 0:
+            empty = src.new_empty((1, 0, src.shape[1]))
+            return (
+                empty,
+                points_queries.reshape(0, 2),
+                empty,
+                torch.empty(0, dtype=torch.long, device=src.device),
+            )
+        points_queries[:, 0].clamp_(0, max(float(img_h) - 1.0, 0.0))
+        points_queries[:, 1].clamp_(0, max(float(img_w) - 1.0, 0.0))
+
+        dense_input_embed = kwargs['dense_input_embed']
+        embed_y = points_queries[:, 0].round().long().clamp(0, img_h - 1)
+        embed_x = points_queries[:, 1].round().long().clamp(0, img_w - 1)
+        query_embed = dense_input_embed[:, :, embed_y, embed_x].permute(
+            0,
+            2,
+            1,
+        )
+        query_feats = self.sample_query_features(
+            src,
+            points_queries,
+            torch.as_tensor((img_h, img_w), device=src.device),
+            query_feature_interpolator=query_feature_interpolator,
+            query_feature_maps=query_feature_maps,
+        ).permute(0, 2, 1)
+
+        dec_win_w, dec_win_h = kwargs['dec_win_size']
+        window_extent_h = max(1, int(dec_win_h) * int(self.pq_stride))
+        window_extent_w = max(1, int(dec_win_w) * int(self.pq_stride))
+        feature_y = torch.floor(
+            points_queries[:, 0] / window_extent_h
+        ).long()
+        feature_x = torch.floor(
+            points_queries[:, 1] / window_extent_w
+        ).long()
+        windows_per_row = (img_w + window_extent_w - 1) // window_extent_w
+        window_indices = (
+            feature_y * windows_per_row + feature_x
+        )
+        return query_embed, points_queries, query_feats, window_indices
     
     def get_point_query(
         self,
@@ -285,7 +351,17 @@ class BasePETCount(nn.Module):
         src, _ = features[self.feat_name].decompose()
 
         # generate points queries and position embedding
-        if 'train' in kwargs:
+        if 'custom_query_points' in kwargs:
+            query_embed, points_queries, query_feats, v_idx = (
+                self.custom_points_embed_inference(
+                    samples,
+                    src,
+                    query_feature_interpolator=query_feature_interpolator,
+                    query_feature_maps=query_feature_maps,
+                    **kwargs,
+                )
+            )
+        elif 'train' in kwargs:
             query_embed, points_queries, query_feats = self.points_queris_embed(
                 samples,
                 self.pq_stride,
@@ -2328,12 +2404,12 @@ class PET(nn.Module):
         return (-alpha_t * (1.0 - pt).pow(self.focal_gamma) * log_pt).mean()
 
     def compute_apg_loss(self, output, targets, positive_scale=None):
-        """Auxiliary Point Guidance for PET point queries.
+        """Legacy nearest-query guidance retained for old PET checkpoints.
 
-        APGCC's full method adds auxiliary proposal guidance to stabilize
-        point-based matching. PET already owns a fixed point-query grid, so the
-        compatible low-risk version is to directly supervise the nearest grid
-        query/queries for each GT point as positive proposals.
+        This is intentionally not called full APGCC: APGCC samples independent
+        auxiliary positions per GT, whereas this function deduplicates nearest
+        fixed PET grid queries. Use ``compute_ifi_apg_loss`` for paper-aligned
+        positive/negative auxiliary-point sampling.
         """
         logits = output['pred_logits']
         pred_points = output['pred_points']
@@ -2766,11 +2842,11 @@ class PET(nn.Module):
         return result
 
     def compute_ifi_apg_loss(self, outputs, targets, samples):
-        """Interpolated Feature Guidance for APG.
+        """APGCC-style auxiliary-point guidance through PET's IFI features.
 
-        APG-lite supervises nearest fixed grid queries. Unified IFI samples the
-        exact structural query representation at arbitrary GT and local-negative
-        positions and sends it through the same sparse/dense prediction heads.
+        Every GT independently generates positive and negative positions. The
+        points use the structural query representation and the same prediction
+        heads as inference; normal PET Hungarian matching remains active.
         """
         encode_src = outputs.get('encode_src')
         if encode_src is None:
@@ -4107,8 +4183,17 @@ class PET(nn.Module):
         split_threshold = self.get_split_threshold(split_map)
         split_mask_sparse = split_map_raw_sparse <= split_threshold
         split_mask_dense = split_map_raw_dense > split_threshold
-        sparse_active = 'train' in kwargs or bool(split_mask_sparse.any().item())
-        dense_active = 'train' in kwargs or bool(split_mask_dense.any().item())
+        custom_queries = 'custom_query_points' in kwargs
+        sparse_active = (
+            'train' in kwargs
+            or custom_queries
+            or bool(split_mask_sparse.any().item())
+        )
+        dense_active = (
+            'train' in kwargs
+            or custom_queries
+            or bool(split_mask_dense.any().item())
+        )
         if 'train' not in kwargs and not sparse_active and not dense_active:
             sparse_active = True
         query_feature_maps = None
@@ -4211,6 +4296,12 @@ class PET(nn.Module):
     
     def test_forward(self, samples, features, pos, **kwargs):
         outputs = self.pet_forward(samples, features, pos, **kwargs)
+        if 'custom_query_points' in kwargs:
+            return self.format_custom_query_output(
+                outputs,
+                samples,
+                kwargs['custom_query_points'],
+            )
         out_dense, out_sparse = outputs['dense'], outputs['sparse']
         eval_epoch = int(kwargs.get('epoch', 0))
         use_dense_eval = eval_epoch >= self.eval_dense_start_epoch
@@ -4389,6 +4480,59 @@ class PET(nn.Module):
                 alpha = self.eval_count_blend_alpha
                 div_out['count_for_mae'] = alpha * outputs['zip_count_pred'] + (1.0 - alpha) * pet_count
         return div_out
+
+    def format_custom_query_output(
+        self,
+        outputs,
+        samples,
+        custom_query_points,
+    ):
+        """Return one branch-routed prediction for every custom query."""
+        sparse = outputs['sparse']
+        dense = outputs['dense']
+        if sparse is None or dense is None:
+            raise RuntimeError('custom query refinement requires both PET branches')
+        if sparse['pred_points'].shape != dense['pred_points'].shape:
+            raise RuntimeError('custom sparse/dense outputs do not align')
+
+        points = custom_query_points
+        if points.ndim == 3:
+            points = points[0]
+        points = points.to(
+            device=outputs['split_map_raw'].device,
+            dtype=outputs['split_map_raw'].dtype,
+        )
+        img_h, img_w = samples.tensors.shape[-2:]
+        normalized = points / points.new_tensor(
+            [max(float(img_h), 1.0), max(float(img_w), 1.0)]
+        )
+        grid = torch.stack(
+            [normalized[:, 1] * 2.0 - 1.0, normalized[:, 0] * 2.0 - 1.0],
+            dim=-1,
+        ).view(1, -1, 1, 2)
+        split_values = F.grid_sample(
+            outputs['split_map_raw'][:1],
+            grid,
+            mode='bilinear',
+            padding_mode='border',
+            align_corners=False,
+        ).view(-1)
+        dense_mask = split_values > self.get_split_threshold(
+            outputs['split_map_raw']
+        )
+
+        result = {}
+        for name in ('pred_logits', 'pred_points', 'pred_offsets'):
+            result[name] = torch.where(
+                dense_mask[:, None],
+                dense[name],
+                sparse[name],
+            ).unsqueeze(0)
+        result['points_queries'] = normalized.unsqueeze(0)
+        result['custom_dense_mask'] = dense_mask.unsqueeze(0)
+        result['split_map_raw'] = outputs['split_map_raw']
+        result['split_threshold'] = outputs['split_threshold']
+        return result
 
 
 class SetCriterion(nn.Module):

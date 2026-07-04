@@ -56,7 +56,7 @@ def inspect_split(dataset, image_set, max_examples):
 
 def main():
     parser = argparse.ArgumentParser(description='Validate UCF-QNRF annotation loading.')
-    parser.add_argument('--dataset_file', default='QNRF', choices=('QNRF', 'UCF'))
+    parser.add_argument('--dataset_file', default='QNRF', choices=('QNRF',))
     parser.add_argument('--data_path', default='./data/UCF-QNRF_ECCV18')
     parser.add_argument('--patch_size', default=256, type=int)
     parser.add_argument('--crop_attempts', default=1, type=int)

@@ -28,6 +28,7 @@ class SHA(Dataset):
         partial_annotation_ratio=1.0,
         partial_annotation_seed=0,
         partial_annotation_height_ratio=0.5,
+        annotation_override_dir='',
     ):
         self.root_path = data_root
 
@@ -58,6 +59,11 @@ class SHA(Dataset):
             img_path = os.path.join(img_dir, img_name)
             stem = os.path.splitext(img_name)[0]
             gt_path = os.path.join(gt_dir, f"GT_{stem}.mat")
+            if annotation_override_dir and source_split == 'train':
+                gt_path = os.path.join(
+                    annotation_override_dir,
+                    f"GT_{stem}.mat",
+                )
             if not os.path.exists(gt_path):
                 missing_gt.append(gt_path)
             self.gt_list[img_path] = gt_path
@@ -540,6 +546,11 @@ def build(image_set, args):
                 args,
                 'partial_annotation_height_ratio',
                 0.5,
+            ),
+            annotation_override_dir=getattr(
+                args,
+                'annotation_override_dir',
+                '',
             ),
         )
         return train_set

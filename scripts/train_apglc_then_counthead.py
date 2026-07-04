@@ -48,7 +48,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--patch_size_choices", default="")
     parser.add_argument("--crop_attempts", default=1, type=int)
     parser.add_argument("--min_crop_points", default=0, type=int)
-    parser.add_argument("--eval_max_size", default=1536, type=int)
+    parser.add_argument("--eval_max_size", default=-1, type=int)
     parser.add_argument("--eval_tile_size", default=0, type=int)
     parser.add_argument("--eval_tile_overlap", default=0, type=int)
     parser.add_argument("--eval_tile_nms_radius", default=0.0, type=float)
@@ -80,30 +80,31 @@ def parse_args() -> argparse.Namespace:
         for token in sys.argv[1:]
         if token.startswith("--")
     }
+    is_nwpu = args.dataset_file in ("NWPU", "NWPU_Crowd", "NWPU-Crowd")
     if args.stage1_recipe is None:
         if args.ifi_variant == "unified":
             args.stage1_recipe = (
                 "vgg_apglc_unified_ifi_nwpu"
-                if args.dataset_file == "NWPU"
+                if is_nwpu
                 else "vgg_apglc_unified_ifi"
             )
         else:
             args.stage1_recipe = (
                 "vgg_apglc_branch_ifi_nwpu"
-                if args.dataset_file == "NWPU"
+                if is_nwpu
                 else "vgg_apglc_branch_ifi"
             )
     if args.stage2_recipe is None:
         if args.ifi_variant == "unified":
             args.stage2_recipe = (
                 "vgg_apglc_unified_ifi_counthead_stage2_nwpu"
-                if args.dataset_file == "NWPU"
+                if is_nwpu
                 else "vgg_apglc_unified_ifi_counthead_stage2"
             )
         else:
             args.stage2_recipe = (
                 "vgg_apglc_branch_ifi_counthead_stage2_nwpu"
-                if args.dataset_file == "NWPU"
+                if is_nwpu
                 else "vgg_apglc_branch_ifi_counthead_stage2"
             )
     dataset_dir = args.dataset_file
@@ -155,7 +156,7 @@ def main() -> int:
     for key, (flag, value) in recipe_owned.items():
         if key in args._explicit_args and value != "":
             common.extend([flag, value])
-    if args.dataset_file == "NWPU":
+    if args.dataset_file in ("NWPU", "NWPU_Crowd", "NWPU-Crowd"):
         for key, flag, value in (
             ("nwpu_dense_crop_prob", "--nwpu_dense_crop_prob", str(args.nwpu_dense_crop_prob)),
             ("nwpu_dense_crop_attempts", "--nwpu_dense_crop_attempts", str(args.nwpu_dense_crop_attempts)),

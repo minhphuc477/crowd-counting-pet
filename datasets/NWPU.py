@@ -34,7 +34,7 @@ class NWPU(Dataset):
         patch_size=256,
         crop_attempts=1,
         min_crop_points=0,
-        eval_max_size=1536,
+        eval_max_size=2048,
         sigma_mode='area',
         dense_crop_prob=0.0,
         dense_crop_attempts=16,
@@ -49,7 +49,7 @@ class NWPU(Dataset):
         self.patch_size_choices = _parse_patch_size_choices(patch_size)
         self.crop_attempts = max(1, int(crop_attempts))
         self.min_crop_points = max(0, int(min_crop_points))
-        self.eval_max_size = int(eval_max_size) if eval_max_size is not None else 1536
+        self.eval_max_size = int(eval_max_size) if eval_max_size is not None else 2048
         self.sigma_mode = sigma_mode
         self.dense_crop_prob = max(0.0, min(1.0, float(dense_crop_prob)))
         self.dense_crop_attempts = max(1, int(dense_crop_attempts))
@@ -65,12 +65,11 @@ class NWPU(Dataset):
 
         self.ids = read_split_ids(self.data_root, split)
         if not self.ids:
-            self.ids = [
-                path.stem for path in sorted(self.images_dir.iterdir())
-                if path.suffix.lower() in IMAGE_EXTENSIONS
-            ]
-        if not self.ids:
-            raise FileNotFoundError(f'No NWPU image ids found for split={split} in {self.data_root}')
+            raise FileNotFoundError(
+                f'No NWPU image ids found for split={split} in {self.data_root}. '
+                f'The official split file {split}.txt is required to prevent '
+                'train/validation/test leakage.'
+            )
 
         image_index = build_image_index(self.data_root)
         json_index = build_annotation_index(self.data_root, '.json')
@@ -91,7 +90,7 @@ class NWPU(Dataset):
                 json_path = json_index.get(Path(str(image_id)).stem)
             if mat_path is None:
                 mat_path = mat_index.get(Path(str(image_id)).stem)
-            if json_path is None and mat_path is None:
+            if json_path is None and mat_path is None and split != 'test':
                 missing.append(str(self.data_root / f'{image_id}.json/.mat'))
                 continue
             self.samples.append((image_id, image_path, json_path, mat_path))
@@ -135,11 +134,16 @@ class NWPU(Dataset):
             raise FileNotFoundError(f'Could not read image: {img_path}') from exc
 
         width, height = img.size
-        ann = load_annotation(
-            json_path=json_path,
-            mat_path=mat_path,
-            image_size=(height, width),
-            sigma_mode=self.sigma_mode,
+        has_annotation = json_path is not None or mat_path is not None
+        ann = (
+            load_annotation(
+                json_path=json_path,
+                mat_path=mat_path,
+                image_size=(height, width),
+                sigma_mode=self.sigma_mode,
+            )
+            if has_annotation
+            else {'points': np.empty((0, 2), dtype=np.float32)}
         )
         official_sigma = self.official_sigma.get(Path(str(image_id)).stem)
         if official_sigma is not None and official_sigma.shape[0] == ann['points'].shape[0]:
@@ -152,7 +156,9 @@ class NWPU(Dataset):
             # NWPU has negative samples; PET training targets can represent them.
             points = np.empty((0, 2), dtype=np.float32)
 
-        if not self.train and self.eval_max_size > 0:
+        # A positive cap follows PET's preprocessed-data contract for both
+        # training crops and evaluation. Tiled full-resolution recipes use 0.
+        if self.eval_max_size > 0:
             img, points, sigma = resize_long_side_with_sigma(img, points, sigma, self.eval_max_size)
 
         if self.transform is not None:
@@ -204,6 +210,10 @@ class NWPU(Dataset):
         else:
             target['image_path'] = str(img_path)
             target['image_id'] = image_id
+            target['has_annotation'] = torch.tensor(
+                has_annotation,
+                dtype=torch.bool,
+            )
             if sigma is not None and len(sigma) == points.shape[0]:
                 target['sigma'] = torch.as_tensor(sigma, dtype=torch.float32)
                 target['sigma_source'] = ann.get('sigma_source', 'unknown')
@@ -231,7 +241,7 @@ def read_split_ids(root, split):
         root / f'{split.upper()}.txt',
     ]
     if split == 'val':
-        candidates.extend([root / 'validation.txt', root / 'test.txt'])
+        candidates.append(root / 'validation.txt')
     for path in candidates:
         if not path.exists():
             continue
@@ -656,7 +666,7 @@ def build(image_set, args):
             split='train',
             train=False,
             transform=transform,
-            eval_max_size=0,
+            eval_max_size=eval_max_size,
             sigma_mode=getattr(args, 'nwpu_sigma_mode', 'area'),
         )
     if image_set == 'val':

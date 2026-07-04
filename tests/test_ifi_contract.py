@@ -40,6 +40,37 @@ def _branch_ifi_args():
 
 
 class IFIContractTest(unittest.TestCase):
+    def test_paper_apg_recipe_uses_independent_auxiliary_points(self):
+        args = _recipe_args('vgg_apgcc_paper_ifi')
+        self.assertEqual(args.apg_loss_coef, 0.0)
+        self.assertEqual(args.ifi_loss_coef, 0.2)
+        self.assertEqual(args.ifi_pos_k, 2)
+        self.assertEqual(args.ifi_pos_radius, 2.0)
+        self.assertEqual(args.ifi_neg_k, 2)
+        self.assertEqual(args.ifi_neg_min_dist, 2.0)
+        self.assertEqual(args.ifi_neg_radius, 8.0)
+        self.assertTrue(args.ifi_random_sampling)
+        self.assertEqual(args.ifi_end_epoch, -1)
+
+        model, _ = build_model(args)
+        gt = torch.tensor([[64.0, 64.0], [96.0, 96.0]])
+        torch.manual_seed(4)
+        positives, targets = model._build_ifi_positives(gt, 160, 160)
+        self.assertEqual(positives.shape, (4, 2))
+        self.assertEqual(targets.shape, (4, 2))
+        self.assertTrue(((positives - targets).abs() <= 2.0).all())
+        torch.testing.assert_close(targets[0], gt[0])
+        torch.testing.assert_close(targets[1], gt[0])
+        torch.testing.assert_close(targets[2], gt[1])
+        torch.testing.assert_close(targets[3], gt[1])
+
+        isolated_gt = torch.tensor([[80.0, 80.0]])
+        negatives = model._build_ifi_negatives(isolated_gt, 160, 160)
+        self.assertEqual(negatives.shape, (2, 2))
+        displacement = (negatives - isolated_gt).abs()
+        self.assertTrue((displacement >= 2.0).all())
+        self.assertTrue((displacement <= 8.0).all())
+
     def test_image_centers_map_exactly_to_feature_centers(self):
         interpolator = ImplicitFeatureInterpolator(1, pos_dim=2, mlp_hidden_dim=1)
         interpolator.mlp = _KeepFeature()
@@ -120,6 +151,34 @@ class IFIContractTest(unittest.TestCase):
             ]
             self.assertTrue(gradients)
             self.assertTrue(all(torch.isfinite(gradient).all() for gradient in gradients))
+
+    def test_original_annotations_can_run_as_custom_decoder_queries(self):
+        torch.manual_seed(0)
+        args = _branch_ifi_args()
+        model, _ = build_model(args)
+        model.eval()
+        image = torch.rand(3, 128, 128)
+        points = torch.tensor([
+            [16.0, 20.0],
+            [63.0, 71.0],
+            [110.0, 100.0],
+        ])
+        with torch.no_grad():
+            output = model(
+                [image],
+                test=True,
+                epoch=0,
+                custom_query_points=points,
+            )
+        self.assertEqual(output['pred_logits'].shape, (1, 3, 2))
+        self.assertEqual(output['pred_points'].shape, (1, 3, 2))
+        self.assertEqual(output['pred_offsets'].shape, (1, 3, 2))
+        self.assertEqual(output['custom_dense_mask'].shape, (1, 3))
+        torch.testing.assert_close(
+            output['points_queries'][0],
+            points / 256.0,
+        )
+        self.assertTrue(torch.isfinite(output['pred_points']).all())
 
     def test_rmi_recipe_is_shared_residual_and_trains_both_paths(self):
         torch.manual_seed(0)

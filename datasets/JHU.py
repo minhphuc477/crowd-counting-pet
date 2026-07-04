@@ -92,7 +92,9 @@ class JHUCrowd(Dataset):
             image_size=(image.height, image.width),
         )
 
-        if not self.train and self.eval_max_size > 0:
+        # Official PET preprocesses both JHU train and evaluation splits to
+        # the same long-side limit before sampling training crops.
+        if self.eval_max_size > 0:
             old_width, old_height = image.size
             image, points = resize_long_side(
                 image,
@@ -224,6 +226,7 @@ def build(image_set, args):
             patch_size=getattr(args, 'patch_size_choices', '') or args.patch_size,
             crop_attempts=getattr(args, 'crop_attempts', 1),
             min_crop_points=getattr(args, 'min_crop_points', 0),
+            eval_max_size=eval_max_size,
         )
     if image_set == 'train_eval':
         return JHUCrowd(
@@ -231,7 +234,7 @@ def build(image_set, args):
             split='train',
             train=False,
             transform=transform,
-            eval_max_size=0,
+            eval_max_size=eval_max_size,
         )
     if image_set == 'val':
         return JHUCrowd(

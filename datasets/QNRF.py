@@ -93,7 +93,9 @@ class QNRF(Dataset):
         img, points = load_data((img_path, gt_path))
         points = points.astype(float)
 
-        if not self.train and self.eval_max_size > 0:
+        # Official PET preprocesses both QNRF splits to the same long-side
+        # limit before training crops are sampled.
+        if self.eval_max_size > 0:
             img, points = resize_long_side(img, points, self.eval_max_size)
 
         if self.transform is not None:
@@ -297,6 +299,7 @@ def build(image_set, args):
             patch_size=getattr(args, 'patch_size_choices', '') or args.patch_size,
             crop_attempts=getattr(args, 'crop_attempts', 1),
             min_crop_points=getattr(args, 'min_crop_points', 0),
+            eval_max_size=eval_max_size,
         )
     if image_set == 'train_eval':
         return QNRF(
@@ -304,7 +307,7 @@ def build(image_set, args):
             train=False,
             source_split='train',
             transform=transform,
-            eval_max_size=0,
+            eval_max_size=eval_max_size,
         )
     if image_set == 'val':
         return QNRF(
