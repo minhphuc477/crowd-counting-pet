@@ -407,7 +407,7 @@ def get_args_parser():
     parser.add_argument('--eval_tile_nms_radius', default=0.0, type=float,
                         help='optional cross-tile NMS radius in pixels for overlapped tiled eval')
     parser.add_argument('--eval_tile_min_gt', default=0, type=int,
-                        help='diagnostic only: tile only validation images with at least this many GT points')
+                        help='prohibited legacy oracle option; use a prediction/area trigger instead')
     parser.add_argument('--eval_tile_max_tiles', default=0, type=int,
                         help='skip tiled eval when the tile grid would exceed this many tiles; 0 disables limit')
     parser.add_argument('--eval_tile_trigger_count', default=0.0, type=float,
@@ -799,7 +799,18 @@ def main(args):
             'gt_cnt': float(test_stats.get('gt_cnt', 0.0)),
             'checkpoint': args.resume,
             'eval_model': eval_model_key,
+            'dataset_file': args.dataset_file,
             'eval_image_set': eval_image_set,
+            'train_holdout_fraction': (
+                float(getattr(args, 'train_holdout_fraction', 0.1))
+                if eval_image_set == 'train_holdout'
+                else None
+            ),
+            'train_holdout_seed': (
+                int(getattr(args, 'train_holdout_seed', args.seed))
+                if eval_image_set == 'train_holdout'
+                else None
+            ),
             'eval_protocol': args.eval_protocol,
             'tta_flip': bool(args.tta_flip),
             'tta_scales': list(tta_scales),

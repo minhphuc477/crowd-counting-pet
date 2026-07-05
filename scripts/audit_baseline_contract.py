@@ -1,4 +1,4 @@
-"""Emit deterministic PET baseline tensors for cross-revision comparison.
+"""Emit deterministic paper-PET tensors for cross-revision comparison.
 
 Run this script through ``exec`` from the repository revision being audited so
 that imports resolve against that revision. The output is intentionally a
@@ -67,16 +67,16 @@ def main_audit():
         '--device', 'cpu',
         '--batch_size', '1',
         '--pet_loss_variant', 'paper',
-        '--warmup_epochs', '5',
-        '--apg_loss_coef', '0.02',
-        '--apg_pos_k', '1',
-        '--apg_point_coef', '5.0',
-        '--apg_contrastive_coef', '0.15',
-        '--apg_neg_k', '4',
-        '--apg_margin', '1.0',
-        '--apg_end_epoch', '350',
-        '--score_threshold', '0.55',
-        '--split_threshold', '0.45',
+        '--split_loss_variant', 'paper',
+        '--apg_loss_coef', '0.0',
+        '--ifi_loss_coef', '0.0',
+        '--count_head_loss_coef', '0.0',
+        '--score_threshold', '0.5',
+        '--split_threshold', '0.5',
+        '--query_prune_threshold', '0.5',
+        '--eval_nms_radius', '0.0',
+        '--eval_branch_gate', 'none',
+        '--eval_soft_split_gate', 'none',
     ]
     if not audit_args.pretrained:
         requested.append('--no_pretrained_backbone')

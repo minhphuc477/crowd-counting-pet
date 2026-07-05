@@ -67,7 +67,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--jhu_eval_split", default="val", choices=("val", "test", "train"))
     parser.add_argument("--nwpu_sigma_mode", default="official", choices=("area", "diag", "min_diag", "official"))
     parser.add_argument("--validation_protocol", default="auto",
-                        choices=("auto", "official_val", "benchmark_test", "train_holdout"))
+                        choices=("auto", "official_val", "benchmark_test", "train_holdout", "final_test_once"))
     parser.add_argument("--train_holdout_fraction", default=0.1, type=float)
     parser.add_argument("--train_holdout_seed", default=None, type=int)
     parser.add_argument("--nwpu_dense_crop_prob", default=0.0, type=float)

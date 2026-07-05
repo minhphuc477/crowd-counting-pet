@@ -1,135 +1,153 @@
-# Final Architecture Decision: RMI-PET
-
-## Scope
-
-Select one PET-derived research candidate that:
-
-- trains from scratch with an ImageNet-pretrained backbone;
-- uses the same architecture on SHA, SHB, UCF-QNRF, JHU-Crowd++, and
-  NWPU-Crowd;
-- predicts points directly for counting and localization;
-- does not require a density teacher, count-head inference, test-set threshold
-  selection, or a hidden fine-tuning stage.
-
-No published point model, including APGCC, improves every PET MAE/MSE pair.
-No architecture can therefore be claimed to improve every dataset before the
-fixed cross-dataset experiment is complete. RMI-PET is the final candidate,
-not a pre-declared result. `vgg_pet_paper` remains the production reference.
+# Final Architecture And Evaluation Decision
 
 ## Decision
 
-Use `--model_recipe vgg_pet_rmi --allow_experimental_model_recipe` only for
-the declared cross-dataset experiment.
+The repository does not currently contain a new architecture that has honestly
+beaten PET across SHA, SHB, UCF-QNRF, JHU-Crowd++, NWPU-Crowd, and UCF-CC-50.
+The reportable reference is therefore:
 
-RMI-PET keeps PET's native:
+```text
+model_recipe = vgg_pet_paper
+backbone = ImageNet-pretrained vgg16_bn
+count source = PET thresholded points
+count head = disabled
+IFI/APG grafts = disabled
+```
 
-- VGG16-BN backbone and 4x/8x feature projections;
-- context encoder;
-- sparse and dense quadtree branches;
-- Hungarian point matching;
-- classification and point-offset heads;
-- threshold counting and localization output.
+`vgg_pet_apg_rifi`, `vgg_pet_rmi`, branch IFI, ZIP, and scalar count-head
+variants remain ablations. None is the default final architecture.
 
-It adds one shared multi-scale Implicit Feature Interpolation module:
+This is a scientific decision, not a claim that PET cannot be improved. It
+means the current evidence does not justify replacing the verified model.
 
-1. Sample continuous representations from projected 4x and 8x features.
-2. Fuse both scales into a branch-sized correction.
-3. Add the correction to the native PET feature through a learned scalar
-   initialized to `1e-3`.
-4. Train arbitrary local positive and negative points through the same routed
-   sparse/dense heads used at inference.
+## Why The Previous Success Does Not Establish A New Architecture
 
-The residual start preserves PET's initial query representation. IFI and
-Auxiliary Point Guidance are active from epoch zero and remain part of one
-scratch-training run. No component is enabled by a hidden epoch switch.
+The historical SHA result near MAE 48.8 came from a model-only adaptation of an
+already selected APG+LC checkpoint. Only the scalar count head was trainable,
+but threshold inference did not consume that head. BatchNorm running buffers
+were still mutable. The observed change can therefore include BatchNorm
+recalibration and repeated benchmark-test checkpoint/threshold selection; it
+does not prove that the scalar count head improved the point model.
 
-## Why This Design
+Current two-stage experiments also regress on several datasets:
 
-- PET is the strongest verified counting baseline in this repository, and its
-  quadtree is efficient on highly variable crowd density.
-- APGCC is the publication with the clearest same-backbone evidence of
-  simultaneous counting and localization gains. Its key transferable pieces
-  are multi-level IFI and auxiliary positive/negative point supervision.
-- APGCC improves PET on SHA, SHB, and JHU-Crowd++, but its UCF-QNRF MAE is
-  slightly worse than PET. Residual initialization is therefore a risk-control
-  hypothesis, not evidence of a universal gain.
-- Replacing PET query features directly with IFI improved localization but
-  regressed SHB counting in this repository. Residual IFI isolates that risk.
-- A scalar count loss gives no spatial information and previously destabilized
-  query confidence. It is excluded.
-- Density teachers and density-regression heads change the task and evaluation
-  contract. They are excluded from the final point model.
-- RCCFormer-style wholesale backbone/attention replacement did not show a
-  consistent gain over PET on all target datasets. It is not the universal
-  default.
+- SHA residual/branch IFI runs did not reproduce the historical 48.8 result.
+- SHB stage two reduced holdout MAE in one run but worsened the untouched-test
+  result and localization in others.
+- UCF-QNRF remained substantially above PET's published result.
+- NWPU benefited from IFI/APG in some runs, but this did not transfer
+  consistently.
 
-Primary references:
+Consequently, count-head fine-tuning is an ablation only. It must not choose the
+reported model unless its inference path uses the head and an untouched
+validation protocol proves the gain.
 
-- [PET, ICCV 2023](https://openaccess.thecvf.com/content/ICCV2023/html/Liu_Point-Query_Quadtree_for_Crowd_Counting_Localization_and_More_ICCV_2023_paper.html)
-- [APGCC, ECCV 2024](https://arxiv.org/abs/2405.10589)
-- [Official APGCC implementation](https://github.com/AaronCIH/APGCC)
-- [Generalized Loss / unbalanced OT, CVPR 2021](https://openaccess.thecvf.com/content/CVPR2021/html/Wan_A_Generalized_Loss_Function_for_Crowd_Counting_and_Localization_CVPR_2021_paper.html)
-- [LayerScale, ICCV 2021](https://openaccess.thecvf.com/content/ICCV2021/html/Touvron_Going_Deeper_With_Image_Transformers_ICCV_2021_paper.html)
-- [JHU-Crowd++, 2020](https://arxiv.org/abs/2004.03597)
-- [Partial annotations in an image, ICCV 2021](https://openaccess.thecvf.com/content/ICCV2021/html/Xu_Crowd_Counting_With_Partial_Annotations_in_an_Image_ICCV_2021_paper.html)
-- [Point-to-Region loss, CVPR 2025](https://openaccess.thecvf.com/content/CVPR2025/html/Lin_Point-to-Region_Loss_for_Semi-Supervised_Point-Based_Crowd_Counting_CVPR_2025_paper.html)
+## What The Papers Support
 
-## Dataset And Supervision Contract
+PET's progressive rectangle encoder/decoder and point-query quadtree are a
+strong cross-density baseline. APGCC demonstrates that its complete proposal
+architecture, implicit feature interpolation, matcher, and auxiliary point
+guidance work together. Its ablation does not show that transplanting IFI or
+APG into PET is sufficient.
 
-- UCF-QNRF uses the published 1536-pixel long-side cap.
-- JHU-Crowd++ and NWPU-Crowd use the published 2048-pixel cap unless
-  explicitly overridden.
-- JHU-Crowd++ zero-person distractors are valid samples, not annotation errors.
-- JHU head files are parsed as `x y width height occlusion blur`; approximate
-  boxes are retained only for localization thresholds unless a declared
-  scale-loss ablation is enabled.
-- Shanghai partial annotation uses one deterministic rectangle per training
-  image. At 10%, the default rectangle is `0.5H x 0.2W`, matching the published
-  PAL setup.
-- Queries, splitter cells, APG negatives, and IFI samples outside the annotated
-  rectangle receive no target. They are not background.
-- Global count and density auxiliaries are rejected during partial-region
-  training because their full-image targets are unknown.
+APGCC also does not improve every PET metric: its published UCF-QNRF MAE is
+slightly worse than PET while its RMSE is better. A universal improvement
+cannot be assumed from either paper.
 
-PET's published 10% result uses a declared two-step protocol: train on partial
-regions, infer points around those regions, then retrain on fused real and
-pseudo annotations. This repository now implements the correct first-stage
-supervision contract. It must not claim reproduction of PET's Table 3 until
-the pseudo-label generation and fusion stage is separately implemented and
-reported.
+Primary sources:
 
-## Fixed Evaluation Contract
+- [PET paper](https://openaccess.thecvf.com/content/ICCV2023/html/Liu_Point-Query_Quadtree_for_Crowd_Counting_Localization_and_More_ICCV_2023_paper.html)
+- [Official PET repository](https://github.com/cxliu0/PET)
+- [APGCC paper](https://arxiv.org/abs/2405.10589)
+- [Official APGCC repository](https://github.com/AaronCIH/APGCC)
 
-Use the dataset validation/test split exactly once per checkpoint with:
+## Final Research Path
 
-- `score_threshold=0.5`;
-- `split_threshold=0.5`;
-- `query_prune_threshold=0.5`;
-- no NMS;
-- no branch gate;
-- no soft split gate;
-- PET point count as the count source;
-- no score calibration.
+1. Re-establish `vgg_pet_paper` on every dataset under the corrected protocol.
+2. Treat `vgg_apglc` as a historical control, not as APGCC reproduction.
+3. Implement a separate, paper-shaped APGCC proposal model if APGCC is pursued:
+   four proposals per cell, multi-level IFI, matcher, positive/negative APG,
+   and its crop/augmentation schedule. Do not keep adding auxiliary heads to
+   PET and call the result APGCC.
+4. Compare PET and the separate APGCC model with identical data accounting,
+   pretrained backbone policy, seeds, and evaluation code.
+5. Accept a replacement only after three seeds improve the validation mean and
+   confidence interval on each target dataset. Dataset-specific winners are
+   acceptable; claiming one universal winner without that evidence is not.
 
-Save three independent checkpoints:
+## Non-Negotiable Evaluation Contract
 
-- lowest validation MAE;
-- lowest validation MSE;
-- highest localization score, ranked by large-threshold F1 then
-  small-threshold F1.
+- SHA, SHB, and UCF-QNRF: select architecture, epoch, and thresholds only on a
+  deterministic training holdout.
+- Final SHA/SHB/QNRF report: retrain the frozen recipe on all training images
+  and use `validation_protocol=final_test_once`.
+- NWPU and JHU: select on their official validation splits.
+- UCF-CC-50: five-fold cross-validation; each test fold is evaluated once.
+- Never choose tiling from ground-truth count.
+- Never sweep thresholds on a benchmark test split.
+- Report MAE, RMSE, localization F1/precision/recall, all seeds, and the exact
+  checkpoint. Do not compare adaptive and fixed localization protocols as if
+  they were the same metric.
 
-Report all three checkpoints. Do not select a threshold or checkpoint on the
-test split.
+The code now rejects GT-controlled tiling and benchmark-test selection by
+default. `scripts/audit_scientific_protocol.py` audits actual checkpoints and
+result JSON independently of the unit tests.
 
-## Acceptance Rule
+## Commands
 
-Run SHB first because it is the cheapest strict falsification test. Continue
-to SHA, UCF-QNRF, JHU-Crowd++, and NWPU only if RMI-PET is not worse than the
-verified PET baseline on both MAE and MSE and improves at least one
-localization F1.
+Development run:
 
-The final architecture is accepted only when the same recipe, fixed evaluator,
-and predeclared checkpoint rule produce a Pareto improvement on all five
-datasets and do not regress the 10% partial-region stage. Otherwise retain
-`vgg_pet_paper` as the production architecture and report RMI-PET as a rejected
-ablation.
+```bash
+python main.py \
+  --dataset_file QNRF \
+  --data_path ./data/UCF-QNRF_ECCV18 \
+  --model_recipe vgg_pet_paper \
+  --validation_protocol train_holdout \
+  --train_holdout_fraction 0.1 \
+  --train_holdout_seed 42 \
+  --output_dir outputs/QNRF/pet_paper_dev_seed42 \
+  --batch_size 8 \
+  --epochs 1500 \
+  --device cuda \
+  --seed 42
+```
+
+Sweep the same holdout. The sweep reads the split fraction and seed from the
+checkpoint:
+
+```bash
+python scripts/sweep_eval_thresholds.py \
+  --resume outputs/QNRF/pet_paper_dev_seed42/best_checkpoint.pth \
+  --eval_image_set train_holdout \
+  --eval_nms_radii 0 \
+  --eval_branch_gates none \
+  --eval_soft_split_gates none \
+  --eval_count_sources pet \
+  --score_thresholds 0.48 0.50 0.52 \
+  --split_thresholds 0.45 0.50
+```
+
+After freezing the epoch and thresholds, run the full-data final refit. Replace
+`1500` with the predeclared selected epoch count; do not inspect intermediate
+test results:
+
+```bash
+python main.py \
+  --dataset_file QNRF \
+  --data_path ./data/UCF-QNRF_ECCV18 \
+  --model_recipe vgg_pet_paper \
+  --validation_protocol final_test_once \
+  --output_dir outputs/QNRF/pet_paper_final_seed42 \
+  --batch_size 8 \
+  --epochs 1500 \
+  --device cuda \
+  --seed 42
+```
+
+Audit reportable artifacts:
+
+```bash
+python scripts/audit_scientific_protocol.py \
+  outputs/QNRF/pet_paper_final_seed42 \
+  --output eval_results/QNRF/pet_paper_final_seed42/protocol_audit.json
+```

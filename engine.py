@@ -683,6 +683,12 @@ def evaluate(
     eval_tile_trigger_count=0.0,
     eval_tile_trigger_area=0,
 ):
+    if int(eval_tile_min_gt or 0) > 0:
+        raise ValueError(
+            'eval_tile_min_gt uses ground-truth count to choose the inference '
+            'path and is prohibited for reportable evaluation. Use '
+            'eval_tile_trigger_count or eval_tile_trigger_area instead.'
+        )
     model.eval()
     if tta_scales is None:
         tta_scales = (1.0,)
@@ -732,8 +738,6 @@ def evaluate(
             and (img_h > int(eval_tile_size) or img_w > int(eval_tile_size))
         )
         tile_candidate = tile_candidate_by_size
-        if tile_candidate and int(eval_tile_min_gt or 0) > 0:
-            tile_candidate = int(targets[0]['points'].shape[0]) >= int(eval_tile_min_gt)
         if tile_candidate and int(eval_tile_max_tiles or 0) > 0:
             tile_rows = len(_tile_starts(img_h, int(eval_tile_size), int(eval_tile_overlap or 0)))
             tile_cols = len(_tile_starts(img_w, int(eval_tile_size), int(eval_tile_overlap or 0)))

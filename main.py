@@ -2361,7 +2361,7 @@ def get_args_parser():
     parser.add_argument('--eval_tile_nms_radius', default=0.0, type=float,
                         help='optional cross-tile NMS radius in pixels for overlapped tiled eval')
     parser.add_argument('--eval_tile_min_gt', default=0, type=int,
-                        help='diagnostic only: tile only validation images with at least this many GT points')
+                        help='prohibited legacy oracle option; use a prediction/area trigger instead')
     parser.add_argument('--eval_tile_max_tiles', default=0, type=int,
                         help='skip tiled eval when the tile grid would exceed this many tiles; 0 disables limit')
     parser.add_argument('--eval_tile_trigger_count', default=0.0, type=float,
@@ -2393,8 +2393,10 @@ def get_args_parser():
     parser.add_argument('--ucfcc50_fold_manifest', default='', type=str,
                         help='JSON file containing the exact five UCF-CC-50 folds')
     parser.add_argument('--validation_protocol', default='auto',
-                        choices=('auto', 'official_val', 'benchmark_test', 'train_holdout'),
+                        choices=('auto', 'official_val', 'benchmark_test', 'train_holdout', 'final_test_once'),
                         help='checkpoint-selection protocol; auto uses train_holdout for SHA/SHB/QNRF and official_val for NWPU/JHU')
+    parser.add_argument('--allow_benchmark_test_selection', action='store_true',
+                        help='legacy-only override allowing repeated checkpoint selection on a benchmark test split')
     parser.add_argument('--train_holdout_fraction', default=0.1, type=float,
                         help='fraction of the training split reserved for checkpoint selection under train_holdout validation')
     parser.add_argument('--train_holdout_seed', default=42, type=int,
@@ -2806,6 +2808,7 @@ def merge_checkpoint_args(args, checkpoint):
         'model_recipe', 'allow_experimental_model_recipe', 'auto_backbone_recipe',
         'eval_protocol', 'eval_max_size', 'nwpu_sigma_mode',
         'validation_protocol', 'train_holdout_fraction', 'train_holdout_seed',
+        'allow_benchmark_test_selection',
         'allow_output_overwrite',
         'patch_size', 'patch_size_choices', 'crop_attempts', 'min_crop_points',
         'nwpu_dense_crop_prob', 'nwpu_dense_crop_attempts',
@@ -3340,6 +3343,10 @@ def resolve_validation_protocol(args):
     protocol = str(getattr(args, 'validation_protocol', 'auto'))
     nwpu_names = ('NWPU', 'NWPU_Crowd', 'NWPU-Crowd')
     jhu_names = ('JHU', 'JHU_Crowd', 'JHU-Crowd++')
+    benchmark_only_names = (
+        'SHA', 'SHB', 'QNRF',
+        'UCFCC50', 'UCF_CC_50', 'UCF-CC-50',
+    )
     if protocol == 'auto':
         protocol = (
             'official_val'
@@ -3366,6 +3373,28 @@ def resolve_validation_protocol(args):
             raise ValueError(
                 'validation_protocol=official_val requires '
                 '--jhu_eval_split val'
+            )
+    if (
+        protocol == 'benchmark_test'
+        and args.dataset_file in benchmark_only_names
+        and not bool(getattr(args, 'allow_benchmark_test_selection', False))
+    ):
+        raise ValueError(
+            'validation_protocol=benchmark_test repeatedly selects checkpoints '
+            'on the benchmark test split. Use train_holdout for development or '
+            'final_test_once for a fixed full-data refit. The legacy behavior '
+            'requires --allow_benchmark_test_selection.'
+        )
+    if protocol == 'final_test_once':
+        if args.dataset_file not in ('SHA', 'SHB', 'QNRF'):
+            raise ValueError(
+                'validation_protocol=final_test_once is only defined for '
+                'SHA, SHB, and QNRF. Use official_val for NWPU/JHU and the '
+                'five-fold runner for UCF-CC-50.'
+            )
+        if bool(getattr(args, 'eval_before_train', False)):
+            raise ValueError(
+                'final_test_once is incompatible with --eval_before_train'
             )
     return protocol
 
@@ -3561,10 +3590,11 @@ def main(args):
             f'nwpu_eval_split={getattr(args, "nwpu_eval_split", "")}',
             f'jhu_eval_split={getattr(args, "jhu_eval_split", "")}',
         )
-        if validation_protocol == 'benchmark_test' and args.dataset_file in (
-            'SHA', 'SHB', 'QNRF', 'UCFCC50', 'UCF_CC_50', 'UCF-CC-50',
-        ):
-            print('WARNING: benchmark_test validation selects checkpoints on the benchmark split for this dataset')
+        if validation_protocol == 'final_test_once':
+            print(
+                'final-test protocol: the benchmark test split will be '
+                'evaluated only after the last training epoch'
+            )
 
     # output directory and log
     output_dir = resolve_output_dir(args)
@@ -4004,7 +4034,17 @@ def main(args):
                 f.write(json.dumps(log_stats) + "\n")
 
         # evaluation
-        if epoch % args.eval_freq == 0 and epoch > 0 and epoch >= int(getattr(args, 'eval_start_epoch', 0)):
+        scheduled_eval = (
+            epoch % args.eval_freq == 0
+            and epoch > 0
+            and epoch >= int(getattr(args, 'eval_start_epoch', 0))
+        )
+        should_evaluate = (
+            epoch == args.epochs - 1
+            if validation_protocol == 'final_test_once'
+            else scheduled_eval
+        )
+        if should_evaluate:
             t1 = time.time()
             eval_model, eval_model_name = select_eval_model(model, model_without_ddp, model_ema, args)
             if args.eval_protocol == 'crowd_no_overlap':

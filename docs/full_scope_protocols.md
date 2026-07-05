@@ -37,9 +37,9 @@ This is an experimental PET/APG integration, not the published APGCC network.
 It must beat `vgg_pet_paper` and `vgg_apglc` under the same protocol before it
 can be claimed as an improvement.
 
-### Robust Residual IFI Candidate
+### Robust Residual IFI Ablation
 
-`vgg_pet_apg_rifi` is the maintained improvement candidate. It keeps PET's
+`vgg_pet_apg_rifi` keeps PET's
 native sparse/dense query feature as an identity path and adds shared 4x/8x IFI
 through a zero-initialized learned residual. APG still trains from epoch zero
 through the full run with the corrected per-point positive/negative loss and
@@ -49,8 +49,17 @@ incompatible loss normalization from another network. The stage-one learning
 rate drops by `0.1` at epoch 700; keeping `1e-4` through all 1,500 epochs caused
 late counting drift even when localization remained strong.
 
-It is still experimental. No architecture can be claimed to improve every
-dataset until fixed-protocol multi-seed runs beat the PET and APG+LC controls.
+Cross-dataset runs did not establish a consistent improvement over PET.
+It is an experimental ablation, not the final or maintained default.
+
+### Final Default
+
+Use `vgg_pet_paper` for reportable cross-dataset runs. The count-head second
+stage is not part of the final model: it has no spatial supervision, threshold
+inference does not consume it, and repository experiments show inconsistent
+transfer. A complete APGCC-shaped proposal network should be implemented and
+compared as a separate model instead of continuing to attach auxiliary heads
+to PET.
 
 ## Localization Metric Correction
 
@@ -75,34 +84,32 @@ values in this repository are therefore labeled approximate. Report JHU
 counting MAE/RMSE as the benchmark result and identify any localization
 protocol explicitly.
 
-## Standard Training
+## Standard Development Training
 
-Full APG integration on ShanghaiTech Part A:
+Verified PET on ShanghaiTech Part A:
 
 ```bash
 python main.py \
   --dataset_file SHA \
   --data_path ./data/ShanghaiTech/part_A \
-  --model_recipe vgg_pet_apg_rifi \
-  --allow_experimental_model_recipe \
-  --output_dir outputs/SHA/vgg_pet_apg_rifi_seed42 \
+  --model_recipe vgg_pet_paper \
+  --validation_protocol train_holdout \
+  --output_dir outputs/SHA/vgg_pet_paper_dev_seed42 \
   --batch_size 8 \
   --epochs 1500 \
   --device cuda \
   --seed 42
 ```
 
-Run the same command with `--model_recipe vgg_pet_paper` and
-`--model_recipe vgg_apglc` as mandatory controls. Do not compare runs with
-different image-size caps, validation splits, thresholds, or pretrained
-backbone settings.
+Run `vgg_apglc`, `vgg_pet_apg_rifi`, and other variants only as matched
+ablations. Do not compare runs with different image-size caps, validation
+splits, thresholds, or pretrained-backbone settings.
 
 ## Complete Cross-Dataset Commands
 
-These commands run full APG/IFI stage 1 followed by a structurally compatible
-count-head stage 2. Stage 2 is an ablation, not an automatic replacement for
-stage 1: report whichever checkpoint wins on the declared validation split.
-The count head remains auxiliary; inference counts PET points.
+The two-stage commands below are retained for historical ablation. They are not
+the recommended final path. The count head remains auxiliary while inference
+counts PET points, so a gain must not be attributed to count-head inference.
 
 Add `--resume_existing` to any two-stage command to continue each stage from
 its own `checkpoint.pth`. Without that flag, an existing output directory is
@@ -336,4 +343,3 @@ Then isolate APG/IFI parameters:
 Report MAE, RMSE, and localization F1/precision/recall for both large and small
 thresholds. Store the exact checkpoint, threshold sweep, fold/split manifest,
 seed, and per-image predictions for every reported result.
-

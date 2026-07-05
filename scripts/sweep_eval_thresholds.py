@@ -89,8 +89,39 @@ def resolve_runtime_args(args: argparse.Namespace) -> argparse.Namespace:
         args.ucfcc50_fold_manifest = (
             _checkpoint_arg(checkpoint_args, "ucfcc50_fold_manifest") or ""
         )
+    if args.train_holdout_fraction is None:
+        checkpoint_fraction = _checkpoint_arg(
+            checkpoint_args,
+            "train_holdout_fraction",
+        )
+        args.train_holdout_fraction = float(
+            0.1 if checkpoint_fraction is None else checkpoint_fraction
+        )
+    if args.train_holdout_seed is None:
+        checkpoint_seed = _checkpoint_arg(
+            checkpoint_args,
+            "train_holdout_seed",
+        )
+        args.train_holdout_seed = int(
+            42 if checkpoint_seed is None else checkpoint_seed
+        )
     if not args.output_dir:
         args.output_dir = str(checkpoint_path.resolve().parent / "threshold_sweep")
+    benchmark_only = {
+        "SHA", "SHB", "QNRF",
+        "UCFCC50", "UCF_CC_50", "UCF-CC-50",
+    }
+    if (
+        args.eval_image_set == "val"
+        and args.dataset_file in benchmark_only
+        and not args.allow_benchmark_test_sweep
+    ):
+        raise ValueError(
+            "Threshold sweeping on this dataset's benchmark test split is "
+            "prohibited. Use --eval_image_set train_holdout with the same "
+            "checkpoint split, or pass --allow_benchmark_test_sweep only to "
+            "reproduce a clearly labeled legacy analysis."
+        )
     return args
 
 
@@ -151,6 +182,10 @@ def run_eval(
         str(results_file),
         "--eval_image_set",
         args.eval_image_set,
+        "--train_holdout_fraction",
+        str(args.train_holdout_fraction),
+        "--train_holdout_seed",
+        str(args.train_holdout_seed),
         "--nwpu_eval_split",
         args.nwpu_eval_split,
         "--jhu_eval_split",
@@ -248,6 +283,7 @@ def run_eval(
     )
 
     record = {
+        "dataset_file": args.dataset_file,
         "score_threshold": float(score_threshold),
         "split_threshold": float(split_threshold),
         "query_prune_threshold": float(query_prune_threshold),
@@ -400,6 +436,12 @@ def get_args() -> argparse.Namespace:
     parser.add_argument("--output_dir", default="", help="Where to save sweep logs/results")
     parser.add_argument("--eval_image_set", default="val", choices=("val", "train_eval", "train_holdout"),
                         help="dataset split passed to eval.py")
+    parser.add_argument("--train_holdout_fraction", default=None, type=float,
+                        help="holdout fraction; defaults to the checkpoint value")
+    parser.add_argument("--train_holdout_seed", default=None, type=int,
+                        help="holdout seed; defaults to the checkpoint value")
+    parser.add_argument("--allow_benchmark_test_sweep", action="store_true",
+                        help="legacy-only override for threshold tuning on a benchmark test split")
     parser.add_argument("--nwpu_eval_split", default="val", choices=("val", "test", "train"))
     parser.add_argument("--jhu_eval_split", default="val", choices=("val", "test", "train"))
     parser.add_argument("--ucfcc50_fold", default=None, type=int, choices=range(5))
