@@ -117,6 +117,9 @@ class IFIContractTest(unittest.TestCase):
         self.assertTrue(stage1.query_ifi_residual)
         self.assertEqual(stage1.query_ifi_residual_init, 0.0)
         self.assertEqual(stage1.ifi_loss_coef, 0.02)
+        self.assertEqual(stage1.lr_scheduler, 'step')
+        self.assertEqual(stage1.lr_drop, 700)
+        self.assertEqual(stage1.lr_gamma, 0.1)
         self.assertTrue(stage1.ifi_balance_pos_neg)
         self.assertEqual(stage1.ifi_point_loss_type, 'mse')
         for key in (

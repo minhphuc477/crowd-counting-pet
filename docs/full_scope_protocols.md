@@ -45,7 +45,9 @@ through a zero-initialized learned residual. APG still trains from epoch zero
 through the full run with the corrected per-point positive/negative loss and
 PET's stable `0.02` auxiliary scale. This avoids replacing PET's usable
 representation with a random interpolator at initialization or importing an
-incompatible loss normalization from another network.
+incompatible loss normalization from another network. The stage-one learning
+rate drops by `0.1` at epoch 700; keeping `1e-4` through all 1,500 epochs caused
+late counting drift even when localization remained strong.
 
 It is still experimental. No architecture can be claimed to improve every
 dataset until fixed-protocol multi-seed runs beat the PET and APG+LC controls.
@@ -334,3 +336,4 @@ Then isolate APG/IFI parameters:
 Report MAE, RMSE, and localization F1/precision/recall for both large and small
 thresholds. Store the exact checkpoint, threshold sweep, fold/split manifest,
 seed, and per-image predictions for every reported result.
+

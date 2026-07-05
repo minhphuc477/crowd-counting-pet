@@ -1146,6 +1146,9 @@ MODEL_RECIPES['vgg_apgcc_paper_ifi_counthead_stage2'] = {
 # otherwise the corrected per-point positive/negative formulation above.
 MODEL_RECIPES['vgg_pet_apg_rifi'] = {
     **MODEL_RECIPES['vgg_apgcc_paper_ifi'],
+    'lr_scheduler': 'step',
+    'lr_drop': 700,
+    'lr_gamma': 0.1,
     'query_ifi_residual': True,
     'query_ifi_residual_init': 0.0,
     # APGCC's 0.2 coefficient is normalized for a different proposal network.
@@ -1419,6 +1422,9 @@ MODEL_RECIPES['vgg_apgcc_paper_ifi_counthead_stage2_nwpu'] = {
 
 MODEL_RECIPES['vgg_pet_apg_rifi_nwpu'] = {
     **MODEL_RECIPES['vgg_apgcc_paper_ifi_nwpu'],
+    'lr_scheduler': 'step',
+    'lr_drop': 700,
+    'lr_gamma': 0.1,
     'query_ifi_residual': True,
     'query_ifi_residual_init': 0.0,
     'ifi_loss_coef': 0.02,
