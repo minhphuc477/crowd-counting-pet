@@ -1,9 +1,20 @@
-# Final Architecture Decision
+# Architecture Promotion Decision
+
+## Current Status: Not Promoted
+
+`vgg_apglc_density_routed_ifi` remains an experimental ablation. The latest
+cross-dataset run reached MAE 96.87 and RMSE 183.39 with a well-calibrated mean
+count (`pred/gt = 0.984`), but it did not improve localization and does not
+support replacing the previously successful paths.
+
+Do not call any current hybrid the final architecture. Circle back to a final
+decision only after one unchanged architecture satisfies all promotion gates
+below.
 
 ## Scope
 
-The PET and APG+LC controls have already been run. Do not repeat them as the
-next experiment. The next falsification target is the consolidated model:
+The PET and APG+LC controls have already been run. Do not repeat them. The
+density-routed model remains available as a falsification target:
 
 ```text
 model_recipe = vgg_apglc_density_routed_ifi
@@ -14,9 +25,7 @@ count head = disabled
 count source = thresholded PET points
 ```
 
-This is the final architecture candidate, not a claim of a new state of the
-art. A universal improvement is unproven until matched multi-seed experiments
-on SHA, SHB, QNRF, NWPU, JHU, and UCF-CC-50 establish it.
+It is not the repository default and is not a claim of a new state of the art.
 
 ## Why This Candidate
 
@@ -94,15 +103,24 @@ Primary sources:
 - [Official APGCC repository](https://github.com/AaronCIH/APGCC)
 - [Point-to-Region Loss](https://openaccess.thecvf.com/content/CVPR2025/html/Lin_Point-to-Region_Loss_for_Semi-Supervised_Point-Based_Crowd_Counting_CVPR_2025_paper.html)
 
-## Falsification Criteria
+## Promotion Gates
 
-The candidate is rejected as a cross-dataset replacement if either condition
-holds:
+One unchanged architecture is promoted only if:
 
-- matched three-seed validation mean is worse than the existing APG+LC result
-  on two or more target datasets;
-- counting improves only by sacrificing both large- and small-threshold
-  localization F1.
+1. SHA reproduces the established approximately 48 MAE result under the frozen
+   final protocol.
+2. SHB remains competitive with the strongest properly matched SHB result.
+3. QNRF, NWPU, JHU, and UCF-CC-50 each improve or remain within the
+   predeclared non-inferiority margin of their matched reference.
+4. Neither large- nor small-threshold localization F1 suffers a material
+   regression.
+5. The conclusion holds over three seeds, not one selected checkpoint.
+
+Results from benchmark test, training holdout, and official validation are not
+interchangeable. The SHA 48.8 adaptation and SHB 5.775 holdout result are
+important historical evidence, but they cannot be combined into a universal
+architecture claim until evaluated through the same declared model-selection
+contract.
 
 Report MAE, RMSE, localization F1/precision/recall, per-image predictions,
 seed, exact checkpoint, split manifest, and inference settings. Select epochs

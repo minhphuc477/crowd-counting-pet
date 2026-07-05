@@ -124,3 +124,6 @@ outputs/
 data/
 tmp/
 pretrained/
+
+# Markdown notes and documentation
+*.md

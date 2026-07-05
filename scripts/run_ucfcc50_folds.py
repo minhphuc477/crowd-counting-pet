@@ -60,7 +60,8 @@ def main():
     parser.add_argument('--results_dir', default='eval_results/UCFCC50/five_fold')
     parser.add_argument(
         '--model_recipe',
-        default='vgg_apglc_density_routed_ifi',
+        required=True,
+        help='Explicit recipe under test; no unvalidated architecture is selected implicitly.',
     )
     parser.add_argument('--fold_seed', default=42, type=int)
     parser.add_argument('--folds', nargs='+', type=int, default=list(range(5)))

@@ -52,9 +52,9 @@ late counting drift even when localization remained strong.
 Cross-dataset runs did not establish a consistent improvement over PET.
 It is an experimental ablation, not the final or maintained default.
 
-### Consolidated Candidate
+### Experimental Consolidated Candidate
 
-`vgg_apglc_density_routed_ifi` is the maintained improvement candidate. It
+`vgg_apglc_density_routed_ifi` is a maintained experimental ablation. It
 preserves native sparse APG+LC and routes residual multi-scale IFI plus
 arbitrary-point APG only through PET's dense branch. Both auxiliary families
 end at epoch 350, followed by PET-only consolidation and an epoch-700 learning
@@ -62,7 +62,9 @@ rate drop.
 
 The count head is excluded because it does not provide spatial supervision and
 threshold inference does not consume it. This recipe is a falsifiable candidate,
-not a claim of universal improvement.
+not the repository default or a claim of universal improvement. It must recover
+the established SHA result, remain strong on SHB, and avoid regressions on
+QNRF/NWPU/JHU/UCF-CC-50 before promotion.
 
 ## Localization Metric Correction
 
