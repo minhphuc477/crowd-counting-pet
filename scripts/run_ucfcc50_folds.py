@@ -58,7 +58,10 @@ def main():
     parser.add_argument('--data_path', default='data/UCF_CC_50')
     parser.add_argument('--output_root', default='outputs/UCFCC50')
     parser.add_argument('--results_dir', default='eval_results/UCFCC50/five_fold')
-    parser.add_argument('--model_recipe', default='vgg_pet_apg_rifi')
+    parser.add_argument(
+        '--model_recipe',
+        default='vgg_apglc_density_routed_ifi',
+    )
     parser.add_argument('--fold_seed', default=42, type=int)
     parser.add_argument('--folds', nargs='+', type=int, default=list(range(5)))
     parser.add_argument('--device', default='cuda')

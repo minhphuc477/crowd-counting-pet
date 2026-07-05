@@ -1163,6 +1163,56 @@ MODEL_RECIPES['vgg_pet_apg_rifi_counthead_stage2'] = {
     'query_ifi_residual_init': 0.0,
 }
 
+# Density-Routed IFI APG+LC.
+#
+# Preserve the verified sparse APG+LC representation and use residual
+# multi-scale IFI only for PET's dense branch. Sparse nearest-query APG and
+# dense arbitrary-point APG are mutually exclusive, avoiding the conflicting
+# double guidance in vgg_apglc_branch_ifi. Both auxiliary objectives end at
+# epoch 350; the detector then consolidates before the epoch-700 LR drop.
+MODEL_RECIPES['vgg_apglc_density_routed_ifi'] = {
+    **MODEL_RECIPES['vgg_apglc'],
+    'lr_scheduler': 'step',
+    'lr_drop': 700,
+    'lr_gamma': 0.1,
+    'apg_sparse_coef': 1.0,
+    'apg_dense_coef': 0.0,
+    'query_feature_interpolation': 'implicit',
+    'query_ifi_sharing': 'shared',
+    'query_ifi_feature_source': 'fpn4x8x',
+    'query_ifi_branch_scope': 'dense',
+    'query_ifi_residual': True,
+    'query_ifi_residual_init': 1e-3,
+    'ifi_interpolation': 'implicit',
+    'ifi_feature_source': 'branch',
+    'ifi_branch_scope': 'dense',
+    'ifi_pos_dim': 32,
+    'ifi_mlp_hidden_dim': 256,
+    'ifi_activation': 'gelu',
+    'ifi_loss_coef': 0.02,
+    'ifi_head_source': 'routed',
+    'ifi_point_coef': 5.0,
+    'ifi_point_loss_type': 'mse',
+    'ifi_balance_pos_neg': True,
+    'ifi_pos_k': 2,
+    'ifi_pos_radius': 2.0,
+    'ifi_random_sampling': True,
+    'ifi_neg_k': 2,
+    'ifi_neg_radius': 8.0,
+    'ifi_neg_min_dist': 2.0,
+    'ifi_negative_policy': 'paper',
+    'ifi_start_epoch': 0,
+    'ifi_end_epoch': 350,
+    'count_head_loss_coef': 0.0,
+    'density_map_loss_coef': 0.0,
+    'eval_count_mode': 'threshold',
+    'eval_count_source': 'pet',
+    'eval_score_calibration': 'none',
+    'eval_nms_radius': 0.0,
+    'eval_branch_gate': 'none',
+    'eval_soft_split_gate': 'none',
+}
+
 # APG+LC + branch-local IFI.
 #
 # This is the missing combination that the repo did not expose cleanly before:
@@ -1436,6 +1486,30 @@ MODEL_RECIPES['vgg_pet_apg_rifi_counthead_stage2_nwpu'] = {
     'query_ifi_residual_init': 0.0,
 }
 
+MODEL_RECIPES['vgg_apglc_density_routed_ifi_nwpu'] = {
+    **MODEL_RECIPES['vgg_apglc_nwpu_tail'],
+    **{
+        key: value
+        for key, value in MODEL_RECIPES['vgg_apglc_density_routed_ifi'].items()
+        if key not in {
+            'patch_size_choices',
+            'crop_attempts',
+            'min_crop_points',
+            'nwpu_dense_crop_prob',
+            'nwpu_dense_crop_attempts',
+            'train_count_weight_power',
+            'train_count_weight_max',
+            'eval_max_size',
+            'eval_tile_size',
+            'eval_tile_overlap',
+            'eval_tile_nms_radius',
+            'eval_tile_max_tiles',
+            'eval_tile_trigger_count',
+            'eval_tile_trigger_area',
+        }
+    },
+}
+
 MODEL_RECIPES['vgg_apglc_full_ifi_nwpu'] = {
     **MODEL_RECIPES['vgg_apglc_nwpu_tail'],
     'query_feature_interpolation': 'implicit',
@@ -1601,6 +1675,8 @@ EXPERIMENTAL_MODEL_RECIPES = {
     'vgg_pet_apg_rifi_counthead_stage2',
     'vgg_pet_apg_rifi_nwpu',
     'vgg_pet_apg_rifi_counthead_stage2_nwpu',
+    'vgg_apglc_density_routed_ifi',
+    'vgg_apglc_density_routed_ifi_nwpu',
     # The remaining paths are kept for audit/reproduction only. Session runs
     # showed catastrophic drift or failed to improve on the PET/APG+LC baselines.
     'vgg_apglc_cbme_late_countreg',
@@ -1699,6 +1775,7 @@ ARCHITECTURE_OVERRIDE_KEYS = {
     'query_feature_interpolation',
     'query_ifi_sharing',
     'query_ifi_feature_source',
+    'query_ifi_branch_scope',
     'query_ifi_residual',
     'query_ifi_residual_init',
     'ifi_interpolation',
@@ -1706,6 +1783,7 @@ ARCHITECTURE_OVERRIDE_KEYS = {
     'ifi_pos_dim',
     'ifi_mlp_hidden_dim',
     'ifi_activation',
+    'ifi_branch_scope',
     'context_patch_size',
     'quad_context_mixer',
     'quad_context_levels',
@@ -2175,6 +2253,8 @@ def get_args_parser():
                         help='share one implicit interpolator across sparse, dense, and auxiliary point paths')
     parser.add_argument('--query_ifi_feature_source', default='branch', choices=('branch', 'fpn4x8x'),
                         help='shared IFI input: native branch feature or identity-initialized 4x/8x fusion')
+    parser.add_argument('--query_ifi_branch_scope', default='both', choices=('both', 'sparse', 'dense'),
+                        help='PET branch whose normal grid queries use implicit interpolation')
     parser.add_argument('--query_ifi_residual', action='store_true',
                         help='learn shared IFI as a residual over PET native branch features')
     parser.add_argument('--query_ifi_residual_init', default=1e-3, type=float,
@@ -2189,6 +2269,8 @@ def get_args_parser():
                         help='hidden width of the implicit IFI MLP; <=0 uses model hidden_dim')
     parser.add_argument('--ifi_activation', default='gelu', choices=('relu', 'gelu'),
                         help='activation used by implicit IFI MLP')
+    parser.add_argument('--ifi_branch_scope', default='both', choices=('both', 'sparse', 'dense'),
+                        help='PET branch supervised by arbitrary IFI/APG points')
     parser.add_argument('--ifi_loss_coef', default=0.0, type=float,
                         help='APGCC-style independent auxiliary-point guidance weight through interpolated features; 0 disables it')
     parser.add_argument('--ifi_head_source', default='separate', choices=('separate', 'sparse', 'dense', 'both', 'routed'),
@@ -2211,6 +2293,8 @@ def get_args_parser():
                         help='maximum per-axis displacement for IFI/APG negative points')
     parser.add_argument('--ifi_neg_min_dist', default=4.0, type=float,
                         help='minimum per-axis random displacement and final distance from every GT for IFI/APG negatives')
+    parser.add_argument('--ifi_negative_policy', default='filter', choices=('filter', 'paper'),
+                        help='filter removes auxiliary negatives near any GT; paper keeps the exact sampled APG negatives')
     parser.add_argument('--ifi_start_epoch', default=0, type=int,
                         help='epoch when IFI-lite auxiliary supervision starts')
     parser.add_argument('--ifi_end_epoch', default=-1, type=int,
@@ -2905,14 +2989,16 @@ def merge_checkpoint_args(args, checkpoint):
             'apg_consistency_coef', 'apg_consistency_k', 'apg_consistency_sigma',
             'apg_soft_loss_coef', 'apg_soft_pos_k', 'apg_soft_sigma', 'apg_soft_point_coef',
             'query_feature_interpolation', 'query_ifi_sharing', 'query_ifi_feature_source',
+            'query_ifi_branch_scope',
             'query_ifi_residual', 'query_ifi_residual_init',
             'ifi_interpolation', 'ifi_feature_source', 'ifi_pos_dim',
-            'ifi_mlp_hidden_dim', 'ifi_activation',
+            'ifi_mlp_hidden_dim', 'ifi_activation', 'ifi_branch_scope',
             'ifi_loss_coef', 'ifi_head_source', 'ifi_point_coef',
             'ifi_point_loss_type', 'ifi_balance_pos_neg',
             'ifi_pos_k', 'ifi_pos_radius', 'ifi_random_sampling',
             'ifi_neg_k', 'ifi_neg_radius',
-            'ifi_neg_min_dist', 'ifi_start_epoch', 'ifi_end_epoch',
+            'ifi_neg_min_dist', 'ifi_negative_policy',
+            'ifi_start_epoch', 'ifi_end_epoch',
             'qd_apg_loss_coef', 'qd_apg_point_coef', 'qd_apg_suppress_coef',
             'qd_apg_start_epoch', 'qd_apg_end_epoch', 'qd_apg_route_source',
             'routed_apg_loss_coef', 'routed_apg_point_coef', 'routed_apg_pos_k',

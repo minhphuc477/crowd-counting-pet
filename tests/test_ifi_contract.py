@@ -162,6 +162,130 @@ class IFIContractTest(unittest.TestCase):
             atol=0.0,
         )
 
+    def test_density_routed_ifi_separates_sparse_and_dense_guidance(self):
+        torch.manual_seed(0)
+        args = _recipe_args('vgg_apglc_density_routed_ifi')
+        self.assertEqual(args.apg_sparse_coef, 1.0)
+        self.assertEqual(args.apg_dense_coef, 0.0)
+        self.assertEqual(args.query_ifi_branch_scope, 'dense')
+        self.assertEqual(args.query_ifi_residual_init, 1e-3)
+        self.assertEqual(args.ifi_branch_scope, 'dense')
+        self.assertEqual(args.ifi_negative_policy, 'paper')
+        self.assertEqual(args.ifi_end_epoch, 350)
+        self.assertEqual(args.lr_drop, 700)
+        self.assertEqual(args.count_head_loss_coef, 0.0)
+
+        model, criterion = build_model(args)
+        self.assertIsNotNone(model.shared_query_feature_interpolator)
+        self.assertIsNone(model.quadtree_sparse.query_feature_interpolator)
+        self.assertIsNone(model.quadtree_dense.query_feature_interpolator)
+
+        sampled_primaries = []
+        original_sample_batch = model.shared_query_feature_interpolator.sample_batch
+
+        def record_sample_batch(feature_maps, points_abs, image_shape, primary):
+            sampled_primaries.append(primary)
+            return original_sample_batch(
+                feature_maps,
+                points_abs,
+                image_shape,
+                primary,
+            )
+
+        model.shared_query_feature_interpolator.sample_batch = record_sample_batch
+        model.train()
+        image = torch.rand(3, 128, 128)
+        points = torch.tensor([
+            [30.0, 30.0],
+            [32.0, 32.0],
+            [34.0, 34.0],
+            [90.0, 80.0],
+        ])
+        target = {
+            'points': points,
+            'labels': torch.ones(points.shape[0], dtype=torch.long),
+            'density': torch.tensor(4.0),
+        }
+        output = model(
+            [image],
+            train=True,
+            criterion=criterion,
+            targets=[target],
+            epoch=0,
+        )
+
+        self.assertTrue(torch.isfinite(output['losses']))
+        self.assertIn('loss_ifi', output['loss_dict'])
+        self.assertIn('loss_apg_sp', output['loss_dict'])
+        self.assertEqual(output['weight_dict']['loss_apg_ds'], 0.0)
+        self.assertTrue(sampled_primaries)
+        self.assertEqual(set(sampled_primaries), {'4x'})
+
+        output['losses'].backward()
+        shared_ifi = model.shared_query_feature_interpolator
+        self.assertIsNotNone(shared_ifi.fusion_scale.grad)
+        self.assertTrue(torch.isfinite(shared_ifi.fusion_scale.grad).all())
+        ifi_gradients = [
+            parameter.grad
+            for parameter in shared_ifi.interpolator.parameters()
+            if parameter.grad is not None
+        ]
+        self.assertTrue(ifi_gradients)
+        self.assertTrue(all(torch.isfinite(gradient).all() for gradient in ifi_gradients))
+
+        late_output = model(
+            [image],
+            train=True,
+            criterion=criterion,
+            targets=[target],
+            epoch=351,
+        )
+        self.assertEqual(late_output['weight_dict']['loss_ifi'], 0.0)
+        self.assertEqual(late_output['weight_dict']['loss_apg_sp'], 0.0)
+        self.assertEqual(late_output['weight_dict']['loss_apg_ds'], 0.0)
+
+        model.eval()
+        with torch.no_grad():
+            eval_output = model([image])
+        self.assertTrue(torch.isfinite(eval_output['pred_logits']).all())
+        self.assertTrue(torch.isfinite(eval_output['pred_points']).all())
+
+    def test_paper_negative_policy_keeps_exact_dense_samples(self):
+        args = _recipe_args('vgg_apglc_density_routed_ifi')
+        model, _ = build_model(args)
+        close_gt = torch.tensor([
+            [64.0, 64.0],
+            [66.0, 66.0],
+            [68.0, 68.0],
+        ])
+        torch.manual_seed(7)
+        negatives = model._build_ifi_negatives(close_gt, 128, 128)
+        self.assertEqual(
+            negatives.shape,
+            (close_gt.shape[0] * args.ifi_neg_k, 2),
+        )
+
+    def test_density_routed_ifi_rejects_batched_inference_explicitly(self):
+        args = _recipe_args('vgg_apglc_density_routed_ifi')
+        model, _ = build_model(args)
+        model.eval()
+        with self.assertRaisesRegex(ValueError, 'batch_size=1'):
+            model([torch.rand(3, 96, 128), torch.rand(3, 80, 112)])
+
+    def test_nwpu_density_routed_recipe_preserves_dense_data_contract(self):
+        args = _recipe_args('vgg_apglc_density_routed_ifi_nwpu')
+        self.assertEqual(args.query_ifi_branch_scope, 'dense')
+        self.assertEqual(args.ifi_branch_scope, 'dense')
+        self.assertEqual(args.apg_dense_coef, 0.0)
+        self.assertEqual(args.apg_end_epoch, 350)
+        self.assertEqual(args.ifi_end_epoch, 350)
+        self.assertEqual(args.crop_attempts, 12)
+        self.assertEqual(args.min_crop_points, 1)
+        self.assertEqual(args.nwpu_dense_crop_prob, 0.5)
+        self.assertEqual(args.nwpu_dense_crop_attempts, 32)
+        self.assertEqual(args.eval_tile_size, 1536)
+        self.assertEqual(args.eval_tile_trigger_count, 1500.0)
+
     def test_image_centers_map_exactly_to_feature_centers(self):
         interpolator = ImplicitFeatureInterpolator(1, pos_dim=2, mlp_hidden_dim=1)
         interpolator.mlp = _KeepFeature()

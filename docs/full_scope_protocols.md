@@ -52,14 +52,17 @@ late counting drift even when localization remained strong.
 Cross-dataset runs did not establish a consistent improvement over PET.
 It is an experimental ablation, not the final or maintained default.
 
-### Final Default
+### Consolidated Candidate
 
-Use `vgg_pet_paper` for reportable cross-dataset runs. The count-head second
-stage is not part of the final model: it has no spatial supervision, threshold
-inference does not consume it, and repository experiments show inconsistent
-transfer. A complete APGCC-shaped proposal network should be implemented and
-compared as a separate model instead of continuing to attach auxiliary heads
-to PET.
+`vgg_apglc_density_routed_ifi` is the maintained improvement candidate. It
+preserves native sparse APG+LC and routes residual multi-scale IFI plus
+arbitrary-point APG only through PET's dense branch. Both auxiliary families
+end at epoch 350, followed by PET-only consolidation and an epoch-700 learning
+rate drop.
+
+The count head is excluded because it does not provide spatial supervision and
+threshold inference does not consume it. This recipe is a falsifiable candidate,
+not a claim of universal improvement.
 
 ## Localization Metric Correction
 
@@ -86,134 +89,84 @@ protocol explicitly.
 
 ## Standard Development Training
 
-Verified PET on ShanghaiTech Part A:
+Consolidated candidate on ShanghaiTech Part A:
 
 ```bash
 python main.py \
   --dataset_file SHA \
   --data_path ./data/ShanghaiTech/part_A \
-  --model_recipe vgg_pet_paper \
+  --model_recipe vgg_apglc_density_routed_ifi \
+  --allow_experimental_model_recipe \
   --validation_protocol train_holdout \
-  --output_dir outputs/SHA/vgg_pet_paper_dev_seed42 \
+  --train_holdout_fraction 0.1 \
+  --train_holdout_seed 42 \
+  --output_dir outputs/SHA/vgg_apglc_density_routed_ifi_seed42 \
   --batch_size 8 \
   --epochs 1500 \
   --device cuda \
   --seed 42
 ```
 
-Run `vgg_apglc`, `vgg_pet_apg_rifi`, and other variants only as matched
-ablations. Do not compare runs with different image-size caps, validation
-splits, thresholds, or pretrained-backbone settings.
+The PET and APG+LC controls are existing evidence and need not be repeated
+unless their data or evaluation protocol changes. Do not compare runs with
+different image-size caps, validation splits, thresholds, or pretrained
+backbone settings.
 
 ## Complete Cross-Dataset Commands
 
-The two-stage commands below are retained for historical ablation. They are not
-the recommended final path. The count head remains auxiliary while inference
-counts PET points, so a gain must not be attributed to count-head inference.
-
-Add `--resume_existing` to any two-stage command to continue each stage from
-its own `checkpoint.pth`. Without that flag, an existing output directory is
-rejected; a checkpoint from another run cannot overwrite it silently.
-
-ShanghaiTech Part A:
+Use the same architecture without checkpoint initialization. SHA, SHB, and
+QNRF use a deterministic training holdout:
 
 ```bash
-python scripts/train_apglc_then_counthead.py \
-  --dataset_file SHA \
-  --data_path ./data/ShanghaiTech/part_A \
-  --ifi_variant robust \
-  --validation_protocol train_holdout \
-  --batch_size 8 \
-  --stage1_epochs 1500 \
-  --stage2_epochs 120 \
-  --stage1_output outputs/SHA/vgg_pet_apg_rifi_seed42 \
-  --stage2_output outputs/SHA/vgg_pet_apg_rifi_counthead_stage2_seed42 \
-  --device cuda \
-  --num_workers 2 \
-  --seed 42
+python main.py --dataset_file SHA --data_path ./data/ShanghaiTech/part_A \
+  --model_recipe vgg_apglc_density_routed_ifi \
+  --allow_experimental_model_recipe \
+  --validation_protocol train_holdout --train_holdout_fraction 0.1 \
+  --train_holdout_seed 42 \
+  --output_dir outputs/SHA/vgg_apglc_density_routed_ifi_seed42 \
+  --batch_size 8 --epochs 1500 --num_workers 2 --device cuda --seed 42
+
+python main.py --dataset_file SHB --data_path ./data/ShanghaiTech/part_B \
+  --model_recipe vgg_apglc_density_routed_ifi \
+  --allow_experimental_model_recipe \
+  --validation_protocol train_holdout --train_holdout_fraction 0.1 \
+  --train_holdout_seed 42 \
+  --output_dir outputs/SHB/vgg_apglc_density_routed_ifi_seed42 \
+  --batch_size 8 --epochs 1500 --num_workers 2 --device cuda --seed 42
+
+python main.py --dataset_file QNRF --data_path ./data/UCF-QNRF_ECCV18 \
+  --model_recipe vgg_apglc_density_routed_ifi \
+  --allow_experimental_model_recipe \
+  --validation_protocol train_holdout --train_holdout_fraction 0.1 \
+  --train_holdout_seed 42 \
+  --output_dir outputs/QNRF/vgg_apglc_density_routed_ifi_seed42 \
+  --batch_size 8 --epochs 1500 --num_workers 2 --device cuda --seed 42
 ```
 
-ShanghaiTech Part B:
+NWPU uses its dense-crop and tiled-evaluation recipe:
 
 ```bash
-python scripts/train_apglc_then_counthead.py \
-  --dataset_file SHB \
-  --data_path ./data/ShanghaiTech/part_B \
-  --ifi_variant robust \
-  --validation_protocol train_holdout \
-  --batch_size 8 \
-  --stage1_epochs 1500 \
-  --stage2_epochs 120 \
-  --stage1_output outputs/SHB/vgg_pet_apg_rifi_seed42 \
-  --stage2_output outputs/SHB/vgg_pet_apg_rifi_counthead_stage2_seed42 \
-  --device cuda \
-  --num_workers 2 \
-  --seed 42
+python main.py --dataset_file NWPU --data_path ./data/NWPU-Crowd \
+  --model_recipe vgg_apglc_density_routed_ifi_nwpu \
+  --allow_experimental_model_recipe \
+  --validation_protocol official_val --nwpu_eval_split val \
+  --output_dir outputs/NWPU/vgg_apglc_density_routed_ifi_seed42 \
+  --batch_size 8 --epochs 1500 --num_workers 2 --device cuda --seed 42
 ```
 
-UCF-QNRF:
+JHU uses the generic architecture and official validation:
 
 ```bash
-python scripts/train_apglc_then_counthead.py \
-  --dataset_file QNRF \
-  --data_path ./data/UCF-QNRF_ECCV18 \
-  --ifi_variant robust \
-  --validation_protocol train_holdout \
-  --batch_size 8 \
-  --stage1_epochs 1500 \
-  --stage2_epochs 120 \
-  --stage1_output outputs/QNRF/vgg_pet_apg_rifi_seed42 \
-  --stage2_output outputs/QNRF/vgg_pet_apg_rifi_counthead_stage2_seed42 \
-  --device cuda \
-  --num_workers 2 \
-  --seed 42
+python main.py --dataset_file JHU --data_path ./data/jhu_crowd_v2.0 \
+  --model_recipe vgg_apglc_density_routed_ifi \
+  --allow_experimental_model_recipe \
+  --validation_protocol official_val --jhu_eval_split val \
+  --output_dir outputs/JHU/vgg_apglc_density_routed_ifi_seed42 \
+  --batch_size 8 --epochs 1500 --num_workers 2 --device cuda --seed 42
 ```
 
-NWPU-Crowd uses the official validation split and the NWPU-specific recipe,
-which retains the same APG/IFI architecture while configuring dense crop
-sampling and bounded tail tiling:
-
-```bash
-python scripts/train_apglc_then_counthead.py \
-  --dataset_file NWPU \
-  --data_path ./data/NWPU-Crowd \
-  --ifi_variant robust \
-  --validation_protocol official_val \
-  --nwpu_eval_split val \
-  --batch_size 8 \
-  --stage1_epochs 1500 \
-  --stage2_epochs 120 \
-  --stage1_output outputs/NWPU/vgg_pet_apg_rifi_seed42 \
-  --stage2_output outputs/NWPU/vgg_pet_apg_rifi_counthead_stage2_seed42 \
-  --device cuda \
-  --num_workers 2 \
-  --seed 42
-```
-
-JHU-Crowd++ uses its official validation split:
-
-```bash
-python scripts/train_apglc_then_counthead.py \
-  --dataset_file JHU \
-  --data_path ./data/jhu_crowd_v2.0 \
-  --ifi_variant robust \
-  --validation_protocol official_val \
-  --jhu_eval_split val \
-  --batch_size 8 \
-  --stage1_epochs 1500 \
-  --stage2_epochs 120 \
-  --stage1_output outputs/JHU/vgg_pet_apg_rifi_seed42 \
-  --stage2_output outputs/JHU/vgg_pet_apg_rifi_counthead_stage2_seed42 \
-  --device cuda \
-  --num_workers 2 \
-  --seed 42
-```
-
-For SHA, SHB, and QNRF, `train_holdout` is the development protocol because
-the datasets have no official validation split. Do not publish the lowest
-benchmark-test epoch after repeatedly evaluating the test set. Freeze the
-architecture and thresholds using the holdout, then run a separately declared
-final experiment.
+Resume any interrupted run with the identical command plus
+`--resume <output_dir>/checkpoint.pth`.
 
 ## UCF-CC-50
 
@@ -225,9 +178,9 @@ evaluates each untouched 10-image fold once.
 ```bash
 python scripts/run_ucfcc50_folds.py \
   --data_path data/UCF_CC_50 \
-  --model_recipe vgg_pet_apg_rifi \
+  --model_recipe vgg_apglc_density_routed_ifi \
   --output_root outputs/UCFCC50 \
-  --results_dir eval_results/UCFCC50/vgg_pet_apg_rifi_seed42 \
+  --results_dir eval_results/UCFCC50/vgg_apglc_density_routed_ifi_seed42 \
   --fold_seed 42 \
   --device cuda \
   --num_workers 2 \
@@ -246,7 +199,7 @@ Stage one uses only the deterministic observed rectangle:
 python main.py \
   --dataset_file SHA \
   --data_path ./data/ShanghaiTech/part_A \
-  --model_recipe vgg_pet_apg_rifi \
+  --model_recipe vgg_apglc_density_routed_ifi \
   --allow_experimental_model_recipe \
   --partial_annotation_ratio 0.1 \
   --partial_annotation_seed 42 \
@@ -279,7 +232,7 @@ python main.py \
   --dataset_file SHA \
   --data_path ./data/ShanghaiTech/part_A \
   --annotation_override_dir data/ShanghaiTech/part_A/completed_r010_seed42 \
-  --model_recipe vgg_pet_apg_rifi \
+  --model_recipe vgg_apglc_density_routed_ifi \
   --allow_experimental_model_recipe \
   --output_dir outputs/SHA/partial_r010_stage2_scratch_seed42 \
   --epochs 1500 \
@@ -297,7 +250,7 @@ annotation. It does not threshold or NMS the point set.
 
 ```bash
 python scripts/refine_point_annotations.py \
-  --resume outputs/SHA/vgg_pet_apg_rifi_seed42/best_checkpoint.pth \
+  --resume outputs/SHA/vgg_apglc_density_routed_ifi_seed42/best_checkpoint.pth \
   --dataset_file SHA \
   --data_path ./data/ShanghaiTech/part_A \
   --output_dir data/ShanghaiTech/part_A/refined_seed42 \
@@ -331,6 +284,7 @@ For every dataset, retain identical data and evaluation settings and compare:
 3. `vgg_pet_branch_ifi`
 4. `vgg_apgcc_paper_ifi`
 5. `vgg_pet_apg_rifi`
+6. `vgg_apglc_density_routed_ifi`
 
 Then isolate APG/IFI parameters:
 

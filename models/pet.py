@@ -122,8 +122,19 @@ class BasePETCount(nn.Module):
         self.query_ifi_sharing = getattr(args, 'query_ifi_sharing', 'independent')
         if self.query_ifi_sharing not in ('independent', 'shared'):
             raise ValueError('query_ifi_sharing must be one of "independent" or "shared"')
+        self.query_ifi_branch_scope = getattr(args, 'query_ifi_branch_scope', 'both')
+        if self.query_ifi_branch_scope not in ('both', 'sparse', 'dense'):
+            raise ValueError('query_ifi_branch_scope must be one of "both", "sparse", or "dense"')
+        branch_enabled = (
+            self.query_ifi_branch_scope == 'both'
+            or self.query_ifi_branch_scope == quadtree_layer
+        )
         self.query_feature_interpolator = None
-        if self.query_feature_interpolation == 'implicit' and self.query_ifi_sharing == 'independent':
+        if (
+            self.query_feature_interpolation == 'implicit'
+            and self.query_ifi_sharing == 'independent'
+            and branch_enabled
+        ):
             self.query_feature_interpolator = ImplicitFeatureInterpolator(
                 hidden_dim,
                 pos_dim=getattr(args, 'ifi_pos_dim', 32),
@@ -1362,6 +1373,9 @@ class PET(nn.Module):
         if self.query_ifi_sharing not in ('independent', 'shared'):
             raise ValueError('query_ifi_sharing must be one of "independent" or "shared"')
         self.query_ifi_feature_source = getattr(args, 'query_ifi_feature_source', 'branch')
+        self.query_ifi_branch_scope = getattr(args, 'query_ifi_branch_scope', 'both')
+        if self.query_ifi_branch_scope not in ('both', 'sparse', 'dense'):
+            raise ValueError('query_ifi_branch_scope must be one of "both", "sparse", or "dense"')
         self.shared_query_feature_interpolator = None
         if (
             self.query_feature_interpolation == 'implicit'
@@ -1388,6 +1402,9 @@ class PET(nn.Module):
             raise ValueError('ifi_feature_source must be one of "encoded" or "branch"')
         if self.ifi_feature_source == 'branch' and self.query_feature_interpolation != 'implicit':
             raise ValueError('ifi_feature_source=branch requires implicit query feature interpolation')
+        self.ifi_branch_scope = getattr(args, 'ifi_branch_scope', 'both')
+        if self.ifi_branch_scope not in ('both', 'sparse', 'dense'):
+            raise ValueError('ifi_branch_scope must be one of "both", "sparse", or "dense"')
         self.ifi_interpolator = None
         if (
             self.ifi_interpolation == 'implicit'
@@ -1401,6 +1418,11 @@ class PET(nn.Module):
                 activation=getattr(args, 'ifi_activation', 'gelu'),
             )
         self.ifi_head_source = getattr(args, 'ifi_head_source', 'separate')
+        if self.ifi_branch_scope != 'both' and self.ifi_head_source != 'routed':
+            raise ValueError(
+                'branch-scoped IFI requires ifi_head_source="routed" so each '
+                'auxiliary point has a defined sparse/dense route'
+            )
         if self.ifi_head_source not in ('separate', 'sparse', 'dense', 'both', 'routed'):
             raise ValueError('ifi_head_source must be one of "separate", "sparse", "dense", "both", or "routed"')
         if self.ifi_loss_coef > 0 and self.ifi_head_source == 'separate':
@@ -1631,6 +1653,9 @@ class PET(nn.Module):
         self.ifi_neg_k = max(0, int(getattr(args, 'ifi_neg_k', 4)))
         self.ifi_neg_radius = float(getattr(args, 'ifi_neg_radius', 12.0))
         self.ifi_neg_min_dist = float(getattr(args, 'ifi_neg_min_dist', 4.0))
+        self.ifi_negative_policy = getattr(args, 'ifi_negative_policy', 'filter')
+        if self.ifi_negative_policy not in ('filter', 'paper'):
+            raise ValueError('ifi_negative_policy must be one of "filter" or "paper"')
         self.ifi_start_epoch = int(getattr(args, 'ifi_start_epoch', 0))
         self.ifi_end_epoch = int(getattr(args, 'ifi_end_epoch', -1))
         self.qd_apg_loss_coef = float(getattr(args, 'qd_apg_loss_coef', 0.0))
@@ -2242,10 +2267,10 @@ class PET(nn.Module):
             weight_dict['loss_bayesian'] = self.bayesian_loss_coef
             losses += loss_bayesian * self.bayesian_loss_coef
         if self.apg_loss_coef > 0:
-            apg_sparse_active = epoch >= self.apg_start_epoch and (
+            apg_sparse_active = self.apg_sparse_coef > 0 and epoch >= self.apg_start_epoch and (
                 self.apg_end_epoch < 0 or epoch <= self.apg_end_epoch
             )
-            apg_dense_active = epoch >= self.apg_dense_start_epoch and (
+            apg_dense_active = self.apg_dense_coef > 0 and epoch >= self.apg_dense_start_epoch and (
                 self.apg_end_epoch < 0 or epoch <= self.apg_end_epoch
             )
             if apg_sparse_active and self.apg_warmup_epochs > 0:
@@ -2312,8 +2337,9 @@ class PET(nn.Module):
             else:
                 loss_ifi = outputs['split_map_raw'].sum() * 0.0
             loss_dict['loss_ifi'] = loss_ifi
-            weight_dict['loss_ifi'] = self.ifi_loss_coef
-            losses += loss_ifi * self.ifi_loss_coef
+            ifi_weight = self.ifi_loss_coef if ifi_active else 0.0
+            weight_dict['loss_ifi'] = ifi_weight
+            losses += loss_ifi * ifi_weight
         if self.qd_apg_loss_coef > 0:
             qd_apg_active = epoch >= self.qd_apg_start_epoch and (
                 self.qd_apg_end_epoch < 0 or epoch <= self.qd_apg_end_epoch
@@ -2819,10 +2845,21 @@ class PET(nn.Module):
         neg_points = (gt_points[:, None, :] + offsets).reshape(-1, 2)
         neg_points[:, 0].clamp_(0, max(float(img_h) - 1.0, 0.0))
         neg_points[:, 1].clamp_(0, max(float(img_w) - 1.0, 0.0))
-        if gt_points.shape[0] > 0 and self.ifi_neg_min_dist > 0:
+        if (
+            self.ifi_negative_policy == 'filter'
+            and gt_points.shape[0] > 0
+            and self.ifi_neg_min_dist > 0
+        ):
             min_dist = torch.cdist(neg_points, gt_points, p=2).min(dim=1)[0]
             neg_points = neg_points[min_dist >= self.ifi_neg_min_dist]
         return neg_points
+
+    def _ifi_branch_scope_mask(self, dense_mask):
+        if self.ifi_branch_scope == 'dense':
+            return dense_mask
+        if self.ifi_branch_scope == 'sparse':
+            return ~dense_mask
+        return torch.ones_like(dense_mask, dtype=torch.bool)
 
     @staticmethod
     def _points_in_supervision_mask(points, target):
@@ -2896,6 +2933,10 @@ class PET(nn.Module):
                 )
             if pos_dense_mask is None:
                 pos_dense_mask = torch.zeros(pos_points.shape[0], dtype=torch.bool, device=encode_src.device)
+            pos_scope = self._ifi_branch_scope_mask(pos_dense_mask)
+            pos_points = pos_points[pos_scope]
+            pos_gt_points = pos_gt_points[pos_scope]
+            pos_dense_mask = pos_dense_mask[pos_scope]
             if pos_points.numel() > 0:
                 pos_feats = self._sample_routed_ifi_features(
                     outputs,
@@ -2939,6 +2980,10 @@ class PET(nn.Module):
                         dtype=torch.bool,
                         device=encode_src.device,
                     )
+                neg_scope = self._ifi_branch_scope_mask(neg_dense_mask)
+                neg_points = neg_points[neg_scope]
+                neg_dense_mask = neg_dense_mask[neg_scope]
+            if neg_points.numel() > 0:
                 neg_feats = self._sample_routed_ifi_features(
                     outputs,
                     batch_idx,
@@ -3865,6 +3910,13 @@ class PET(nn.Module):
         # backbone
         if isinstance(samples, (list, torch.Tensor)):
             samples = nested_tensor_from_tensor_list(samples)
+        if 'train' not in kwargs and samples.tensors.shape[0] != 1:
+            raise ValueError(
+                'PET inference expects batch_size=1 because active query '
+                'windows and image-level counting are evaluated per image'
+            )
+        if 'train' not in kwargs:
+            kwargs['test'] = True
         features, pos = self.backbone(samples)
 
         # positional embedding
@@ -4260,7 +4312,10 @@ class PET(nn.Module):
             sparse_kwargs['div_threshold'] = 1.0 - self.query_prune_threshold
             sparse_kwargs['div_compare'] = 'gt'
             sparse_kwargs['dec_win_size'] = list(self.sparse_dec_win_size)
-            if self.shared_query_feature_interpolator is not None:
+            if (
+                self.shared_query_feature_interpolator is not None
+                and self.query_ifi_branch_scope in ('both', 'sparse')
+            ):
                 sparse_kwargs['query_feature_interpolator'] = self.shared_query_feature_interpolator
                 sparse_kwargs['query_feature_maps'] = query_feature_maps
             outputs_sparse = self.quadtree_sparse(samples, features, context_info, **sparse_kwargs)
@@ -4274,7 +4329,10 @@ class PET(nn.Module):
             dense_kwargs['div_threshold'] = self.query_prune_threshold
             dense_kwargs['div_compare'] = 'gt'
             dense_kwargs['dec_win_size'] = list(self.dense_dec_win_size)
-            if self.shared_query_feature_interpolator is not None:
+            if (
+                self.shared_query_feature_interpolator is not None
+                and self.query_ifi_branch_scope in ('both', 'dense')
+            ):
                 dense_kwargs['query_feature_interpolator'] = self.shared_query_feature_interpolator
                 dense_kwargs['query_feature_maps'] = query_feature_maps
             outputs_dense = self.quadtree_dense(samples, features, context_info, **dense_kwargs)
