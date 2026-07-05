@@ -126,3 +126,12 @@ pretrained/
 
 # Markdown notes and documentation
 *.md
+
+# Allow experiment artifacts when intentionally adding/pushing them.
+!results/
+!results/**
+!eval_results/
+!eval_results/**
+!outputs/
+!outputs/**
+!teaser.JPG
