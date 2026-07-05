@@ -1,54 +1,30 @@
-from .SHA import build as build_sha
-from .QNRF import build as build_qnrf
-from .NWPU import build as build_nwpu
-from .JHU import build as build_jhu
-from .UCFCC50 import build as build_ucfcc50
-from .UCFCC50 import find_images_dir as find_ucfcc50_images_dir
 from pathlib import Path
+
+from .NWPU import build as build_nwpu
+from .SHA import build as build_sha
+
 
 data_paths = {
     'SHA': ('./data/ShanghaiTech/part_A/', './data/ShanghaiTech/part_A_final/'),
     'SHB': ('./data/ShanghaiTech/part_B/', './data/ShanghaiTech/part_B_final/'),
-    'QNRF': ('./data/UCF-QNRF_ECCV18/', './data/UCF-QNRF/', './data/QNRF/'),
     'NWPU': ('./data/NWPU-Crowd/', './data/NWPU/'),
     'NWPU_Crowd': ('./data/NWPU-Crowd/', './data/NWPU/'),
     'NWPU-Crowd': ('./data/NWPU-Crowd/', './data/NWPU/'),
-    'JHU': ('./data/jhu_crowd_v2.0/', './data/JHU-Crowd++/', './data/JHU/'),
-    'JHU_Crowd': ('./data/jhu_crowd_v2.0/', './data/JHU-Crowd++/', './data/JHU/'),
-    'JHU-Crowd++': ('./data/jhu_crowd_v2.0/', './data/JHU-Crowd++/', './data/JHU/'),
-    'UCFCC50': ('./data/UCF_CC_50/', './data/UCF-CC-50/', './data/UCFCC50/'),
-    'UCF_CC_50': ('./data/UCF_CC_50/', './data/UCF-CC-50/', './data/UCFCC50/'),
-    'UCF-CC-50': ('./data/UCF_CC_50/', './data/UCF-CC-50/', './data/UCFCC50/'),
 }
 
 dataset_dir_names = {
     'SHA': ('part_A', 'part_A_final'),
     'SHB': ('part_B', 'part_B_final'),
-    'QNRF': ('UCF-QNRF_ECCV18', 'UCF-QNRF', 'QNRF'),
     'NWPU': ('NWPU-Crowd', 'NWPU'),
     'NWPU_Crowd': ('NWPU-Crowd', 'NWPU'),
     'NWPU-Crowd': ('NWPU-Crowd', 'NWPU'),
-    'JHU': ('jhu_crowd_v2.0', 'JHU-Crowd++', 'JHU'),
-    'JHU_Crowd': ('jhu_crowd_v2.0', 'JHU-Crowd++', 'JHU'),
-    'JHU-Crowd++': ('jhu_crowd_v2.0', 'JHU-Crowd++', 'JHU'),
-    'UCFCC50': ('UCF_CC_50', 'UCF-CC-50', 'UCFCC50'),
-    'UCF_CC_50': ('UCF_CC_50', 'UCF-CC-50', 'UCFCC50'),
-    'UCF-CC-50': ('UCF_CC_50', 'UCF-CC-50', 'UCFCC50'),
 }
 
 
 def _split_images_dir(data_root, image_set, dataset_file):
     source_set = 'train' if image_set == 'train_eval' else image_set
-    if dataset_file == 'QNRF':
-        split = 'Train' if source_set == 'train' else 'Test'
-        return Path(data_root) / split
     if dataset_file in ('NWPU', 'NWPU_Crowd', 'NWPU-Crowd'):
         return Path(data_root) / 'images'
-    if dataset_file in ('JHU', 'JHU_Crowd', 'JHU-Crowd++'):
-        split = 'train' if source_set == 'train' else 'val'
-        return Path(data_root) / split / 'images'
-    if dataset_file in ('UCFCC50', 'UCF_CC_50', 'UCF-CC-50'):
-        return find_ucfcc50_images_dir(data_root)
     split = 'train_data' if source_set == 'train' else 'test_data'
     return Path(data_root) / split / 'images'
 
@@ -120,25 +96,10 @@ def _resolve_data_path(dataset_file, requested_path, image_set):
 
 
 def build_dataset(image_set, args):
-    if args.dataset_file == 'UCF':
-        raise ValueError(
-            'dataset_file="UCF" is ambiguous and previously selected '
-            'UCF-QNRF. Use dataset_file="QNRF" explicitly. UCF-CC-50 '
-            'uses dataset_file="UCFCC50" and the five-fold protocol.'
-        )
     if args.dataset_file in ('SHA', 'SHB'):
         args.data_path = _resolve_data_path(args.dataset_file, getattr(args, 'data_path', None), image_set)
         return build_sha(image_set, args)
-    if args.dataset_file == 'QNRF':
-        args.data_path = _resolve_data_path(args.dataset_file, getattr(args, 'data_path', None), image_set)
-        return build_qnrf(image_set, args)
     if args.dataset_file in ('NWPU', 'NWPU_Crowd', 'NWPU-Crowd'):
         args.data_path = _resolve_data_path(args.dataset_file, getattr(args, 'data_path', None), image_set)
         return build_nwpu(image_set, args)
-    if args.dataset_file in ('JHU', 'JHU_Crowd', 'JHU-Crowd++'):
-        args.data_path = _resolve_data_path(args.dataset_file, getattr(args, 'data_path', None), image_set)
-        return build_jhu(image_set, args)
-    if args.dataset_file in ('UCFCC50', 'UCF_CC_50', 'UCF-CC-50'):
-        args.data_path = _resolve_data_path(args.dataset_file, getattr(args, 'data_path', None), image_set)
-        return build_ucfcc50(image_set, args)
-    raise ValueError(f'dataset {args.dataset_file} not supported')
+    raise ValueError(f'dataset {args.dataset_file} not supported by the best-model branch')
