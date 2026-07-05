@@ -409,13 +409,46 @@ def upgrade_legacy_pet_state_dict(state_dict):
     return upgraded
 
 
+def _checkpoint_eval_model_name(checkpoint):
+    """Return the raw/ema eval model recorded by training, if available."""
+    metric_keys = (
+        'checkpoint_eval_metrics',
+        'best_mae_eval_metrics',
+        'latest_eval_metrics',
+        'best_mse_eval_metrics',
+        'best_localization_eval_metrics',
+    )
+    for key in metric_keys:
+        record = checkpoint.get(key)
+        if isinstance(record, dict):
+            value = record.get('eval_model')
+            if value in ('raw', 'ema'):
+                return value
+
+    args = checkpoint.get('args')
+    if isinstance(args, dict):
+        value = args.get('eval_model')
+    else:
+        value = getattr(args, 'eval_model', None)
+    if value in ('raw', 'ema'):
+        return value
+    return None
+
+
 def get_checkpoint_model_state(checkpoint, model_key='auto'):
     """Select a model state from a PET checkpoint for inference/evaluation."""
     if model_key == 'auto':
-        if 'model_ema' in checkpoint:
+        eval_model_name = _checkpoint_eval_model_name(checkpoint)
+        if eval_model_name == 'raw' and 'model_raw' in checkpoint:
+            return upgrade_legacy_pet_state_dict(checkpoint['model_raw']), 'model_raw'
+        if eval_model_name == 'ema' and 'model_ema' in checkpoint:
             return upgrade_legacy_pet_state_dict(checkpoint['model_ema']), 'model_ema'
         if 'model' in checkpoint:
             return upgrade_legacy_pet_state_dict(checkpoint['model']), 'model'
+        if 'model_ema' in checkpoint:
+            return upgrade_legacy_pet_state_dict(checkpoint['model_ema']), 'model_ema'
+        if 'model_raw' in checkpoint:
+            return upgrade_legacy_pet_state_dict(checkpoint['model_raw']), 'model_raw'
         raise KeyError('checkpoint does not contain a model state')
     if model_key not in checkpoint:
         available = ', '.join(sorted(k for k in checkpoint.keys() if k.startswith('model')))
