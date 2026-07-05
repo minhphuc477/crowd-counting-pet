@@ -1,0 +1,26 @@
+{
+  "score_threshold": 0.0,
+  "split_threshold": 0.45,
+  "eval_nms_radius": 0.0,
+  "eval_branch_gate": "none",
+  "eval_soft_split_gate": "none",
+  "eval_count_mode": "count_head_topk",
+  "eval_count_head_min_score": 0.2,
+  "eval_protocol": "pet",
+  "tta_flip": false,
+  "tta_scales": [
+    1.0
+  ],
+  "returncode": 0,
+  "elapsed_sec": 11.824631690979004,
+  "results_file": "eval_results/SHA/vgg16_bn_apglc_density_counthead_topk_sweep/score_0_split_0p45_nms_0_gate_none_soft_none_count_count_head_topk_min_0p2.json",
+  "log_file": "eval_results/SHA/vgg16_bn_apglc_density_counthead_topk_sweep/score_0_split_0p45_nms_0_gate_none_soft_none_count_count_head_topk_min_0p2.log",
+  "epoch": 32,
+  "eval_mae": 56.07692307692308,
+  "eval_mse": 87.6277717029617,
+  "pred_cnt": 438.2087912087912,
+  "gt_cnt": 433.3076923076923,
+  "checkpoint": "outputs/SHA/vgg16_bn_apglc_density_counthead_seed42/best_checkpoint.pth",
+  "eval_model": "model",
+  "ok": true
+}

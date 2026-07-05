@@ -1,0 +1,20 @@
+{
+  "backbone": "efficientnet_b0",
+  "dataset_file": "SHA",
+  "trials": 5,
+  "trials_completed": 5,
+  "seed_aggregate": "mean",
+  "extra_args": "--epochs 150 --patch_size 256",
+  "best_value": 83.10989010989012,
+  "best_params": {
+    "lr": 0.00012894163245916047,
+    "lr_backbone": 1.497968468971324e-06,
+    "batch_size": 4,
+    "warmup": 4,
+    "score_threshold": 0.5457016727605626
+  },
+  "best_trial_number": 2,
+  "per_seed_mae": [
+    83.10989010989012
+  ]
+}

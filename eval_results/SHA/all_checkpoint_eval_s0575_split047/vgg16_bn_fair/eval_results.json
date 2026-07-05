@@ -1,0 +1,18 @@
+{
+  "ok": false,
+  "backbone": "vgg16_bn",
+  "dir": "vgg16_bn_fair",
+  "checkpoint": "outputs/SHA/vgg16_bn_fair/best_checkpoint.pth",
+  "checkpoint_name": "best_checkpoint.pth",
+  "eval_epoch": null,
+  "eval_mae": null,
+  "eval_mse": null,
+  "returncode": 1,
+  "error": "eval.py exited with return code 1",
+  "log_path": "eval_results/SHA/all_checkpoint_eval_s0575_split047/vgg16_bn_fair/eval_log.txt",
+  "evaluated_at": "2026-06-13T10:29:09",
+  "train_best_mae": 58.395604395604394,
+  "train_best_mse": 90.65936729936338,
+  "best_epoch": 115,
+  "checkpoint_epoch": 115
+}

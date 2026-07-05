@@ -1,0 +1,16 @@
+{
+  "score_threshold": 0.46,
+  "split_threshold": 0.45,
+  "returncode": 0,
+  "elapsed_sec": 11.491239547729492,
+  "results_file": "eval_results/SHA/vgg16_bn_step_deterministic_threshold_sweep/score_0p46_split_0p45.json",
+  "log_file": "eval_results/SHA/vgg16_bn_step_deterministic_threshold_sweep/score_0p46_split_0p45.log",
+  "epoch": 370,
+  "eval_mae": 51.57692307692308,
+  "eval_mse": 83.3800711425474,
+  "pred_cnt": 425.92857142857144,
+  "gt_cnt": 433.3076923076923,
+  "checkpoint": "outputs/SHA/vgg16_bn_step_deterministic/best_checkpoint.pth",
+  "eval_model": "model",
+  "ok": true
+}

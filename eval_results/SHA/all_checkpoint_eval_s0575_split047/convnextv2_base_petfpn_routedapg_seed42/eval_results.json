@@ -1,0 +1,18 @@
+{
+  "ok": true,
+  "backbone": "convnextv2_base",
+  "dir": "convnextv2_base_petfpn_routedapg_seed42",
+  "checkpoint": "outputs/SHA/convnextv2_base_petfpn_routedapg_seed42/best_checkpoint.pth",
+  "checkpoint_name": "best_checkpoint.pth",
+  "eval_epoch": 35,
+  "eval_mae": 314.07142857142856,
+  "eval_mse": 424.3575040090504,
+  "returncode": 0,
+  "error": null,
+  "log_path": "eval_results/SHA/all_checkpoint_eval_s0575_split047/convnextv2_base_petfpn_routedapg_seed42/eval_log.txt",
+  "evaluated_at": "2026-06-13T10:19:45",
+  "train_best_mae": 270.032967032967,
+  "train_best_mse": 362.63439342773773,
+  "best_epoch": 35,
+  "checkpoint_epoch": 35
+}

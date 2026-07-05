@@ -1,0 +1,18 @@
+{
+  "timestamp": "2026-05-25T15:58:42.649542",
+  "backbone": "fastvit_tiny",
+  "seeds": [
+    7
+  ],
+  "results": {
+    "7": 67.63186813186813
+  },
+  "num_seeds": 1,
+  "num_completed": 1,
+  "metrics": {
+    "mean_mae": 67.63186813186813,
+    "std_mae": 0.0,
+    "min_mae": 67.63186813186813,
+    "max_mae": 67.63186813186813
+  }
+}

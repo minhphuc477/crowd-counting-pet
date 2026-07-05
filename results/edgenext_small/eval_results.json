@@ -1,0 +1,11 @@
+{
+  "backbone": "edgenext_small",
+  "checkpoint": "outputs/SHA/results/edgenext_small/final_train/best_checkpoint.pth",
+  "eval_mae": 55.752747252747255,
+  "eval_mse": 90.073260780835,
+  "train_best_mae": 55.752747252747255,
+  "train_best_mse": 90.073260780835,
+  "best_epoch": 665,
+  "total_epochs": 666,
+  "optuna_search_mae": 61.379120879120876
+}

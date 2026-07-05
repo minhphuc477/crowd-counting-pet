@@ -1,0 +1,18 @@
+{
+  "timestamp": "2026-05-25T12:55:23.242905",
+  "backbone": "convnext_base",
+  "seeds": [
+    7
+  ],
+  "results": {
+    "7": 239.53846153846155
+  },
+  "num_seeds": 1,
+  "num_completed": 1,
+  "metrics": {
+    "mean_mae": 239.53846153846155,
+    "std_mae": 0.0,
+    "min_mae": 239.53846153846155,
+    "max_mae": 239.53846153846155
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "epoch": 1499,
+  "eval_mae": 66.42307692307692,
+  "eval_mse": 101.52309865463899,
+  "pred_cnt": 463.2912087912088,
+  "gt_cnt": 433.3076923076923,
+  "checkpoint": "outputs/SHA/vgg16_bn_linear_dec_seed42/checkpoint.pth",
+  "eval_model": "model"
+}

@@ -1,0 +1,18 @@
+{
+  "ok": false,
+  "backbone": "repvit_small",
+  "dir": "results/repvit_small/final_train",
+  "checkpoint": "outputs/SHA/results/repvit_small/final_train/best_checkpoint.pth",
+  "checkpoint_name": "best_checkpoint.pth",
+  "eval_epoch": null,
+  "eval_mae": null,
+  "eval_mse": null,
+  "returncode": 1,
+  "error": "eval.py exited with return code 1",
+  "log_path": "eval_results/SHA/all_checkpoint_eval_s0575_split047/results__repvit_small__final_train/eval_log.txt",
+  "evaluated_at": "2026-06-13T10:22:15",
+  "train_best_mae": 85.36263736263736,
+  "train_best_mse": 130.87272569053619,
+  "best_epoch": 615,
+  "checkpoint_epoch": 615
+}

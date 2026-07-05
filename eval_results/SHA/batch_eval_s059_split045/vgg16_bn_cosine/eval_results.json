@@ -1,0 +1,18 @@
+{
+  "ok": true,
+  "backbone": "vgg16_bn",
+  "dir": "vgg16_bn_cosine",
+  "checkpoint": "outputs/SHA/vgg16_bn_cosine/best_checkpoint.pth",
+  "checkpoint_name": "best_checkpoint.pth",
+  "eval_epoch": 385,
+  "eval_mae": 53.005494505494504,
+  "eval_mse": 87.14850909431921,
+  "returncode": 0,
+  "error": null,
+  "log_path": "eval_results/SHA/batch_eval_s059_split045/vgg16_bn_cosine/eval_log.txt",
+  "evaluated_at": "2026-06-11T16:39:17",
+  "train_best_mae": 53.20879120879121,
+  "train_best_mse": 87.74976910523456,
+  "best_epoch": 385,
+  "checkpoint_epoch": 385
+}

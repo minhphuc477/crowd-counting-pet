@@ -1,0 +1,19 @@
+{
+  "epoch": 220,
+  "eval_mae": 114.47710565158299,
+  "eval_mse": 144.31728638763278,
+  "pred_cnt": 525.2353467836484,
+  "gt_cnt": 433.3076923076923,
+  "checkpoint": "outputs/SHA/convnextv2_base_gt_split_fixed/best_checkpoint.pth",
+  "eval_model": "model_ema",
+  "eval_protocol": "pet",
+  "tta_flip": true,
+  "tta_scales": [
+    0.9,
+    1.0,
+    1.1
+  ],
+  "eval_nms_radius": 0.0,
+  "eval_branch_gate": "none",
+  "eval_soft_split_gate": "none"
+}

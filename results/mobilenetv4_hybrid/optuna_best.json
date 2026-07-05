@@ -1,0 +1,20 @@
+{
+  "backbone": "mobilenetv4_hybrid",
+  "dataset_file": "SHA",
+  "trials": 5,
+  "trials_completed": 5,
+  "seed_aggregate": "mean",
+  "extra_args": "--epochs 150 --patch_size 256",
+  "best_value": 69.42857142857143,
+  "best_params": {
+    "lr": 4.685413168736526e-06,
+    "lr_backbone": 6.721092055999842e-05,
+    "batch_size": 8,
+    "warmup": 9,
+    "score_threshold": 0.5969646883982219
+  },
+  "best_trial_number": 0,
+  "per_seed_mae": [
+    69.42857142857143
+  ]
+}

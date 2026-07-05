@@ -1,0 +1,26 @@
+Not using distributed mode
+Namespace(lr=1.7482588433323795e-05, lr_backbone=4.176737979328548e-05, batch_size=4, weight_decay=0.0001, epochs=1500, lr_scheduler='warmup_hold_cosine', warmup_epochs=7, hold_epochs=-1, min_lr=1e-07, clip_max_norm=0.1, backbone='fastvit_tiny', list_backbones=False, no_pretrained_backbone=False, position_embedding='sine', dec_layers=2, dim_feedforward=512, hidden_dim=256, dropout=0.0, nheads=8, set_cost_class=1, set_cost_point=0.05, ce_loss_coef=1.0, point_loss_coef=5.0, eos_coef=0.5, negative_loss_coef=0.1, non_div_loss_coef=0.25, quadtree_loss_coef=0.1, quadtree_prior_coef=0.025, split_count_threshold=2, split_pos_weight=1.0, split_threshold=0.5, split_threshold_quantile=0.55, score_threshold=0.5138753315417147, dataset_file='SHA', data_path='', patch_size=256, crop_attempts=8, min_crop_points=1, output_dir='results/fastvit_tiny/final_train', device='cuda', seed=7, resume='outputs/SHA/results/fastvit_tiny/final_train/best_checkpoint.pth', start_epoch=0, num_workers=2, eval_freq=5, syn_bn=0, world_size=1, dist_url='env://', distributed=False, enc_layers=4, sparse_stride=8, dense_stride=4, override_split_threshold=None, override_split_threshold_quantile=None, override_score_threshold=None, vis_dir='')
+params: 9.805161
+Test:  [  0/182]  eta: 0:01:01  mae: 1.0000 (1.0000)  time: 0.3365  data: 0.0397  max mem: 1710
+Test:  [ 10/182]  eta: 0:00:11  mae: 58.0000 (104.2727)  time: 0.0697  data: 0.0077  max mem: 1718
+Test:  [ 20/182]  eta: 0:00:09  mae: 92.0000 (115.0000)  time: 0.0415  data: 0.0029  max mem: 1718
+Test:  [ 30/182]  eta: 0:00:07  mae: 73.0000 (102.4194)  time: 0.0388  data: 0.0013  max mem: 1718
+Test:  [ 40/182]  eta: 0:00:06  mae: 21.0000 (96.9756)  time: 0.0379  data: 0.0014  max mem: 2276
+Test:  [ 50/182]  eta: 0:00:05  mae: 24.0000 (85.3922)  time: 0.0329  data: 0.0013  max mem: 2276
+Test:  [ 60/182]  eta: 0:00:05  mae: 22.0000 (77.2951)  time: 0.0289  data: 0.0012  max mem: 2276
+Test:  [ 70/182]  eta: 0:00:04  mae: 51.0000 (74.7465)  time: 0.0323  data: 0.0013  max mem: 2276
+Test:  [ 80/182]  eta: 0:00:04  mae: 26.0000 (70.0864)  time: 0.0356  data: 0.0014  max mem: 2276
+Test:  [ 90/182]  eta: 0:00:03  mae: 26.0000 (72.5165)  time: 0.0374  data: 0.0015  max mem: 2276
+Test:  [100/182]  eta: 0:00:03  mae: 36.0000 (70.1584)  time: 0.0411  data: 0.0015  max mem: 2276
+Test:  [110/182]  eta: 0:00:02  mae: 36.0000 (68.7477)  time: 0.0399  data: 0.0014  max mem: 2276
+Test:  [120/182]  eta: 0:00:02  mae: 43.0000 (69.0992)  time: 0.0373  data: 0.0014  max mem: 2276
+Test:  [130/182]  eta: 0:00:02  mae: 43.0000 (68.7939)  time: 0.0396  data: 0.0015  max mem: 2276
+Test:  [140/182]  eta: 0:00:01  mae: 35.0000 (67.9645)  time: 0.0372  data: 0.0015  max mem: 2276
+Test:  [150/182]  eta: 0:00:01  mae: 41.0000 (71.4636)  time: 0.0337  data: 0.0014  max mem: 2276
+Test:  [160/182]  eta: 0:00:00  mae: 41.0000 (72.0373)  time: 0.0349  data: 0.0014  max mem: 2276
+Test:  [170/182]  eta: 0:00:00  mae: 26.0000 (70.1696)  time: 0.0382  data: 0.0015  max mem: 2276
+Test:  [180/182]  eta: 0:00:00  mae: 22.0000 (72.0663)  time: 0.0348  data: 0.0014  max mem: 2276
+Test:  [181/182]  eta: 0:00:00  mae: 26.0000 (72.5330)  time: 0.0339  data: 0.0014  max mem: 2276
+Test: Total time: 0:00:06 (0.0383 s / it)
+
+epoch: 315, mae: 72.53296703296704, mse: 120.7419598943171

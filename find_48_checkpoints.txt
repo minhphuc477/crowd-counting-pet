@@ -1,0 +1,2372 @@
+checkpoint: outputs/SHA/convnextv2_base_classprior_apg_papergt_seed42/best_checkpoint.pth
+checkpoint_epoch: 25
+checkpoint_best_mae: 361.3956043956044
+  resume: 
+  apg_loss_coef: 1.0
+  qd_apg_loss_coef: 0.0
+best_eval_results: epoch=25, mae=361.3956043956044, mse=483.26226583752384, pred_cnt=279.53846153846155, gt_cnt=433.3076923076923, pred/gt=0.645
+latest_eval_results: epoch=50, mae=5172.626373626374, mse=5691.361927817154, pred_cnt=5605.934065934066, gt_cnt=433.3076923076923, pred/gt=12.938
+----
+checkpoint: outputs/SHA/vgg16_bn_apg_gtqd_lc_ft_seed42/best_checkpoint.pth
+checkpoint_epoch: 90
+checkpoint_best_mae: 52.83516483516483
+  resume: outputs/SHA/vgg16_bn_drop700_apg_seed42/best_checkpoint.pth
+  apg_loss_coef: 0.005
+  qd_apg_loss_coef: 0.01
+best_eval_results: epoch=90, mae=52.83516483516483, mse=86.64288205611014, pred_cnt=434.45054945054943, gt_cnt=433.3076923076923, pred/gt=1.003
+latest_eval_results: epoch=175, mae=55.489010989010985, mse=88.54721842107685, pred_cnt=442.9725274725275, gt_cnt=433.3076923076923, pred/gt=1.022
+----
+checkpoint: outputs/SHA/convnextv2_base_rccfpn_focal075_raw_seed42/best_checkpoint.pth
+checkpoint_epoch: 100
+checkpoint_best_mae: 8715.901098901099
+  resume: 
+  apg_loss_coef: 0.5
+  qd_apg_loss_coef: 0.0
+best_eval_results: epoch=100, mae=8715.901098901099, mse=9528.912182071275, pred_cnt=9149.208791208792, gt_cnt=433.3076923076923, pred/gt=21.115
+latest_eval_results: epoch=100, mae=8715.901098901099, mse=9528.912182071275, pred_cnt=9149.208791208792, gt_cnt=433.3076923076923, pred/gt=21.115
+----
+checkpoint: outputs/SHA/vgg16_bn_scratch_apglc_countcal_v3_seed42/best_checkpoint.pth
+checkpoint_epoch: 10
+checkpoint_best_mae: 106.91758241758242
+  resume: 
+  apg_loss_coef: 1.0
+  qd_apg_loss_coef: 0.0
+best_eval_results: epoch=10, mae=106.91758241758242, mse=166.59784110047963, pred_cnt=391.5659340659341, gt_cnt=433.3076923076923, pred/gt=0.904
+latest_eval_results: epoch=30, mae=213.16483516483515, mse=259.14194845788563, pred_cnt=634.0989010989011, gt_cnt=433.3076923076923, pred/gt=1.463
+----
+checkpoint: outputs/SHA/convnextv2_base_seed_42/best_checkpoint.pth
+checkpoint_epoch: 15
+checkpoint_best_mae: 163.36813354492188
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/vgg16_bn_drop700_apg_lc_s059_seed42/best_checkpoint.pth
+checkpoint_epoch: 475
+checkpoint_best_mae: 53.543956043956044
+  resume: 
+  apg_loss_coef: 0.02
+  qd_apg_loss_coef: 0.0
+best_eval_results: epoch=475, mae=53.543956043956044, mse=85.34541967405549, pred_cnt=436.35714285714283, gt_cnt=433.3076923076923, pred/gt=1.007
+latest_eval_results: epoch=1495, mae=58.39010989010989, mse=94.71086712541677, pred_cnt=443.6098901098901, gt_cnt=433.3076923076923, pred/gt=1.024
+----
+checkpoint: outputs/SHA/convnextv2_base_rccfpn_ce_safe_apg_seed42/best_checkpoint.pth
+checkpoint_epoch: 170
+checkpoint_best_mae: 127.84065934065934
+  resume: 
+  apg_loss_coef: 0.1
+  qd_apg_loss_coef: 0.0
+best_eval_results: epoch=170, mae=127.84065934065934, mse=218.04759284902173, pred_cnt=307.74175824175825, gt_cnt=433.3076923076923, pred/gt=0.710
+latest_eval_results: epoch=225, mae=136.36813186813185, mse=224.69272057928063, pred_cnt=299.18131868131866, gt_cnt=433.3076923076923, pred/gt=0.690
+----
+checkpoint: outputs/SHA/vgg16_bn_drop700_apg_lc_consistency_seed42/best_checkpoint.pth
+checkpoint_epoch: 410
+checkpoint_best_mae: 53.54945054945055
+  resume: 
+  apg_loss_coef: 0.02
+  qd_apg_loss_coef: 0.0
+best_eval_results: epoch=410, mae=53.54945054945055, mse=85.7583494797708, pred_cnt=441.3076923076923, gt_cnt=433.3076923076923, pred/gt=1.018
+latest_eval_results: epoch=1495, mae=57.76923076923077, mse=90.94817990796423, pred_cnt=448.75824175824175, gt_cnt=433.3076923076923, pred/gt=1.036
+----
+checkpoint: outputs/SHA/vgg16_bn_apglc_inheritance_only_ft_seed42/best_checkpoint.pth
+checkpoint_epoch: 2
+checkpoint_best_mae: 51.934065934065934
+  resume: outputs/SHA/vgg16_bn_drop700_apg_lc_seed42/best_checkpoint.pth
+  apg_loss_coef: 0.0
+  qd_apg_loss_coef: 0.0
+best_eval_results: epoch=2, mae=51.934065934065934, mse=80.74175356796984, pred_cnt=444.31868131868134, gt_cnt=433.3076923076923, pred/gt=1.025
+latest_eval_results: epoch=60, mae=60.60989010989011, mse=92.10758759357283, pred_cnt=458.44505494505495, gt_cnt=433.3076923076923, pred/gt=1.058
+----
+checkpoint: outputs/SHA/vgg16_bn_apglc_warmapg_late_countreg_seed42/best_checkpoint.pth
+checkpoint_epoch: 10
+checkpoint_best_mae: 97.65384615384616
+  resume: 
+  apg_loss_coef: 1.0
+  qd_apg_loss_coef: 0.0
+best_eval_results: epoch=10, mae=97.65384615384616, mse=144.79832507682866, pred_cnt=420.2032967032967, gt_cnt=433.3076923076923, pred/gt=0.970
+latest_eval_results: epoch=50, mae=353.8791208791209, mse=412.2687696897965, pred_cnt=785.7032967032967, gt_cnt=433.3076923076923, pred/gt=1.813
+----
+checkpoint: outputs/SHA/vgg16_bn_inherit_density_counthead_topk_seed42/best_checkpoint.pth
+checkpoint_epoch: 2
+checkpoint_best_mae: 212.14285714285714
+  resume: outputs/SHA/vgg16_bn_apglc_inheritance_only_ft_seed42/best_checkpoint.pth
+  apg_loss_coef: 0.0
+  qd_apg_loss_coef: 0.0
+best_eval_results: epoch=2, mae=212.14285714285714, mse=337.40302636135647, pred_cnt=320.68131868131866, gt_cnt=433.3076923076923, pred/gt=0.740
+latest_eval_results: epoch=2, mae=212.14285714285714, mse=337.40302636135647, pred_cnt=320.68131868131866, gt_cnt=433.3076923076923, pred/gt=0.740
+----
+checkpoint: outputs/SHA/vgg16_bn_apglc_density_counthead_ft_pretrained_seed42/best_checkpoint.pth
+checkpoint_epoch: 12
+checkpoint_best_mae: 53.68681318681319
+  resume: outputs/SHA/vgg16_bn_drop700_apg_lc_seed42/best_checkpoint.pth
+  apg_loss_coef: 0.02
+  qd_apg_loss_coef: 0.0
+best_eval_results: epoch=12, mae=53.68681318681319, mse=85.26020289561947, pred_cnt=434.15934065934067, gt_cnt=433.3076923076923, pred/gt=1.002, loc_f1_large=0.4128, loc_f1_small=0.1927
+latest_eval_results: epoch=118, mae=55.13186813186813, mse=87.27290782115857, pred_cnt=440.38461538461536, gt_cnt=433.3076923076923, pred/gt=1.016, loc_f1_large=0.4158, loc_f1_small=0.1957
+----
+checkpoint: outputs/SHA/vgg16_bn_drop700_apg_lc_halo2_crop8_ema_seed42/best_checkpoint.pth
+checkpoint_epoch: 535
+checkpoint_best_mae: 55.752747252747255
+  resume: 
+  apg_loss_coef: 0.02
+  qd_apg_loss_coef: 0.0
+best_eval_results: epoch=535, mae=55.752747252747255, mse=86.28177070531154, pred_cnt=443.0274725274725, gt_cnt=433.3076923076923, pred/gt=1.022
+latest_eval_results: epoch=890, mae=57.98351648351648, mse=90.14685820346732, pred_cnt=442.11538461538464, gt_cnt=433.3076923076923, pred/gt=1.020
+----
+checkpoint: outputs/SHA/convnextv2_base_petfpn_routedapg_seed42/best_checkpoint.pth
+checkpoint_epoch: 35
+checkpoint_best_mae: 270.032967032967
+  resume: 
+  apg_loss_coef: 0.0
+  qd_apg_loss_coef: 0.0
+best_eval_results: epoch=35, mae=270.032967032967, mse=362.63439342773773, pred_cnt=215.13186813186815, gt_cnt=433.3076923076923, pred/gt=0.496
+latest_eval_results: epoch=65, mae=618.5769230769231, mse=1236.1506296244318, pred_cnt=952.2472527472528, gt_cnt=433.3076923076923, pred/gt=2.198
+----
+checkpoint: outputs/SHA/vgg16_bn_quadctx_lite/best_checkpoint.pth
+checkpoint_epoch: 150
+checkpoint_best_mae: 333.3241758241758
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+best_eval_results: epoch=150, mae=333.3241758241758, mse=465.86159690677175, pred_cnt=120.53296703296704, gt_cnt=433.9010989010989, pred/gt=0.278
+latest_eval_results: epoch=265, mae=335.5659340659341, mse=466.3522874865696, pred_cnt=124.60989010989012, gt_cnt=433.9010989010989, pred/gt=0.287
+----
+checkpoint: outputs/SHA/convnextv2_base_lite_fpn_count/best_checkpoint.pth
+checkpoint_epoch: 150
+checkpoint_best_mae: 330.61538461538464
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+best_eval_results: epoch=150, mae=330.61538461538464, mse=465.34000331082507, pred_cnt=None, gt_cnt=None
+latest_eval_results: epoch=275, mae=331.2362637362637, mse=465.3634465260861, pred_cnt=None, gt_cnt=None
+----
+checkpoint: outputs/SHA/vgg16_apglc_safe_ft_seed42/best_checkpoint.pth
+checkpoint_epoch: 2
+checkpoint_best_mae: 51.66483516483517
+  resume: outputs/SHA/vgg16_bn_drop700_apg_lc_seed42/best_checkpoint.pth
+  apg_loss_coef: 0.02
+  qd_apg_loss_coef: 0.0
+best_eval_results: epoch=2, mae=51.66483516483517, mse=80.7777781976544, pred_cnt=443.1263736263736, gt_cnt=433.3076923076923, pred/gt=1.023
+latest_eval_results: epoch=98, mae=58.467032967032964, mse=89.07747584713378, pred_cnt=458.8076923076923, gt_cnt=433.3076923076923, pred/gt=1.059
+----
+checkpoint: outputs/SHA/outputs/SHA/vgg16_bn_step_ema_seed7/best_checkpoint.pth
+checkpoint_epoch: 1070
+checkpoint_best_mae: 61.51648351648352
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+best_eval_results: epoch=1070, mae=61.51648351648352, mse=98.97929631443688, pred_cnt=461.65934065934067, gt_cnt=433.9010989010989, pred/gt=1.064
+latest_eval_results: epoch=1380, mae=65.71428571428571, mse=109.62979662341944, pred_cnt=460.8021978021978, gt_cnt=433.9010989010989, pred/gt=1.062
+----
+checkpoint: outputs/SHA/outputs/SHA/vgg16_bn_step_drop700/best_checkpoint.pth
+checkpoint_epoch: 370
+checkpoint_best_mae: 51.62637362637363
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+best_eval_results: epoch=370, mae=51.62637362637363, mse=84.04871690386959, pred_cnt=419.4175824175824, gt_cnt=433.9010989010989, pred/gt=0.967
+latest_eval_results: epoch=1370, mae=64.24175824175825, mse=103.06362059480489, pred_cnt=461.5054945054945, gt_cnt=433.9010989010989, pred/gt=1.064
+----
+checkpoint: outputs/SHA/pet_model_1/best_checkpoint.pth
+checkpoint_epoch: 1
+checkpoint_best_mae: 376.912109375
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/vgg16_bn_apglc_counthead_only_ft_seed42/best_checkpoint.pth
+checkpoint_epoch: 20
+checkpoint_best_mae: 54.94505494505494
+  resume: outputs/SHA/vgg16_bn_drop700_apg_lc_seed42/best_checkpoint.pth
+  apg_loss_coef: 0.0
+  qd_apg_loss_coef: 0.0
+best_eval_results: epoch=20, mae=54.94505494505494, mse=100.68245151939857, pred_cnt=416.72527472527474, gt_cnt=433.3076923076923, pred/gt=0.962, loc_f1_large=0.4062, loc_f1_small=0.1864
+latest_eval_results: epoch=48, mae=61.395604395604394, mse=99.4853791234705, pred_cnt=456.85714285714283, gt_cnt=433.3076923076923, pred/gt=1.054, loc_f1_large=0.4157, loc_f1_small=0.1946
+----
+checkpoint: outputs/SHA/pet_msff_ca_full_ema01/best_checkpoint.pth
+checkpoint_epoch: 5
+checkpoint_best_mae: 409.34615384615387
+  resume: 
+  apg_loss_coef: 0.0
+  qd_apg_loss_coef: 0.0
+best_eval_results: epoch=5, mae=409.34615384615387, mse=525.4407830417397, pred_cnt=24.423076923076923, gt_cnt=433.3076923076923, pred/gt=0.056
+latest_eval_results: epoch=5, mae=409.34615384615387, mse=525.4407830417397, pred_cnt=24.423076923076923, gt_cnt=433.3076923076923, pred/gt=0.056
+----
+checkpoint: outputs/SHA/vgg16_bn_drop700_apg_lc_globalctx_seed42/best_checkpoint.pth
+checkpoint_epoch: 260
+checkpoint_best_mae: 332.24725274725273
+  resume: 
+  apg_loss_coef: 0.02
+  qd_apg_loss_coef: 0.0
+best_eval_results: epoch=260, mae=332.24725274725273, mse=465.66516881827164, pred_cnt=112.29120879120879, gt_cnt=433.3076923076923, pred/gt=0.259
+latest_eval_results: epoch=310, mae=338.8736263736264, mse=467.4628092393854, pred_cnt=130.5989010989011, gt_cnt=433.3076923076923, pred/gt=0.301
+----
+checkpoint: outputs/SHA/vgg16_bn_apglc_density_counthead_seed42/best_checkpoint.pth
+checkpoint_epoch: 2
+checkpoint_best_mae: 2815.164835164835
+  resume: 
+  apg_loss_coef: 1.0
+  qd_apg_loss_coef: 0.0
+best_eval_results: epoch=2, mae=2815.164835164835, mse=3144.8536994920432, pred_cnt=3248.4725274725274, gt_cnt=433.3076923076923, pred/gt=7.497
+latest_eval_results: epoch=2, mae=2815.164835164835, mse=3144.8536994920432, pred_cnt=3248.4725274725274, gt_cnt=433.3076923076923, pred/gt=7.497
+----
+checkpoint: outputs/SHA/vgg16_bn_apglc_counthead_stable_ft_seed42/best_checkpoint.pth
+checkpoint_epoch: 2
+checkpoint_best_mae: 1884.2417582417581
+  resume: outputs/SHA/vgg16_bn_drop700_apg_lc_seed42/best_checkpoint.pth
+  apg_loss_coef: 1.0
+  qd_apg_loss_coef: 0.0
+best_eval_results: epoch=2, mae=1884.2417582417581, mse=2249.2061444473647, pred_cnt=2317.5494505494507, gt_cnt=433.3076923076923, pred/gt=5.349
+latest_eval_results: epoch=2, mae=1884.2417582417581, mse=2249.2061444473647, pred_cnt=2317.5494505494507, gt_cnt=433.3076923076923, pred/gt=5.349
+----
+checkpoint: outputs/SHA/vgg16_bn_drop700_qdapg_s055_seed42/best_checkpoint.pth
+checkpoint_epoch: 270
+checkpoint_best_mae: 53.54945054945055
+  resume: 
+  apg_loss_coef: 0.0
+  qd_apg_loss_coef: 0.05
+best_eval_results: epoch=270, mae=53.54945054945055, mse=86.66906871847344, pred_cnt=433.7912087912088, gt_cnt=433.3076923076923, pred/gt=1.001
+latest_eval_results: epoch=405, mae=71.01098901098901, mse=114.49046219692684, pred_cnt=465.2967032967033, gt_cnt=433.3076923076923, pred/gt=1.074
+----
+checkpoint: outputs/SHA/best_checkpoint.pth
+checkpoint_epoch: 275
+checkpoint_best_mae: 54.13186813186813
+  resume: 
+  apg_loss_coef: 0.0
+  qd_apg_loss_coef: 0.0
+best_eval_results: epoch=275, mae=54.13186813186813, mse=91.76618640345129, pred_cnt=419.0879120879121, gt_cnt=433.3076923076923, pred/gt=0.967
+latest_eval_results: epoch=1495, mae=58.36813186813187, mse=98.68868245121142, pred_cnt=431.489010989011, gt_cnt=433.3076923076923, pred/gt=0.996
+----
+checkpoint: outputs/SHA/vgg16_bn_apglc_density_counthead_ft_from_best_seed42/best_checkpoint.pth
+checkpoint_epoch: 62
+checkpoint_best_mae: 52.27472527472528
+  resume: outputs/SHA/vgg16_bn_drop700_apg_lc_seed42/best_checkpoint.pth
+  apg_loss_coef: 0.02
+  qd_apg_loss_coef: 0.0
+best_eval_results: epoch=62, mae=52.27472527472528, mse=84.19724356637707, pred_cnt=431.13186813186815, gt_cnt=433.3076923076923, pred/gt=0.995
+latest_eval_results: epoch=78, mae=58.785714285714285, mse=93.04167210047736, pred_cnt=454.25824175824175, gt_cnt=433.3076923076923, pred/gt=1.048
+----
+checkpoint: outputs/SHA/vgg16_bn_apglc_foreground_suppress_apgwarm_seed42/best_checkpoint.pth
+checkpoint_epoch: 25
+checkpoint_best_mae: 98.10989010989012
+  resume: 
+  apg_loss_coef: 1.0
+  qd_apg_loss_coef: 0.0
+best_eval_results: epoch=25, mae=98.10989010989012, mse=135.22143012420466, pred_cnt=462.967032967033, gt_cnt=433.3076923076923, pred/gt=1.068
+latest_eval_results: epoch=255, mae=329.7142857142857, mse=408.3696074192303, pred_cnt=759.5604395604396, gt_cnt=433.3076923076923, pred/gt=1.753
+----
+checkpoint: outputs/SHA/vgg16_bn_apglc_inheritance_ft_seed42/best_checkpoint.pth
+checkpoint_epoch: 10
+checkpoint_best_mae: 105.18681318681318
+  resume: outputs/SHA/vgg16_bn_drop700_apg_lc_seed42/best_checkpoint.pth
+  apg_loss_coef: 0.25
+  qd_apg_loss_coef: 0.0
+best_eval_results: epoch=10, mae=105.18681318681318, mse=136.82739588158603, pred_cnt=526.989010989011, gt_cnt=433.3076923076923, pred/gt=1.216
+latest_eval_results: epoch=10, mae=105.18681318681318, mse=136.82739588158603, pred_cnt=526.989010989011, gt_cnt=433.3076923076923, pred/gt=1.216
+----
+checkpoint: outputs/SHA/convnextv2_base_lite_fpn/best_checkpoint.pth
+checkpoint_epoch: 30
+checkpoint_best_mae: 73.21428571428571
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/convnextv2_base_fpn_gelu_prenorm_d3/best_checkpoint.pth
+checkpoint_epoch: 365
+checkpoint_best_mae: 57.87362637362637
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+best_eval_results: epoch=365, mae=57.87362637362637, mse=97.849767107934, pred_cnt=442.7307692307692, gt_cnt=433.9010989010989, pred/gt=1.020
+latest_eval_results: epoch=835, mae=65.12637362637362, mse=115.62950020942458, pred_cnt=446.34615384615387, gt_cnt=433.9010989010989, pred/gt=1.029
+----
+checkpoint: outputs/SHA/vgg16_bn_apglc_count_densitymap_seed42/best_checkpoint.pth
+checkpoint_epoch: 115
+checkpoint_best_mae: 459.31868131868134
+  resume: 
+  apg_loss_coef: 1.0
+  qd_apg_loss_coef: 0.0
+best_eval_results: epoch=115, mae=459.31868131868134, mse=545.1070264908262, pred_cnt=887.6153846153846, gt_cnt=433.3076923076923, pred/gt=2.048
+latest_eval_results: epoch=165, mae=1000.2857142857143, mse=1157.9693954846653, pred_cnt=1433.5934065934066, gt_cnt=433.3076923076923, pred/gt=3.308
+----
+checkpoint: outputs/SHA/vgg16_bn_scratch_apglc_countcal_seed42/best_checkpoint.pth
+checkpoint_epoch: 680
+checkpoint_best_mae: 71.35164835164835
+  resume: 
+  apg_loss_coef: 1.0
+  qd_apg_loss_coef: 0.0
+best_eval_results: epoch=680, mae=71.35164835164835, mse=103.10253085221463, pred_cnt=385.1098901098901, gt_cnt=433.3076923076923, pred/gt=0.889
+latest_eval_results: epoch=1495, mae=83.61538461538461, mse=118.71991232483951, pred_cnt=355.35164835164835, gt_cnt=433.3076923076923, pred/gt=0.820
+----
+checkpoint: outputs/SHA/ablate_shift_masked/best_checkpoint.pth
+checkpoint_epoch: 74
+checkpoint_best_mae: 113.63187408447266
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/vgg16_bn_scratch_apglc_countcal_densecurr_seed42/best_checkpoint.pth
+checkpoint_epoch: 25
+checkpoint_best_mae: 188.85714285714286
+  resume: 
+  apg_loss_coef: 1.0
+  qd_apg_loss_coef: 0.0
+best_eval_results: epoch=25, mae=188.85714285714286, mse=285.2130108155333, pred_cnt=338.5824175824176, gt_cnt=433.3076923076923, pred/gt=0.781
+latest_eval_results: epoch=120, mae=273.56043956043953, mse=390.3267580143309, pred_cnt=457.6043956043956, gt_cnt=433.3076923076923, pred/gt=1.056
+----
+checkpoint: outputs/SHA/vgg16_bn_drop700_apg_lc_region_seed42/best_checkpoint.pth
+checkpoint_epoch: 630
+checkpoint_best_mae: 54.84065934065934
+  resume: 
+  apg_loss_coef: 0.02
+  qd_apg_loss_coef: 0.0
+best_eval_results: epoch=630, mae=54.84065934065934, mse=86.51173457849646, pred_cnt=421.15934065934067, gt_cnt=433.3076923076923, pred/gt=0.972
+latest_eval_results: epoch=1000, mae=62.38461538461539, mse=99.1024555866135, pred_cnt=454.7362637362637, gt_cnt=433.3076923076923, pred/gt=1.049
+----
+checkpoint: outputs/SHA/convnextv2_base_fpn_paper/best_checkpoint.pth
+checkpoint_epoch: 295
+checkpoint_best_mae: 56.47802197802198
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+best_eval_results: epoch=295, mae=56.47802197802198, mse=91.6421312485705, pred_cnt=428.34615384615387, gt_cnt=433.9010989010989, pred/gt=0.987
+latest_eval_results: epoch=520, mae=59.005494505494504, mse=102.59048538879077, pred_cnt=430.96153846153845, gt_cnt=433.9010989010989, pred/gt=0.993
+----
+checkpoint: outputs/SHA/paper_vgg16_bn/best_checkpoint.pth
+checkpoint_epoch: 260
+checkpoint_best_mae: 52.956043956043956
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/vgg16_bn_apglc_cbme_late_countreg_seed42/best_checkpoint.pth
+checkpoint_epoch: 10
+checkpoint_best_mae: 113.71978021978022
+  resume: 
+  apg_loss_coef: 1.0
+  qd_apg_loss_coef: 0.0
+best_eval_results: epoch=10, mae=113.71978021978022, mse=178.7303666309784, pred_cnt=352.8626373626374, gt_cnt=433.3076923076923, pred/gt=0.814
+latest_eval_results: epoch=50, mae=255.33516483516485, mse=306.59063697594985, pred_cnt=682.3461538461538, gt_cnt=433.3076923076923, pred/gt=1.575
+----
+checkpoint: outputs/SHA/vgg16_bn_apglc_counthead_delayed_seed42/best_checkpoint.pth
+checkpoint_epoch: 270
+checkpoint_best_mae: 453.8241758241758
+  resume: 
+  apg_loss_coef: 1.0
+  qd_apg_loss_coef: 0.0
+best_eval_results: epoch=270, mae=453.8241758241758, mse=514.207712338673, pred_cnt=887.1318681318681, gt_cnt=433.3076923076923, pred/gt=2.047
+latest_eval_results: epoch=300, mae=496.1263736263736, mse=556.0261427564099, pred_cnt=929.434065934066, gt_cnt=433.3076923076923, pred/gt=2.145
+----
+checkpoint: outputs/SHA/vgg16_bn_drop700_apg_lc_swinenc_crop8_ema_seed42/best_checkpoint.pth
+checkpoint_epoch: 645
+checkpoint_best_mae: 105.86813186813187
+  resume: 
+  apg_loss_coef: 0.02
+  qd_apg_loss_coef: 0.0
+best_eval_results: epoch=645, mae=105.86813186813187, mse=154.91756049412393, pred_cnt=368.7142857142857, gt_cnt=433.3076923076923, pred/gt=0.851
+latest_eval_results: epoch=910, mae=106.61538461538461, mse=157.04272534064603, pred_cnt=363.16483516483515, gt_cnt=433.3076923076923, pred/gt=0.838
+----
+checkpoint: outputs/SHA/vgg16_bn_drop700_apg_lc_seed7/best_checkpoint.pth
+checkpoint_epoch: 540
+checkpoint_best_mae: 53.28021978021978
+  resume: 
+  apg_loss_coef: 0.02
+  qd_apg_loss_coef: 0.0
+best_eval_results: epoch=540, mae=53.28021978021978, mse=84.9046329907662, pred_cnt=418.92857142857144, gt_cnt=433.3076923076923, pred/gt=0.967
+latest_eval_results: epoch=1245, mae=58.895604395604394, mse=96.475442414176, pred_cnt=444.9065934065934, gt_cnt=433.3076923076923, pred/gt=1.027
+----
+checkpoint: outputs/SHA/maxvit_rmlp_tiny_poly/best_checkpoint.pth
+checkpoint_epoch: 124
+checkpoint_best_mae: 60.07143020629883
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/convnextv2_base_SOTA_48/best_checkpoint.pth
+checkpoint_epoch: 14
+checkpoint_best_mae: 73.04945054945055
+  resume: outputs/SHA/convnextv2_base_gt_split_fixed/best_checkpoint.pth
+  apg_loss_coef: 0.0
+  qd_apg_loss_coef: 0.0
+best_eval_results: epoch=14, mae=73.04945054945055, mse=110.68589852310967, pred_cnt=433.2692307692308, gt_cnt=433.3076923076923, pred/gt=1.000
+latest_eval_results: epoch=98, mae=168.17582417582418, mse=293.1029710670836, pred_cnt=307.45054945054943, gt_cnt=433.3076923076923, pred/gt=0.710
+----
+checkpoint: outputs/SHA/vgg16_bn_apglc_drf_late_countreg_seed42/best_checkpoint.pth
+checkpoint_epoch: 5
+checkpoint_best_mae: 1790.2417582417581
+  resume: 
+  apg_loss_coef: 1.0
+  qd_apg_loss_coef: 0.0
+best_eval_results: epoch=5, mae=1790.2417582417581, mse=2136.0829690228447, pred_cnt=2223.5494505494507, gt_cnt=433.3076923076923, pred/gt=5.132
+latest_eval_results: epoch=5, mae=1790.2417582417581, mse=2136.0829690228447, pred_cnt=2223.5494505494507, gt_cnt=433.3076923076923, pred/gt=5.132
+----
+checkpoint: outputs/SHA/ablate_shift/best_checkpoint.pth
+checkpoint_epoch: 16
+checkpoint_best_mae: 114.82418060302734
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/vgg16_bn_baseline/best_checkpoint.pth
+checkpoint_epoch: 385
+checkpoint_best_mae: 52.41208791208791
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/convnextv2_base_gt_split_fixed/best_checkpoint.pth
+checkpoint_epoch: 220
+checkpoint_best_mae: 79.6043956043956
+  resume: 
+  apg_loss_coef: 0.0
+  qd_apg_loss_coef: 0.0
+best_eval_results: epoch=220, mae=79.6043956043956, mse=117.7236940121577, pred_cnt=464.3736263736264, gt_cnt=433.3076923076923, pred/gt=1.072
+latest_eval_results: epoch=1495, mae=90.76373626373626, mse=123.2837564944572, pred_cnt=497.3901098901099, gt_cnt=433.3076923076923, pred/gt=1.148
+----
+checkpoint: outputs/SHA/pet_mae40/best_checkpoint.pth
+checkpoint_epoch: 345
+checkpoint_best_mae: 101.64286041259766
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/convnextv2_base_rccfpn_calibrated_apg_seed42/best_checkpoint.pth
+checkpoint_epoch: 100
+checkpoint_best_mae: 433.3076923076923
+  resume: 
+  apg_loss_coef: 0.25
+  qd_apg_loss_coef: 0.0
+best_eval_results: epoch=100, mae=433.3076923076923, mse=559.1888650654506, pred_cnt=0.0, gt_cnt=433.3076923076923, pred/gt=0.000
+latest_eval_results: epoch=310, mae=433.3076923076923, mse=559.1888650654506, pred_cnt=0.0, gt_cnt=433.3076923076923, pred/gt=0.000
+----
+checkpoint: outputs/SHA/vgg16_bn_drop700_apg_lc_multicrop256_freezebn_ema_seed42/best_checkpoint.pth
+checkpoint_epoch: 2
+checkpoint_best_mae: 50.89010989010989
+  resume: outputs/SHA/vgg16_bn_drop700_apg_lc_seed42/best_checkpoint.pth
+  apg_loss_coef: 0.02
+  qd_apg_loss_coef: 0.0
+best_eval_results: epoch=2, mae=50.89010989010989, mse=79.22363672152784, pred_cnt=430.68131868131866, gt_cnt=433.3076923076923, pred/gt=0.994
+latest_eval_results: epoch=118, mae=55.23076923076923, mse=87.78013242386713, pred_cnt=440.6043956043956, gt_cnt=433.3076923076923, pred/gt=1.017
+----
+checkpoint: outputs/SHA/vgg16_bn_litefpn_ft_seed42/best_checkpoint.pth
+checkpoint_epoch: 580
+checkpoint_best_mae: 67.81868131868131
+  resume: outputs/SHA/vgg16_bn_step_deterministic/best_checkpoint.pth
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+best_eval_results: epoch=580, mae=67.81868131868131, mse=103.40773346640637, pred_cnt=467.66483516483515, gt_cnt=433.3076923076923, pred/gt=1.079
+latest_eval_results: epoch=595, mae=69.78571428571429, mse=105.99380554158253, pred_cnt=470.93956043956047, gt_cnt=433.3076923076923, pred/gt=1.087
+----
+checkpoint: outputs/SHA/vgg16_bn_apglc_late_countreg_seed42/best_checkpoint.pth
+checkpoint_epoch: 590
+checkpoint_best_mae: 52.752747252747255
+  resume: 
+  apg_loss_coef: 0.02
+  qd_apg_loss_coef: 0.0
+best_eval_results: epoch=590, mae=52.752747252747255, mse=83.80455415252382, pred_cnt=437.96153846153845, gt_cnt=433.3076923076923, pred/gt=1.011
+latest_eval_results: epoch=1495, mae=57.7032967032967, mse=92.48403485627507, pred_cnt=449.72527472527474, gt_cnt=433.3076923076923, pred/gt=1.038
+----
+checkpoint: outputs/SHA/vgg16_bn_fair/best_checkpoint.pth
+checkpoint_epoch: 115
+checkpoint_best_mae: 58.395604395604394
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/query_only_long/best_checkpoint.pth
+checkpoint_epoch: 217
+checkpoint_best_mae: 56.41758346557617
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/vgg16_bn_scratch_apglc_countcal_densecurr_apgcal_seed42/best_checkpoint.pth
+checkpoint_epoch: 755
+checkpoint_best_mae: 59.895604395604394
+  resume: 
+  apg_loss_coef: 1.0
+  qd_apg_loss_coef: 0.0
+best_eval_results: epoch=755, mae=59.895604395604394, mse=90.91950914329192, pred_cnt=397.44505494505495, gt_cnt=433.3076923076923, pred/gt=0.917
+latest_eval_results: epoch=960, mae=59.95054945054945, mse=89.16397414715365, pred_cnt=403.5879120879121, gt_cnt=433.3076923076923, pred/gt=0.931
+----
+checkpoint: outputs/SHA/convnextv2_base_apg_ramp_bg_seed42/best_checkpoint.pth
+checkpoint_epoch: 45
+checkpoint_best_mae: 247.67582417582418
+  resume: 
+  apg_loss_coef: 0.5
+  qd_apg_loss_coef: 0.0
+best_eval_results: epoch=45, mae=247.67582417582418, mse=366.54188103060005, pred_cnt=281.2362637362637, gt_cnt=433.3076923076923, pred/gt=0.649
+latest_eval_results: epoch=300, mae=2360.697802197802, mse=2652.923471390561, pred_cnt=2794.0054945054944, gt_cnt=433.3076923076923, pred/gt=6.448
+----
+checkpoint: outputs/SHA/convnextv2_base_petfpn_routedapg_bg_scratch_seed42/best_checkpoint.pth
+checkpoint_epoch: 690
+checkpoint_best_mae: 65.62087912087912
+  resume: 
+  apg_loss_coef: 0.0
+  qd_apg_loss_coef: 0.0
+best_eval_results: epoch=690, mae=65.62087912087912, mse=111.14031820032876, pred_cnt=458.36813186813185, gt_cnt=433.3076923076923, pred/gt=1.058
+latest_eval_results: epoch=1495, mae=76.3956043956044, mse=135.17461235075106, pred_cnt=481.010989010989, gt_cnt=433.3076923076923, pred/gt=1.110
+----
+checkpoint: outputs/SHA/vgg16_bn_drop700_apg_lc_ifi_seed42/best_checkpoint.pth
+checkpoint_epoch: 670
+checkpoint_best_mae: 52.565934065934066
+  resume: 
+  apg_loss_coef: 0.02
+  qd_apg_loss_coef: 0.0
+best_eval_results: epoch=670, mae=52.565934065934066, mse=89.62335718910643, pred_cnt=417.5879120879121, gt_cnt=433.3076923076923, pred/gt=0.964
+latest_eval_results: epoch=1495, mae=60.68681318681319, mse=98.11013658689352, pred_cnt=450.8296703296703, gt_cnt=433.3076923076923, pred/gt=1.040
+----
+checkpoint: outputs/SHA/vgg16_bn_mhf_01_cem/best_checkpoint.pth
+checkpoint_epoch: 270
+checkpoint_best_mae: 55.434065934065934
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+best_eval_results: epoch=270, mae=55.434065934065934, mse=92.97343943062684, pred_cnt=416.7637362637363, gt_cnt=433.9010989010989, pred/gt=0.961
+latest_eval_results: epoch=495, mae=64.9010989010989, mse=101.88783964797697, pred_cnt=462.83516483516485, gt_cnt=433.9010989010989, pred/gt=1.067
+----
+checkpoint: outputs/SHA/vgg16_bn_drop700_apg_lc_gtqd_seed42_long/best_checkpoint.pth
+checkpoint_epoch: 280
+checkpoint_best_mae: 52.28021978021978
+  resume: 
+  apg_loss_coef: 0.025
+  qd_apg_loss_coef: 0.005
+best_eval_results: epoch=280, mae=52.28021978021978, mse=85.10584876790487, pred_cnt=424.25824175824175, gt_cnt=433.3076923076923, pred/gt=0.979
+latest_eval_results: epoch=520, mae=72.93956043956044, mse=113.23550776933982, pred_cnt=480.6208791208791, gt_cnt=433.3076923076923, pred/gt=1.109
+----
+checkpoint: outputs/SHA/vgg16_bn_step_deterministic/best_checkpoint.pth
+checkpoint_epoch: 370
+checkpoint_best_mae: 51.62637362637363
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+best_eval_results: epoch=370, mae=51.62637362637363, mse=84.04871690386959, pred_cnt=419.4175824175824, gt_cnt=433.9010989010989, pred/gt=0.967
+latest_eval_results: epoch=1370, mae=61.88461538461539, mse=107.03550299362777, pred_cnt=445.8956043956044, gt_cnt=433.9010989010989, pred/gt=1.028
+----
+checkpoint: outputs/SHA/vgg16_bn_apglc_density_counthead_scratch_long_seed42/best_checkpoint.pth
+checkpoint_epoch: 8
+checkpoint_best_mae: 940.434065934066
+  resume: 
+  apg_loss_coef: 1.0
+  qd_apg_loss_coef: 0.0
+best_eval_results: epoch=8, mae=940.434065934066, mse=1103.117712129212, pred_cnt=1371.0714285714287, gt_cnt=433.3076923076923, pred/gt=3.164
+latest_eval_results: epoch=10, mae=1151.8186813186812, mse=1343.6934583044267, pred_cnt=1585.1263736263736, gt_cnt=433.3076923076923, pred/gt=3.658
+----
+checkpoint: outputs/SHA/vgg16_bn_drop700_apg_lc_swinenc_masked_crop8_ema_seed42/best_checkpoint.pth
+checkpoint_epoch: 310
+checkpoint_best_mae: 106.58241758241758
+  resume: 
+  apg_loss_coef: 0.02
+  qd_apg_loss_coef: 0.0
+best_eval_results: epoch=310, mae=106.58241758241758, mse=156.24807691124246, pred_cnt=373.6373626373626, gt_cnt=433.3076923076923, pred/gt=0.862
+latest_eval_results: epoch=555, mae=107.61538461538461, mse=157.47258613681106, pred_cnt=369.2967032967033, gt_cnt=433.3076923076923, pred/gt=0.852
+----
+checkpoint: outputs/SHA/pet_cfi_msff_ifi_qdapg/best_checkpoint.pth
+checkpoint_epoch: 530
+checkpoint_best_mae: 61.956043956043956
+  resume: 
+  apg_loss_coef: 0.0
+  qd_apg_loss_coef: 0.05
+best_eval_results: epoch=530, mae=61.956043956043956, mse=98.27590674297463, pred_cnt=442.8021978021978, gt_cnt=433.3076923076923, pred/gt=1.022
+latest_eval_results: epoch=1025, mae=94.71428571428571, mse=136.8756955925925, pred_cnt=497.1098901098901, gt_cnt=433.3076923076923, pred/gt=1.147
+----
+checkpoint: outputs/SHA/swinv2_base_window8_256_base/best_checkpoint.pth
+checkpoint_epoch: 960
+checkpoint_best_mae: 66.31867980957031
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/convnextv2_base_seed_7/best_checkpoint.pth
+checkpoint_epoch: 220
+checkpoint_best_mae: 58.395606994628906
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/vgg16_bn_paper_convsplit_residual_seed42/best_checkpoint.pth
+checkpoint_epoch: 75
+checkpoint_best_mae: 336.5164835164835
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+best_eval_results: epoch=75, mae=336.5164835164835, mse=466.69969401704606, pred_cnt=123.7032967032967, gt_cnt=433.9010989010989, pred/gt=0.285
+latest_eval_results: epoch=80, mae=339.35164835164835, mse=467.7859705952224, pred_cnt=127.95604395604396, gt_cnt=433.9010989010989, pred/gt=0.295
+----
+checkpoint: outputs/SHA/vgg16_bn_drop700_apg_lc_resgc_ft_seed42/best_checkpoint.pth
+checkpoint_epoch: 10
+checkpoint_best_mae: 332.3736263736264
+  resume: outputs/SHA/vgg16_bn_drop700_apg_lc_seed42/best_checkpoint.pth
+  apg_loss_coef: 0.0
+  qd_apg_loss_coef: 0.0
+best_eval_results: epoch=10, mae=332.3736263736264, mse=465.45420331608926, pred_cnt=115.68131868131869, gt_cnt=433.3076923076923, pred/gt=0.267
+latest_eval_results: epoch=15, mae=332.8021978021978, mse=465.6401242104521, pred_cnt=119.0, gt_cnt=433.3076923076923, pred/gt=0.275
+----
+checkpoint: outputs/SHA/vgg16_bn_drop700_apg_seed42/best_checkpoint.pth
+checkpoint_epoch: 475
+checkpoint_best_mae: 52.989010989010985
+  resume: 
+  apg_loss_coef: 0.05
+  qd_apg_loss_coef: None
+best_eval_results: epoch=475, mae=52.989010989010985, mse=82.69651918741371, pred_cnt=443.9120879120879, gt_cnt=433.3076923076923, pred/gt=1.024
+latest_eval_results: epoch=1495, mae=63.57142857142857, mse=99.36966171991163, pred_cnt=462.7142857142857, gt_cnt=433.3076923076923, pred/gt=1.068
+----
+checkpoint: outputs/SHA/vgg16_bn_linear_dec_seed42/best_checkpoint.pth
+checkpoint_epoch: 1185
+checkpoint_best_mae: 52.71978021978022
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+best_eval_results: epoch=1185, mae=52.71978021978022, mse=84.45627648293902, pred_cnt=433.1373626373626, gt_cnt=433.9010989010989, pred/gt=0.998
+latest_eval_results: epoch=1495, mae=67.56043956043956, mse=104.87098300732704, pred_cnt=462.967032967033, gt_cnt=433.9010989010989, pred/gt=1.067
+----
+checkpoint: outputs/SHA/ablate_base/best_checkpoint.pth
+checkpoint_epoch: 250
+checkpoint_best_mae: 53.587913513183594
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/vgg16_bn_apglc_counthead_freezebn_ft_seed42/best_checkpoint.pth
+checkpoint_epoch: 2
+checkpoint_best_mae: 1215.642857142857
+  resume: outputs/SHA/vgg16_bn_drop700_apg_lc_seed42/best_checkpoint.pth
+  apg_loss_coef: 1.0
+  qd_apg_loss_coef: 0.0
+best_eval_results: epoch=2, mae=1215.642857142857, mse=1510.767683830143, pred_cnt=1648.9505494505495, gt_cnt=433.3076923076923, pred/gt=3.805
+latest_eval_results: epoch=2, mae=1215.642857142857, mse=1510.767683830143, pred_cnt=1648.9505494505495, gt_cnt=433.3076923076923, pred/gt=3.805
+----
+checkpoint: outputs/SHA/vgg16_bn_drop700_apg_lc_seed42_mainfix_rerun/best_checkpoint.pth
+checkpoint_epoch: 60
+checkpoint_best_mae: 716.6153846153846
+  resume: 
+  apg_loss_coef: 1.0
+  qd_apg_loss_coef: 0.0
+best_eval_results: epoch=60, mae=716.6153846153846, mse=835.7298514564288, pred_cnt=1149.923076923077, gt_cnt=433.3076923076923, pred/gt=2.654
+latest_eval_results: epoch=80, mae=874.0989010989011, mse=985.9853887422404, pred_cnt=1307.4065934065934, gt_cnt=433.3076923076923, pred/gt=3.017
+----
+checkpoint: outputs/SHA/convnextv2_base_strong/best_checkpoint.pth
+checkpoint_epoch: 135
+checkpoint_best_mae: 58.23626373626374
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/vgg16_bn_apg_lc_repair_seed42/best_checkpoint.pth
+checkpoint_epoch: 90
+checkpoint_best_mae: 53.66483516483517
+  resume: outputs/SHA/vgg16_bn_drop700_apg_seed42/best_checkpoint.pth
+  apg_loss_coef: 0.02
+  qd_apg_loss_coef: None
+best_eval_results: epoch=90, mae=53.66483516483517, mse=87.17933392574334, pred_cnt=436.1043956043956, gt_cnt=433.3076923076923, pred/gt=1.006
+latest_eval_results: epoch=245, mae=61.53846153846154, mse=95.8629401630437, pred_cnt=456.0989010989011, gt_cnt=433.3076923076923, pred/gt=1.053
+----
+checkpoint: outputs/SHA/convnextv2_base_fpn_gelu_prenorm_d2/best_checkpoint.pth
+checkpoint_epoch: 290
+checkpoint_best_mae: 55.0989010989011
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+best_eval_results: epoch=290, mae=55.0989010989011, mse=89.5656797496172, pred_cnt=429.72527472527474, gt_cnt=433.9010989010989, pred/gt=0.990
+latest_eval_results: epoch=715, mae=63.214285714285715, mse=110.74708836993224, pred_cnt=431.07142857142856, gt_cnt=433.9010989010989, pred/gt=0.993
+----
+checkpoint: outputs/SHA/pet_model_expert/best_checkpoint.pth
+checkpoint_epoch: 795
+checkpoint_best_mae: 58.93956043956044
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/vgg16_bn_apg_s055_ft_seed42/best_checkpoint.pth
+checkpoint_epoch: 40
+checkpoint_best_mae: 57.434065934065934
+  resume: outputs/SHA/vgg16_bn_drop700_apg_seed42/best_checkpoint.pth
+  apg_loss_coef: 0.05
+  qd_apg_loss_coef: None
+best_eval_results: epoch=40, mae=57.434065934065934, mse=91.0018415463949, pred_cnt=454.18131868131866, gt_cnt=433.3076923076923, pred/gt=1.048
+latest_eval_results: epoch=395, mae=66.21428571428571, mse=100.9778835539395, pred_cnt=467.85164835164835, gt_cnt=433.3076923076923, pred/gt=1.080
+----
+checkpoint: outputs/SHA/vgg16_bn_apglc_counthead_curriculum_seed42/best_checkpoint.pth
+checkpoint_epoch: 10
+checkpoint_best_mae: 848.032967032967
+  resume: 
+  apg_loss_coef: 1.0
+  qd_apg_loss_coef: 0.0
+best_eval_results: epoch=10, mae=848.032967032967, mse=997.3967874664283, pred_cnt=1281.3406593406594, gt_cnt=433.3076923076923, pred/gt=2.957
+latest_eval_results: epoch=25, mae=1204.967032967033, mse=1366.7676716003596, pred_cnt=1638.2747252747254, gt_cnt=433.3076923076923, pred/gt=3.781
+----
+checkpoint: outputs/SHA/pet_msff_ca_ft_ema/best_checkpoint.pth
+checkpoint_epoch: 5
+checkpoint_best_mae: 56.68131868131868
+  resume: outputs/SHA/best_checkpoint.pth
+  apg_loss_coef: 0.0
+  qd_apg_loss_coef: 0.0
+best_eval_results: epoch=5, mae=56.68131868131868, mse=89.48184173339304, pred_cnt=447.8901098901099, gt_cnt=433.3076923076923, pred/gt=1.034
+latest_eval_results: epoch=15, mae=59.785714285714285, mse=94.26899202358567, pred_cnt=454.0054945054945, gt_cnt=433.3076923076923, pred/gt=1.048
+----
+checkpoint: outputs/SHA/convnextv2_base_papergt_apg_bayes_seed42/best_checkpoint.pth
+checkpoint_epoch: 50
+checkpoint_best_mae: 231.96703296703296
+  resume: 
+  apg_loss_coef: 0.5
+  qd_apg_loss_coef: 0.0
+best_eval_results: epoch=50, mae=231.96703296703296, mse=277.7431218918693, pred_cnt=246.02197802197801, gt_cnt=433.3076923076923, pred/gt=0.568
+latest_eval_results: epoch=75, mae=2078.6923076923076, mse=2345.199459639735, pred_cnt=2512.0, gt_cnt=433.3076923076923, pred/gt=5.797
+----
+checkpoint: outputs/SHA/vgg16_bn_apglc_count_densitymap_safe_seed42/best_checkpoint.pth
+checkpoint_epoch: 210
+checkpoint_best_mae: 470.7637362637363
+  resume: 
+  apg_loss_coef: 1.0
+  qd_apg_loss_coef: 0.0
+best_eval_results: epoch=210, mae=470.7637362637363, mse=536.7626657477766, pred_cnt=903.8956043956044, gt_cnt=433.3076923076923, pred/gt=2.086
+latest_eval_results: epoch=345, mae=595.4560439560439, mse=671.7419580774736, pred_cnt=1028.7637362637363, gt_cnt=433.3076923076923, pred/gt=2.374
+----
+checkpoint: outputs/SHA/results/fastvit_tiny/opt_20260519_023708_trial3/seed_7/best_checkpoint.pth
+checkpoint_epoch: 45
+checkpoint_best_mae: 109.78021978021978
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/fastvit_tiny/opt_20260519_025658_trial4/seed_7/best_checkpoint.pth
+checkpoint_epoch: 50
+checkpoint_best_mae: 118.76373626373626
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/fastvit_tiny/seed_7/best_checkpoint.pth
+checkpoint_epoch: 1110
+checkpoint_best_mae: 67.63186813186813
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/fastvit_tiny/final_train/best_checkpoint.pth
+checkpoint_epoch: 315
+checkpoint_best_mae: 72.53296703296704
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/fastvit_tiny/opt_20260519_021924_trial2/seed_7/best_checkpoint.pth
+checkpoint_epoch: 50
+checkpoint_best_mae: 87.93406593406593
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/fastvit_tiny/opt_20260519_014142_trial0/seed_7/best_checkpoint.pth
+checkpoint_epoch: 55
+checkpoint_best_mae: 118.39010989010988
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/fastvit_tiny/opt_20260519_015927_trial1/seed_7/best_checkpoint.pth
+checkpoint_epoch: 40
+checkpoint_best_mae: 117.65934065934066
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/convnextv2_tiny/opt_20260516_140557_trial1/seed_7/best_checkpoint.pth
+checkpoint_epoch: 90
+checkpoint_best_mae: 60.61538461538461
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/convnextv2_tiny/opt_20260516_145518_trial3/seed_7/best_checkpoint.pth
+checkpoint_epoch: 95
+checkpoint_best_mae: 54.86813186813187
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/convnextv2_tiny/opt_20260516_151902_trial4/seed_7/best_checkpoint.pth
+checkpoint_epoch: 50
+checkpoint_best_mae: 65.44505494505495
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/convnextv2_tiny/final_train/best_checkpoint.pth
+checkpoint_epoch: 150
+checkpoint_best_mae: 55.043956043956044
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/convnextv2_tiny/opt_20260516_143037_trial2/seed_7/best_checkpoint.pth
+checkpoint_epoch: 145
+checkpoint_best_mae: 101.12087912087912
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/convnextv2_tiny/opt_20260516_133951_trial0/seed_7/best_checkpoint.pth
+checkpoint_epoch: 90
+checkpoint_best_mae: 63.69230769230769
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/efficientnet_b1/opt_20260520_122354_trial1/seed_7/best_checkpoint.pth
+checkpoint_epoch: 115
+checkpoint_best_mae: 91.07692307692308
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/efficientnet_b1/opt_20260520_132353_trial4/seed_7/best_checkpoint.pth
+checkpoint_epoch: 70
+checkpoint_best_mae: 77.86813186813187
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/efficientnet_b1/opt_20260520_120222_trial0/seed_7/best_checkpoint.pth
+checkpoint_epoch: 135
+checkpoint_best_mae: 84.26373626373626
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/efficientnet_b1/final_train/best_checkpoint.pth
+checkpoint_epoch: 885
+checkpoint_best_mae: 65.43956043956044
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/efficientnet_b1/opt_20260520_124314_trial2/seed_7/best_checkpoint.pth
+checkpoint_epoch: 85
+checkpoint_best_mae: 79.15934065934066
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/efficientnet_b1/opt_20260520_130224_trial3/seed_7/best_checkpoint.pth
+checkpoint_epoch: 55
+checkpoint_best_mae: 118.86263736263736
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/repvit_small/opt_20260524_005933_trial1/seed_7/best_checkpoint.pth
+checkpoint_epoch: 5
+checkpoint_best_mae: 166.98901098901098
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/repvit_small/opt_20260524_014026_trial3/seed_7/best_checkpoint.pth
+checkpoint_epoch: 90
+checkpoint_best_mae: 75.94505494505495
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/repvit_small/final_train/best_checkpoint.pth
+checkpoint_epoch: 615
+checkpoint_best_mae: 85.36263736263736
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/repvit_small/opt_20260524_012024_trial2/seed_7/best_checkpoint.pth
+checkpoint_epoch: 145
+checkpoint_best_mae: 142.0164835164835
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/repvit_small/opt_20260524_004027_trial0/seed_7/best_checkpoint.pth
+checkpoint_epoch: 130
+checkpoint_best_mae: 158.55494505494505
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/repvit_small/opt_20260524_015951_trial4/seed_7/best_checkpoint.pth
+checkpoint_epoch: 90
+checkpoint_best_mae: 180.5164835164835
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/mobilenetv4_hybrid/opt_20260521_141409_trial4/seed_7/best_checkpoint.pth
+checkpoint_epoch: 125
+checkpoint_best_mae: 73.82417582417582
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/mobilenetv4_hybrid/opt_20260521_133358_trial2/seed_7/best_checkpoint.pth
+checkpoint_epoch: 75
+checkpoint_best_mae: 78.6923076923077
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/mobilenetv4_hybrid/final_train/best_checkpoint.pth
+checkpoint_epoch: 470
+checkpoint_best_mae: 63.494505494505496
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/mobilenetv4_hybrid/opt_20260521_125445_trial0/seed_7/best_checkpoint.pth
+checkpoint_epoch: 145
+checkpoint_best_mae: 69.42857142857143
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/mobilenetv4_hybrid/opt_20260521_131448_trial1/seed_7/best_checkpoint.pth
+checkpoint_epoch: 100
+checkpoint_best_mae: 76.73076923076923
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/mobilenetv4_hybrid/opt_20260521_135357_trial3/seed_7/best_checkpoint.pth
+checkpoint_epoch: 125
+checkpoint_best_mae: 77.08241758241758
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/efficientnet_b0/opt_20260520_083908_trial4/seed_7/best_checkpoint.pth
+checkpoint_epoch: 45
+checkpoint_best_mae: 121.75824175824175
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/efficientnet_b0/opt_20260520_081847_trial3/seed_7/best_checkpoint.pth
+checkpoint_epoch: 90
+checkpoint_best_mae: 91.45054945054945
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/efficientnet_b0/opt_20260520_072223_trial0/seed_7/best_checkpoint.pth
+checkpoint_epoch: 145
+checkpoint_best_mae: 149.74175824175825
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/efficientnet_b0/final_train/best_checkpoint.pth
+checkpoint_epoch: 595
+checkpoint_best_mae: 65.74175824175825
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/efficientnet_b0/opt_20260520_080024_trial2/seed_7/best_checkpoint.pth
+checkpoint_epoch: 105
+checkpoint_best_mae: 83.10989010989012
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/efficientnet_b0/opt_20260520_074056_trial1/seed_7/best_checkpoint.pth
+checkpoint_epoch: 45
+checkpoint_best_mae: 136.76923076923077
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/resnet18/opt_20260520_172851_trial1/seed_7/best_checkpoint.pth
+checkpoint_epoch: 120
+checkpoint_best_mae: 120.52197802197803
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/resnet18/opt_20260520_171030_trial0/seed_7/best_checkpoint.pth
+checkpoint_epoch: 55
+checkpoint_best_mae: 86.65934065934066
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/resnet18/opt_20260520_180618_trial3/seed_7/best_checkpoint.pth
+checkpoint_epoch: 110
+checkpoint_best_mae: 82.82967032967034
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/resnet18/final_train/best_checkpoint.pth
+checkpoint_epoch: 280
+checkpoint_best_mae: 80.57142857142857
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/resnet18/opt_20260520_182507_trial4/seed_7/best_checkpoint.pth
+checkpoint_epoch: 90
+checkpoint_best_mae: 83.82417582417582
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/resnet18/opt_20260520_174834_trial2/seed_7/best_checkpoint.pth
+checkpoint_epoch: 95
+checkpoint_best_mae: 86.95604395604396
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/pvtv2_b1/opt_20260523_062234_trial3/seed_7/best_checkpoint.pth
+checkpoint_epoch: 95
+checkpoint_best_mae: 64.1923076923077
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/pvtv2_b1/final_train/best_checkpoint.pth
+checkpoint_epoch: 135
+checkpoint_best_mae: 63.93956043956044
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/pvtv2_b1/opt_20260523_064204_trial4/seed_7/best_checkpoint.pth
+checkpoint_epoch: 100
+checkpoint_best_mae: 133.8131868131868
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/pvtv2_b1/opt_20260523_060301_trial2/seed_7/best_checkpoint.pth
+checkpoint_epoch: 35
+checkpoint_best_mae: 83.34615384615384
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/pvtv2_b1/opt_20260523_054325_trial1/seed_7/best_checkpoint.pth
+checkpoint_epoch: 120
+checkpoint_best_mae: 66.32967032967034
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/pvtv2_b1/opt_20260523_052101_trial0/seed_7/best_checkpoint.pth
+checkpoint_epoch: 130
+checkpoint_best_mae: 81.48901098901099
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/edgenext_small/opt_20260523_144238_trial0/seed_7/best_checkpoint.pth
+checkpoint_epoch: 85
+checkpoint_best_mae: 62.75824175824176
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/edgenext_small/final_train/best_checkpoint.pth
+checkpoint_epoch: 665
+checkpoint_best_mae: 55.752747252747255
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/edgenext_small/opt_20260523_152241_trial2/seed_7/best_checkpoint.pth
+checkpoint_epoch: 65
+checkpoint_best_mae: 70.54395604395604
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/edgenext_small/opt_20260523_154240_trial3/seed_7/best_checkpoint.pth
+checkpoint_epoch: 135
+checkpoint_best_mae: 61.379120879120876
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/edgenext_small/opt_20260523_160200_trial4/seed_7/best_checkpoint.pth
+checkpoint_epoch: 105
+checkpoint_best_mae: 63.005494505494504
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/edgenext_small/opt_20260523_150329_trial1/seed_7/best_checkpoint.pth
+checkpoint_epoch: 125
+checkpoint_best_mae: 86.8076923076923
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/hgnetv2_small/opt_20260522_204955_trial4/seed_7/best_checkpoint.pth
+checkpoint_epoch: 135
+checkpoint_best_mae: 236.44505494505495
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/hgnetv2_small/opt_20260522_202434_trial3/seed_7/best_checkpoint.pth
+checkpoint_epoch: 70
+checkpoint_best_mae: 103.62637362637362
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/hgnetv2_small/opt_20260521_230310_trial1/seed_7/best_checkpoint.pth
+checkpoint_epoch: 45
+checkpoint_best_mae: 143.82967032967034
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/hgnetv2_small/opt_20260521_224519_trial0/seed_7/best_checkpoint.pth
+checkpoint_epoch: 135
+checkpoint_best_mae: 106.51648351648352
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/hgnetv2_small/final_train/best_checkpoint.pth
+checkpoint_epoch: 805
+checkpoint_best_mae: 93.43956043956044
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/hgnetv2_small/opt_20260522_210759_trial5/seed_7/best_checkpoint.pth
+checkpoint_epoch: 50
+checkpoint_best_mae: 96.64285714285714
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/hgnetv2_small/opt_20260521_232258_trial2/seed_7/best_checkpoint.pth
+checkpoint_epoch: 15
+checkpoint_best_mae: 97.26923076923077
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/fastvit_small/opt_20260519_064916_trial2/seed_7/best_checkpoint.pth
+checkpoint_epoch: 140
+checkpoint_best_mae: 190.75274725274724
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/fastvit_small/opt_20260519_063012_trial1/seed_7/best_checkpoint.pth
+checkpoint_epoch: 110
+checkpoint_best_mae: 132.32967032967034
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/fastvit_small/final_train/best_checkpoint.pth
+checkpoint_epoch: 1090
+checkpoint_best_mae: 73.75824175824175
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/fastvit_small/opt_20260519_072818_trial4/seed_7/best_checkpoint.pth
+checkpoint_epoch: 70
+checkpoint_best_mae: 197.15384615384616
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/fastvit_small/opt_20260519_061058_trial0/seed_7/best_checkpoint.pth
+checkpoint_epoch: 130
+checkpoint_best_mae: 212.66483516483515
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/fastvit_small/opt_20260519_070956_trial3/seed_7/best_checkpoint.pth
+checkpoint_epoch: 100
+checkpoint_best_mae: 142.0989010989011
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/convnextv2_base/opt_20260516_210110_trial2/seed_7/best_checkpoint.pth
+checkpoint_epoch: 120
+checkpoint_best_mae: 69.98901098901099
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/convnextv2_base/seed_7/best_checkpoint.pth
+checkpoint_epoch: 455
+checkpoint_best_mae: 55.36813186813187
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/convnextv2_base/final_train/best_checkpoint.pth
+checkpoint_epoch: 765
+checkpoint_best_mae: 57.66483516483517
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/convnextv2_base/opt_20260516_202155_trial1/seed_7/best_checkpoint.pth
+checkpoint_epoch: 85
+checkpoint_best_mae: 60.84065934065934
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/convnextv2_base/opt_20260516_194251_trial0/seed_7/best_checkpoint.pth
+checkpoint_epoch: 35
+checkpoint_best_mae: 76.56593406593407
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/convnextv2_base/opt_20260516_221741_trial4/seed_7/best_checkpoint.pth
+checkpoint_epoch: 130
+checkpoint_best_mae: 64.52197802197803
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/convnextv2_base/opt_20260516_214114_trial3/seed_7/best_checkpoint.pth
+checkpoint_epoch: 65
+checkpoint_best_mae: 97.62087912087912
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/resnet101/opt_20260521_030826_trial1/seed_7/best_checkpoint.pth
+checkpoint_epoch: 40
+checkpoint_best_mae: 104.70879120879121
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/resnet101/final_train/best_checkpoint.pth
+checkpoint_epoch: 430
+checkpoint_best_mae: 66.62087912087912
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/resnet101/opt_20260521_024625_trial0/seed_7/best_checkpoint.pth
+checkpoint_epoch: 115
+checkpoint_best_mae: 152.2912087912088
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/resnet101/opt_20260521_035438_trial3/seed_7/best_checkpoint.pth
+checkpoint_epoch: 100
+checkpoint_best_mae: 67.42307692307692
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/resnet101/opt_20260521_033025_trial2/seed_7/best_checkpoint.pth
+checkpoint_epoch: 85
+checkpoint_best_mae: 118.61538461538461
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/resnet101/opt_20260521_041636_trial4/seed_7/best_checkpoint.pth
+checkpoint_epoch: 20
+checkpoint_best_mae: 152.91758241758242
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/convnext_base/opt_20260516_060414_trial2/seed_7/best_checkpoint.pth
+checkpoint_epoch: 55
+checkpoint_best_mae: 64.55494505494505
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/convnext_base/seed_7/best_checkpoint.pth
+checkpoint_epoch: 25
+checkpoint_best_mae: 65.97252747252747
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/convnext_base/final_train/best_checkpoint.pth
+checkpoint_epoch: 260
+checkpoint_best_mae: 56.25824175824176
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/convnext_base/opt_20260516_053106_trial1/seed_7/best_checkpoint.pth
+checkpoint_epoch: 75
+checkpoint_best_mae: 88.41758241758242
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/convnext_base/opt_20260516_045802_trial0/seed_7/best_checkpoint.pth
+checkpoint_epoch: 60
+checkpoint_best_mae: 67.82967032967034
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/convnext_base/opt_20260516_071343_trial4/seed_7/best_checkpoint.pth
+checkpoint_epoch: 75
+checkpoint_best_mae: 68.4010989010989
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/convnext_base/opt_20260516_064030_trial3/seed_7/best_checkpoint.pth
+checkpoint_epoch: 75
+checkpoint_best_mae: 115.02197802197803
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/convnext_tiny/opt_20260516_000434_trial2/seed_7/best_checkpoint.pth
+checkpoint_epoch: 105
+checkpoint_best_mae: 61.12637362637363
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/convnext_tiny/opt_20260516_005136_trial4/seed_7/best_checkpoint.pth
+checkpoint_epoch: 115
+checkpoint_best_mae: 60.582417582417584
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/convnext_tiny/seed_7/best_checkpoint.pth
+checkpoint_epoch: 155
+checkpoint_best_mae: 55.16483516483517
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/convnext_tiny/opt_20260516_002912_trial3/seed_7/best_checkpoint.pth
+checkpoint_epoch: 90
+checkpoint_best_mae: 64.95604395604396
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/convnext_tiny/final_train/best_checkpoint.pth
+checkpoint_epoch: 570
+checkpoint_best_mae: 54.862637362637365
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/convnext_tiny/opt_20260515_231837_trial0/seed_7/best_checkpoint.pth
+checkpoint_epoch: 85
+checkpoint_best_mae: 65.97802197802197
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/convnext_tiny/opt_20260515_234100_trial1/seed_7/best_checkpoint.pth
+checkpoint_epoch: 120
+checkpoint_best_mae: 140.7967032967033
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/efficientvit_small/opt_20260519_153947_trial0/seed_7/best_checkpoint.pth
+checkpoint_epoch: 135
+checkpoint_best_mae: 123.1978021978022
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/efficientvit_small/opt_20260519_170330_trial4/seed_7/best_checkpoint.pth
+checkpoint_epoch: 60
+checkpoint_best_mae: 100.41758241758242
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/efficientvit_small/opt_20260519_155844_trial1/seed_7/best_checkpoint.pth
+checkpoint_epoch: 60
+checkpoint_best_mae: 83.16483516483517
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/efficientvit_small/final_train/best_checkpoint.pth
+checkpoint_epoch: 60
+checkpoint_best_mae: 82.17032967032966
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/efficientvit_small/opt_20260519_164222_trial3/seed_7/best_checkpoint.pth
+checkpoint_epoch: 110
+checkpoint_best_mae: 101.37362637362638
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/efficientvit_small/opt_20260519_162029_trial2/seed_7/best_checkpoint.pth
+checkpoint_epoch: 115
+checkpoint_best_mae: 86.36813186813187
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/pvtv2_b0/opt_20260523_013938_trial3/seed_7/best_checkpoint.pth
+checkpoint_epoch: 90
+checkpoint_best_mae: 122.14285714285714
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/pvtv2_b0/opt_20260523_010243_trial1/seed_7/best_checkpoint.pth
+checkpoint_epoch: 90
+checkpoint_best_mae: 77.05494505494505
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/pvtv2_b0/opt_20260523_015817_trial4/seed_7/best_checkpoint.pth
+checkpoint_epoch: 90
+checkpoint_best_mae: 71.0934065934066
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/pvtv2_b0/final_train/best_checkpoint.pth
+checkpoint_epoch: 605
+checkpoint_best_mae: 66.77472527472527
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/pvtv2_b0/opt_20260523_004404_trial0/seed_7/best_checkpoint.pth
+checkpoint_epoch: 80
+checkpoint_best_mae: 94.45054945054945
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/pvtv2_b0/opt_20260523_012105_trial2/seed_7/best_checkpoint.pth
+checkpoint_epoch: 120
+checkpoint_best_mae: 87.56593406593407
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/maxvit_rmlp_tiny/opt_20260518_205924_trial3/seed_7/best_checkpoint.pth
+checkpoint_epoch: 105
+checkpoint_best_mae: 81.77472527472527
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/maxvit_rmlp_tiny/opt_20260518_194522_trial0/seed_7/best_checkpoint.pth
+checkpoint_epoch: 105
+checkpoint_best_mae: 69.68131868131869
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/maxvit_rmlp_tiny/final_train/best_checkpoint.pth
+checkpoint_epoch: 560
+checkpoint_best_mae: 60.70879120879121
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/maxvit_rmlp_tiny/opt_20260518_212240_trial4/seed_7/best_checkpoint.pth
+checkpoint_epoch: 145
+checkpoint_best_mae: 66.93956043956044
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/maxvit_rmlp_tiny/opt_20260518_203202_trial2/seed_7/best_checkpoint.pth
+checkpoint_epoch: 95
+checkpoint_best_mae: 153.9010989010989
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/maxvit_rmlp_tiny/opt_20260518_200836_trial1/seed_7/best_checkpoint.pth
+checkpoint_epoch: 145
+checkpoint_best_mae: 64.84615384615384
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/mobilenetv4_small/opt_20260521_091411_trial3/seed_7/best_checkpoint.pth
+checkpoint_epoch: 115
+checkpoint_best_mae: 74.91758241758242
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/mobilenetv4_small/opt_20260521_085639_trial2/seed_7/best_checkpoint.pth
+checkpoint_epoch: 120
+checkpoint_best_mae: 92.93956043956044
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/mobilenetv4_small/final_train/best_checkpoint.pth
+checkpoint_epoch: 565
+checkpoint_best_mae: 74.35714285714286
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/mobilenetv4_small/opt_20260521_082157_trial0/seed_7/best_checkpoint.pth
+checkpoint_epoch: 115
+checkpoint_best_mae: 107.17032967032966
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/mobilenetv4_small/opt_20260521_093240_trial4/seed_7/best_checkpoint.pth
+checkpoint_epoch: 45
+checkpoint_best_mae: 119.86813186813187
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/mobilenetv4_small/opt_20260521_083922_trial1/seed_7/best_checkpoint.pth
+checkpoint_epoch: 145
+checkpoint_best_mae: 273.04945054945057
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/maxvit_small/opt_20260517_124042_trial2/seed_7/best_checkpoint.pth
+checkpoint_epoch: 135
+checkpoint_best_mae: 196.56593406593407
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/maxvit_small/final_train/best_checkpoint.pth
+checkpoint_epoch: 380
+checkpoint_best_mae: 107.8956043956044
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/maxvit_small/opt_20260517_120823_trial1/seed_7/best_checkpoint.pth
+checkpoint_epoch: 70
+checkpoint_best_mae: 190.82417582417582
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/maxvit_small/opt_20260517_113601_trial0/seed_7/best_checkpoint.pth
+checkpoint_epoch: 145
+checkpoint_best_mae: 146.64835164835165
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/maxvit_small/opt_20260517_130846_trial3/seed_7/best_checkpoint.pth
+checkpoint_epoch: 30
+checkpoint_best_mae: 187.01098901098902
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/maxvit_small/opt_20260517_133642_trial4/seed_7/best_checkpoint.pth
+checkpoint_epoch: 45
+checkpoint_best_mae: 155.92857142857142
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/repvit_tiny/opt_20260523_194944_trial1/seed_7/best_checkpoint.pth
+checkpoint_epoch: 65
+checkpoint_best_mae: 98.50549450549451
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/repvit_tiny/opt_20260523_202937_trial3/seed_7/best_checkpoint.pth
+checkpoint_epoch: 90
+checkpoint_best_mae: 113.45604395604396
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/repvit_tiny/opt_20260523_192846_trial0/seed_7/best_checkpoint.pth
+checkpoint_epoch: 70
+checkpoint_best_mae: 89.83516483516483
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/repvit_tiny/opt_20260523_201045_trial2/seed_7/best_checkpoint.pth
+checkpoint_epoch: 105
+checkpoint_best_mae: 116.12637362637362
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/repvit_tiny/final_train/best_checkpoint.pth
+checkpoint_epoch: 370
+checkpoint_best_mae: 74.44505494505495
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/repvit_tiny/opt_20260523_205038_trial4/seed_7/best_checkpoint.pth
+checkpoint_epoch: 70
+checkpoint_best_mae: 108.57692307692308
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/maxvit_tiny/opt_20260517_055231_trial1/seed_7/best_checkpoint.pth
+checkpoint_epoch: 75
+checkpoint_best_mae: 222.84065934065933
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/maxvit_tiny/opt_20260517_061622_trial2/seed_7/best_checkpoint.pth
+checkpoint_epoch: 75
+checkpoint_best_mae: 162.4945054945055
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/maxvit_tiny/opt_20260517_070735_trial4/seed_7/best_checkpoint.pth
+checkpoint_epoch: 55
+checkpoint_best_mae: 166.5164835164835
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/maxvit_tiny/final_train/best_checkpoint.pth
+checkpoint_epoch: 710
+checkpoint_best_mae: 75.3021978021978
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/maxvit_tiny/opt_20260517_064013_trial3/seed_7/best_checkpoint.pth
+checkpoint_epoch: 25
+checkpoint_best_mae: 180.44505494505495
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/maxvit_tiny/opt_20260517_052830_trial0/seed_7/best_checkpoint.pth
+checkpoint_epoch: 80
+checkpoint_best_mae: 129.1098901098901
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/efficientvit_tiny/opt_20260519_121703_trial4/seed_7/best_checkpoint.pth
+checkpoint_epoch: 55
+checkpoint_best_mae: 102.8021978021978
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/efficientvit_tiny/seed_7/best_checkpoint.pth
+checkpoint_epoch: 540
+checkpoint_best_mae: 87.77472527472527
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/efficientvit_tiny/opt_20260519_110423_trial0/seed_7/best_checkpoint.pth
+checkpoint_epoch: 125
+checkpoint_best_mae: 158.32417582417582
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/efficientvit_tiny/final_train/best_checkpoint.pth
+checkpoint_epoch: 360
+checkpoint_best_mae: 74.31868131868131
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/efficientvit_tiny/opt_20260519_114109_trial2/seed_7/best_checkpoint.pth
+checkpoint_epoch: 135
+checkpoint_best_mae: 130.98901098901098
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/efficientvit_tiny/opt_20260519_112253_trial1/seed_7/best_checkpoint.pth
+checkpoint_epoch: 55
+checkpoint_best_mae: 91.75274725274726
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/efficientvit_tiny/opt_20260519_115907_trial3/seed_7/best_checkpoint.pth
+checkpoint_epoch: 35
+checkpoint_best_mae: 123.31318681318682
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/efficientnetv2_tiny/opt_20260519_210346_trial0/seed_7/best_checkpoint.pth
+checkpoint_epoch: 90
+checkpoint_best_mae: 77.75824175824175
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/efficientnetv2_tiny/opt_20260519_220456_trial3/seed_7/best_checkpoint.pth
+checkpoint_epoch: 110
+checkpoint_best_mae: 97.39010989010988
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/efficientnetv2_tiny/opt_20260519_212405_trial1/seed_7/best_checkpoint.pth
+checkpoint_epoch: 50
+checkpoint_best_mae: 100.27472527472527
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/efficientnetv2_tiny/final_train/best_checkpoint.pth
+checkpoint_epoch: 315
+checkpoint_best_mae: 72.23626373626374
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/efficientnetv2_tiny/opt_20260519_222521_trial4/seed_7/best_checkpoint.pth
+checkpoint_epoch: 80
+checkpoint_best_mae: 191.56593406593407
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/efficientnetv2_tiny/opt_20260519_214430_trial2/seed_7/best_checkpoint.pth
+checkpoint_epoch: 95
+checkpoint_best_mae: 89.95054945054945
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/efficientnetv2_small/opt_20260520_024859_trial2/seed_7/best_checkpoint.pth
+checkpoint_epoch: 85
+checkpoint_best_mae: 135.02197802197801
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/efficientnetv2_small/opt_20260520_020745_trial0/seed_7/best_checkpoint.pth
+checkpoint_epoch: 30
+checkpoint_best_mae: 131.96153846153845
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/efficientnetv2_small/final_train/best_checkpoint.pth
+checkpoint_epoch: 535
+checkpoint_best_mae: 75.04395604395604
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/efficientnetv2_small/opt_20260520_033245_trial4/seed_7/best_checkpoint.pth
+checkpoint_epoch: 40
+checkpoint_best_mae: 184.3901098901099
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/efficientnetv2_small/opt_20260520_030930_trial3/seed_7/best_checkpoint.pth
+checkpoint_epoch: 85
+checkpoint_best_mae: 231.42857142857142
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/efficientnetv2_small/opt_20260520_022823_trial1/seed_7/best_checkpoint.pth
+checkpoint_epoch: 130
+checkpoint_best_mae: 167.0879120879121
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/edgenext_tiny/opt_20260523_101859_trial0/seed_7/best_checkpoint.pth
+checkpoint_epoch: 85
+checkpoint_best_mae: 77.04945054945055
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/edgenext_tiny/final_train/best_checkpoint.pth
+checkpoint_epoch: 340
+checkpoint_best_mae: 67.96153846153847
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/edgenext_tiny/opt_20260523_111423_trial3/seed_7/best_checkpoint.pth
+checkpoint_epoch: 40
+checkpoint_best_mae: 116.2967032967033
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/edgenext_tiny/opt_20260523_105652_trial2/seed_7/best_checkpoint.pth
+checkpoint_epoch: 105
+checkpoint_best_mae: 70.58791208791209
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/edgenext_tiny/opt_20260523_103722_trial1/seed_7/best_checkpoint.pth
+checkpoint_epoch: 110
+checkpoint_best_mae: 71.26373626373626
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/edgenext_tiny/opt_20260523_113150_trial4/seed_7/best_checkpoint.pth
+checkpoint_epoch: 115
+checkpoint_best_mae: 237.64835164835165
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/resnet50/opt_20260520_215219_trial0/seed_7/best_checkpoint.pth
+checkpoint_epoch: 25
+checkpoint_best_mae: 114.67582417582418
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/resnet50/opt_20260520_221339_trial1/seed_7/best_checkpoint.pth
+checkpoint_epoch: 65
+checkpoint_best_mae: 120.5934065934066
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/resnet50/opt_20260520_225544_trial3/seed_7/best_checkpoint.pth
+checkpoint_epoch: 100
+checkpoint_best_mae: 73.42857142857143
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/resnet50/opt_20260520_231505_trial4/seed_7/best_checkpoint.pth
+checkpoint_epoch: 120
+checkpoint_best_mae: 88.5934065934066
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/resnet50/final_train/best_checkpoint.pth
+checkpoint_epoch: 285
+checkpoint_best_mae: 68.18131868131869
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/resnet50/opt_20260520_223443_trial2/seed_7/best_checkpoint.pth
+checkpoint_epoch: 20
+checkpoint_best_mae: 113.12637362637362
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/hgnetv2_tiny/opt_20260521_180126_trial0/seed_7/best_checkpoint.pth
+checkpoint_epoch: 20
+checkpoint_best_mae: 136.98901098901098
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/hgnetv2_tiny/opt_20260521_183758_trial2/seed_7/best_checkpoint.pth
+checkpoint_epoch: 145
+checkpoint_best_mae: 110.46703296703296
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/hgnetv2_tiny/final_train/best_checkpoint.pth
+checkpoint_epoch: 595
+checkpoint_best_mae: 66.51648351648352
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/hgnetv2_tiny/opt_20260521_191701_trial4/seed_7/best_checkpoint.pth
+checkpoint_epoch: 145
+checkpoint_best_mae: 115.96703296703296
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/hgnetv2_tiny/opt_20260521_185750_trial3/seed_7/best_checkpoint.pth
+checkpoint_epoch: 45
+checkpoint_best_mae: 139.37362637362637
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/results/hgnetv2_tiny/opt_20260521_181909_trial1/seed_7/best_checkpoint.pth
+checkpoint_epoch: 95
+checkpoint_best_mae: 75.54395604395604
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/vgg16_bn_scratch_routed_apglc_countcal_v2_seed42/best_checkpoint.pth
+checkpoint_epoch: 45
+checkpoint_best_mae: 70.8076923076923
+  resume: 
+  apg_loss_coef: 0.0
+  qd_apg_loss_coef: 0.0
+best_eval_results: epoch=45, mae=70.8076923076923, mse=109.19628963627689, pred_cnt=437.2912087912088, gt_cnt=433.3076923076923, pred/gt=1.009
+latest_eval_results: epoch=145, mae=152.73626373626374, mse=210.48079445679795, pred_cnt=280.57142857142856, gt_cnt=433.3076923076923, pred/gt=0.648
+----
+checkpoint: outputs/SHA/vgg16_bn_scratch_apglc_countcal_seed42_1 /best_checkpoint.pth
+checkpoint_epoch: 10
+checkpoint_best_mae: 98.85714285714286
+  resume: 
+  apg_loss_coef: 1.0
+  qd_apg_loss_coef: 0.0
+best_eval_results: epoch=10, mae=98.85714285714286, mse=150.45031307144797, pred_cnt=409.34065934065933, gt_cnt=433.3076923076923, pred/gt=0.945
+latest_eval_results: epoch=55, mae=339.65384615384613, mse=392.9087848175619, pred_cnt=771.532967032967, gt_cnt=433.3076923076923, pred/gt=1.781
+----
+checkpoint: outputs/SHA/vgg16_bn_ft_from_51p58_ema_seed42/best_checkpoint.pth
+checkpoint_epoch: 5
+checkpoint_best_mae: 53.26373626373626
+  resume: outputs/SHA/vgg16_bn_step_deterministic/best_checkpoint.pth
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+best_eval_results: epoch=5, mae=53.26373626373626, mse=83.41469288447323, pred_cnt=437.010989010989, gt_cnt=433.3076923076923, pred/gt=1.009
+latest_eval_results: epoch=495, mae=65.73626373626374, mse=102.5618012562332, pred_cnt=466.94505494505495, gt_cnt=433.3076923076923, pred/gt=1.078
+----
+checkpoint: outputs/SHA/vgg16_bn_paper_dec3_seed42/best_checkpoint.pth
+checkpoint_epoch: 640
+checkpoint_best_mae: 54.32967032967033
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+best_eval_results: epoch=640, mae=54.32967032967033, mse=88.23706828640795, pred_cnt=439.38461538461536, gt_cnt=433.9010989010989, pred/gt=1.013
+latest_eval_results: epoch=1210, mae=73.41208791208791, mse=119.1909770535883, pred_cnt=468.6868131868132, gt_cnt=433.9010989010989, pred/gt=1.080
+----
+checkpoint: outputs/SHA/vgg16_bn_paper_halo1_seed42/best_checkpoint.pth
+checkpoint_epoch: 165
+checkpoint_best_mae: 57.42307692307692
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+best_eval_results: epoch=165, mae=57.42307692307692, mse=89.15596286444175, pred_cnt=420.5769230769231, gt_cnt=433.9010989010989, pred/gt=0.969
+latest_eval_results: epoch=255, mae=61.03846153846154, mse=94.27441240954427, pred_cnt=441.7307692307692, gt_cnt=433.9010989010989, pred/gt=1.018
+----
+checkpoint: outputs/SHA/vgg16_bn_cosine/best_checkpoint.pth
+checkpoint_epoch: 385
+checkpoint_best_mae: 53.20879120879121
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/convnextv2_base_classprior_apgbg_seed42/best_checkpoint.pth
+checkpoint_epoch: 5
+checkpoint_best_mae: 433.3076923076923
+  resume: 
+  apg_loss_coef: 0.25
+  qd_apg_loss_coef: 0.0
+best_eval_results: epoch=5, mae=433.3076923076923, mse=559.1888650654506, pred_cnt=0.0, gt_cnt=433.3076923076923, pred/gt=0.000
+latest_eval_results: epoch=20, mae=433.3076923076923, mse=559.1888650654506, pred_cnt=0.0, gt_cnt=433.3076923076923, pred/gt=0.000
+----
+checkpoint: outputs/SHA/convnextv2_base_pretrained_from_apglc_focal_seed42/best_checkpoint.pth
+checkpoint_epoch: 5
+checkpoint_best_mae: 416.0164835164835
+  resume: outputs/SHA/vgg16_bn_drop700_apg_lc_seed42/best_checkpoint.pth
+  apg_loss_coef: 0.1
+  qd_apg_loss_coef: 0.0
+best_eval_results: epoch=5, mae=416.0164835164835, mse=546.7464958911312, pred_cnt=17.291208791208792, gt_cnt=433.3076923076923, pred/gt=0.040
+latest_eval_results: epoch=155, mae=431.75824175824175, mse=557.7519536122144, pred_cnt=1.5494505494505495, gt_cnt=433.3076923076923, pred/gt=0.004
+----
+checkpoint: outputs/SHA/vgg16_bn_mhf_02_cem_msem_h1/best_checkpoint.pth
+checkpoint_epoch: 120
+checkpoint_best_mae: 58.31318681318681
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+best_eval_results: epoch=120, mae=58.31318681318681, mse=103.11417442346598, pred_cnt=416.64285714285717, gt_cnt=433.9010989010989, pred/gt=0.960
+latest_eval_results: epoch=285, mae=88.89010989010988, mse=137.69252256107, pred_cnt=504.8021978021978, gt_cnt=433.9010989010989, pred/gt=1.163
+----
+checkpoint: outputs/SHA/vgg16_bn_no_imagenet_ablation_seed42/best_checkpoint.pth
+checkpoint_epoch: 10
+checkpoint_best_mae: 322.967032967033
+  resume: 
+  apg_loss_coef: 0.0
+  qd_apg_loss_coef: 0.0
+best_eval_results: epoch=10, mae=322.967032967033, mse=431.4995065765709, pred_cnt=120.23076923076923, gt_cnt=433.3076923076923, pred/gt=0.277
+latest_eval_results: epoch=10, mae=322.967032967033, mse=431.4995065765709, pred_cnt=120.23076923076923, gt_cnt=433.3076923076923, pred/gt=0.277
+----
+checkpoint: outputs/SHA/vgg16_bn_apglc_cbme015_late_countreg_seed42/best_checkpoint.pth
+checkpoint_epoch: 25
+checkpoint_best_mae: 98.01648351648352
+  resume: 
+  apg_loss_coef: 1.0
+  qd_apg_loss_coef: 0.0
+best_eval_results: epoch=25, mae=98.01648351648352, mse=139.69438778283822, pred_cnt=462.63186813186815, gt_cnt=433.3076923076923, pred/gt=1.068
+latest_eval_results: epoch=65, mae=494.88461538461536, mse=564.2727255425419, pred_cnt=927.7857142857143, gt_cnt=433.3076923076923, pred/gt=2.141
+----
+checkpoint: outputs/SHA/result/best_checkpoint.pth
+checkpoint_epoch: 20
+checkpoint_best_mae: 82.74175824175825
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+best_eval_results: epoch=20, mae=82.74175824175825, mse=129.46914011361255, pred_cnt=None, gt_cnt=None
+latest_eval_results: epoch=20, mae=82.74175824175825, mse=129.46914011361255, pred_cnt=None, gt_cnt=None
+----
+checkpoint: outputs/SHA/vgg16_bn_apglc_count_feedback_late_countreg_seed42/best_checkpoint.pth
+checkpoint_epoch: 10
+checkpoint_best_mae: 254.84065934065933
+  resume: 
+  apg_loss_coef: 1.0
+  qd_apg_loss_coef: 0.0
+best_eval_results: epoch=10, mae=254.84065934065933, mse=344.30638189755445, pred_cnt=661.1373626373627, gt_cnt=433.3076923076923, pred/gt=1.526
+latest_eval_results: epoch=10, mae=254.84065934065933, mse=344.30638189755445, pred_cnt=661.1373626373627, gt_cnt=433.3076923076923, pred/gt=1.526
+----
+checkpoint: outputs/SHA/vgg16_bn_original_pet_check_seed42/best_checkpoint.pth
+checkpoint_epoch: 10
+checkpoint_best_mae: 219.96153846153845
+  resume: 
+  apg_loss_coef: 0.0
+  qd_apg_loss_coef: 0.0
+best_eval_results: epoch=10, mae=219.96153846153845, mse=291.17544086450243, pred_cnt=213.34615384615384, gt_cnt=433.3076923076923, pred/gt=0.492
+latest_eval_results: epoch=10, mae=219.96153846153845, mse=291.17544086450243, pred_cnt=213.34615384615384, gt_cnt=433.3076923076923, pred/gt=0.492
+----
+checkpoint: outputs/SHA/maxvit_rmlp_tiny_rw_256_base/best_checkpoint.pth
+checkpoint_epoch: 320
+checkpoint_best_mae: 59.57692337036133
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+----
+checkpoint: outputs/SHA/vgg16_bn_apglc_balanced_late_countreg_seed42/best_checkpoint.pth
+checkpoint_epoch: 5
+checkpoint_best_mae: 394.3131868131868
+  resume: 
+  apg_loss_coef: 1.0
+  qd_apg_loss_coef: 0.0
+best_eval_results: epoch=5, mae=394.3131868131868, mse=549.0618222162096, pred_cnt=798.9725274725274, gt_cnt=433.3076923076923, pred/gt=1.844
+latest_eval_results: epoch=10, mae=486.5879120879121, mse=576.8075221271109, pred_cnt=912.2032967032967, gt_cnt=433.3076923076923, pred/gt=2.105
+----
+checkpoint: outputs/SHA/vgg16_bayesian_48/best_checkpoint.pth
+checkpoint_epoch: 2
+checkpoint_best_mae: 50.95054945054945
+  resume: outputs/SHA/vgg16_bn_drop700_apg_lc_seed42/best_checkpoint.pth
+  apg_loss_coef: 0.02
+  qd_apg_loss_coef: 0.0
+best_eval_results: epoch=2, mae=50.95054945054945, mse=80.73171551571222, pred_cnt=434.6978021978022, gt_cnt=433.3076923076923, pred/gt=1.003
+latest_eval_results: epoch=46, mae=72.56593406593407, mse=131.98961414353116, pred_cnt=376.1373626373626, gt_cnt=433.3076923076923, pred/gt=0.868
+----
+checkpoint: outputs/SHA/vgg16_bn_drop700_apg_lc_amp_512ctx_seed42/best_checkpoint.pth
+checkpoint_epoch: 20
+checkpoint_best_mae: 53.65384615384615
+  resume: outputs/SHA/vgg16_bn_drop700_apg_lc_seed42/best_checkpoint.pth
+  apg_loss_coef: 0.02
+  qd_apg_loss_coef: 0.0
+best_eval_results: epoch=20, mae=53.65384615384615, mse=85.07918096083807, pred_cnt=439.2362637362637, gt_cnt=433.3076923076923, pred/gt=1.014
+latest_eval_results: epoch=88, mae=55.532967032967036, mse=87.4455246437448, pred_cnt=442.93956043956047, gt_cnt=433.3076923076923, pred/gt=1.022
+----
+checkpoint: outputs/SHA/vgg16_bn_dec3_overlap_fullfpn/best_checkpoint.pth
+checkpoint_epoch: 280
+checkpoint_best_mae: 59.62637362637363
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+best_eval_results: epoch=280, mae=59.62637362637363, mse=92.79458585949487, pred_cnt=422.13186813186815, gt_cnt=433.9010989010989, pred/gt=0.973
+latest_eval_results: epoch=495, mae=66.55494505494505, mse=101.5153049685472, pred_cnt=455.33516483516485, gt_cnt=433.9010989010989, pred/gt=1.049
+----
+checkpoint: outputs/SHA/convnextv2_base_rccfpn_apg_gtbayes_seed42/best_checkpoint.pth
+checkpoint_epoch: 50
+checkpoint_best_mae: 433.3076923076923
+  resume: 
+  apg_loss_coef: 1.0
+  qd_apg_loss_coef: 0.0
+best_eval_results: epoch=50, mae=433.3076923076923, mse=559.1888650654506, pred_cnt=0.0, gt_cnt=433.3076923076923, pred/gt=0.000
+latest_eval_results: epoch=110, mae=433.3076923076923, mse=559.1888650654506, pred_cnt=0.0, gt_cnt=433.3076923076923, pred/gt=0.000
+----
+checkpoint: outputs/SHA/vgg16_bn_apglc_foreground_suppress_seed42/best_checkpoint.pth
+checkpoint_epoch: 5
+checkpoint_best_mae: 619.8681318681319
+  resume: 
+  apg_loss_coef: 1.0
+  qd_apg_loss_coef: 0.0
+best_eval_results: epoch=5, mae=619.8681318681319, mse=750.836207830317, pred_cnt=1047.7912087912089, gt_cnt=433.3076923076923, pred/gt=2.418
+latest_eval_results: epoch=5, mae=619.8681318681319, mse=750.836207830317, pred_cnt=1047.7912087912089, gt_cnt=433.3076923076923, pred/gt=2.418
+----
+checkpoint: outputs/SHA/vgg16_bn_drop700_apg_lc_softapg_freezebn_seed42/best_checkpoint.pth
+checkpoint_epoch: 65
+checkpoint_best_mae: 53.4010989010989
+  resume: outputs/SHA/vgg16_bn_drop700_apg_lc_seed42/best_checkpoint.pth
+  apg_loss_coef: 0.02
+  qd_apg_loss_coef: 0.0
+best_eval_results: epoch=65, mae=53.4010989010989, mse=85.43531066071164, pred_cnt=435.9835164835165, gt_cnt=433.3076923076923, pred/gt=1.006
+latest_eval_results: epoch=245, mae=55.15934065934066, mse=88.57309020064902, pred_cnt=439.8076923076923, gt_cnt=433.3076923076923, pred/gt=1.015
+----
+checkpoint: outputs/SHA/vgg16_bn_apglc_foreground_seed42/best_checkpoint.pth
+checkpoint_epoch: 5
+checkpoint_best_mae: 1559.8076923076924
+  resume: 
+  apg_loss_coef: 1.0
+  qd_apg_loss_coef: 0.0
+best_eval_results: epoch=5, mae=1559.8076923076924, mse=1942.7628635415194, pred_cnt=1993.1153846153845, gt_cnt=433.3076923076923, pred/gt=4.600
+latest_eval_results: epoch=5, mae=1559.8076923076924, mse=1942.7628635415194, pred_cnt=1993.1153846153845, gt_cnt=433.3076923076923, pred/gt=4.600
+----
+checkpoint: outputs/SHA/vgg16_bn_drop700_apg_lc_safe_eval_seed42/best_checkpoint.pth
+checkpoint_epoch: 5
+checkpoint_best_mae: 223.56593406593407
+  resume: 
+  apg_loss_coef: 1.0
+  qd_apg_loss_coef: 0.0
+best_eval_results: epoch=5, mae=223.56593406593407, mse=293.76825171261396, pred_cnt=446.15934065934067, gt_cnt=433.3076923076923, pred/gt=1.030
+latest_eval_results: epoch=200, mae=456.6758241758242, mse=549.8883752860442, pred_cnt=886.565934065934, gt_cnt=433.3076923076923, pred/gt=2.046
+----
+checkpoint: outputs/SHA/ablate_both/best_checkpoint.pth
+checkpoint_epoch: 82
+checkpoint_best_mae: 106.51099395751953
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/vgg16_bn_apglc_density_counthead_seed42_rerun/best_checkpoint.pth
+checkpoint_epoch: 8
+checkpoint_best_mae: 777.967032967033
+  resume: 
+  apg_loss_coef: 1.0
+  qd_apg_loss_coef: 0.0
+best_eval_results: epoch=8, mae=777.967032967033, mse=935.2782038951398, pred_cnt=1208.6703296703297, gt_cnt=433.3076923076923, pred/gt=2.789
+latest_eval_results: epoch=10, mae=846.6428571428571, mse=983.7354994951809, pred_cnt=1279.9505494505495, gt_cnt=433.3076923076923, pred/gt=2.954
+----
+checkpoint: outputs/SHA/vgg16_bn_inherit_counthead_topk_seed42/best_checkpoint.pth
+checkpoint_epoch: 2
+checkpoint_best_mae: 389.532967032967
+  resume: outputs/SHA/vgg16_bn_apglc_inheritance_only_ft_seed42/best_checkpoint.pth
+  apg_loss_coef: 0.0
+  qd_apg_loss_coef: 0.0
+best_eval_results: epoch=2, mae=389.532967032967, mse=519.8595594374134, pred_cnt=43.77472527472528, gt_cnt=433.3076923076923, pred/gt=0.101
+latest_eval_results: epoch=2, mae=389.532967032967, mse=519.8595594374134, pred_cnt=43.77472527472528, gt_cnt=433.3076923076923, pred/gt=0.101
+----
+checkpoint: outputs/SHA/vgg16_bn_apglc_late_countreg_scratch_seed42/best_checkpoint.pth
+checkpoint_epoch: 115
+checkpoint_best_mae: 344.27472527472526
+  resume: 
+  apg_loss_coef: 1.0
+  qd_apg_loss_coef: 0.0
+best_eval_results: epoch=115, mae=344.27472527472526, mse=413.9354278888659, pred_cnt=765.032967032967, gt_cnt=433.3076923076923, pred/gt=1.766
+latest_eval_results: epoch=170, mae=449.6043956043956, mse=522.8064378224234, pred_cnt=881.5604395604396, gt_cnt=433.3076923076923, pred/gt=2.034
+----
+checkpoint: outputs/SHA/vgg16_bn_drop700_apg_lc_seed42/best_checkpoint.pth
+checkpoint_epoch: 585
+checkpoint_best_mae: 50.934065934065934
+  resume: 
+  apg_loss_coef: 0.02
+  qd_apg_loss_coef: 0.0
+best_eval_results: epoch=585, mae=50.934065934065934, mse=79.4391051596846, pred_cnt=434.2637362637363, gt_cnt=433.3076923076923, pred/gt=1.002
+latest_eval_results: epoch=1495, mae=59.17032967032967, mse=96.50431294808755, pred_cnt=447.1373626373626, gt_cnt=433.3076923076923, pred/gt=1.032
+----
+checkpoint: outputs/SHA/pet_model/best_checkpoint.pth
+checkpoint_epoch: 100
+checkpoint_best_mae: 89.33516693115234
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/vgg16_bn_litefpn_count_seed42/best_checkpoint.pth
+checkpoint_epoch: 1220
+checkpoint_best_mae: 64.18681318681318
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+best_eval_results: epoch=1220, mae=64.18681318681318, mse=101.15916085148109, pred_cnt=453.0879120879121, gt_cnt=433.3076923076923, pred/gt=1.046
+latest_eval_results: epoch=1290, mae=64.32967032967034, mse=101.06922880377098, pred_cnt=452.4065934065934, gt_cnt=433.3076923076923, pred/gt=1.044
+----
+checkpoint: outputs/SHA/ablate_query/best_checkpoint.pth
+checkpoint_epoch: 22
+checkpoint_best_mae: 67.11538696289062
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/vgg16_bn_drop700_apg_until700_s055_seed42/best_checkpoint.pth
+checkpoint_epoch: 165
+checkpoint_best_mae: 57.1978021978022
+  resume: 
+  apg_loss_coef: 0.05
+  qd_apg_loss_coef: None
+best_eval_results: epoch=165, mae=57.1978021978022, mse=90.7539845642367, pred_cnt=439.43956043956047, gt_cnt=433.3076923076923, pred/gt=1.014
+latest_eval_results: epoch=205, mae=79.53846153846153, mse=126.7782090333914, pred_cnt=486.0769230769231, gt_cnt=433.3076923076923, pred/gt=1.122
+----
+checkpoint: outputs/SHA/vgg16_bn_apglc_apgccneg_late_countreg_seed42/best_checkpoint.pth
+checkpoint_epoch: 10
+checkpoint_best_mae: 121.65384615384616
+  resume: 
+  apg_loss_coef: 0.02
+  qd_apg_loss_coef: 0.0
+best_eval_results: epoch=10, mae=121.65384615384616, mse=186.20027915135884, pred_cnt=321.3791208791209, gt_cnt=433.3076923076923, pred/gt=0.742
+latest_eval_results: epoch=10, mae=121.65384615384616, mse=186.20027915135884, pred_cnt=321.3791208791209, gt_cnt=433.3076923076923, pred/gt=0.742
+----
+checkpoint: outputs/SHA/vgg16_bn_apglc_budget_late_countreg_seed42/best_checkpoint.pth
+checkpoint_epoch: 5
+checkpoint_best_mae: 457.010989010989
+  resume: 
+  apg_loss_coef: 1.0
+  qd_apg_loss_coef: 0.0
+best_eval_results: epoch=5, mae=457.010989010989, mse=610.4162424206854, pred_cnt=872.0, gt_cnt=433.3076923076923, pred/gt=2.012
+latest_eval_results: epoch=10, mae=1803.3516483516485, mse=2147.293680042776, pred_cnt=2236.6593406593406, gt_cnt=433.3076923076923, pred/gt=5.162
+----
+checkpoint: outputs/SHA/vgg16_bn_paper_convsplit_seed42/best_checkpoint.pth
+checkpoint_epoch: 665
+checkpoint_best_mae: 331.14835164835165
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+best_eval_results: epoch=665, mae=331.14835164835165, mse=465.49939507284734, pred_cnt=118.11538461538461, gt_cnt=433.9010989010989, pred/gt=0.272
+latest_eval_results: epoch=1065, mae=333.8901098901099, mse=466.08889403509403, pred_cnt=117.6043956043956, gt_cnt=433.9010989010989, pred/gt=0.271
+----
+checkpoint: outputs/SHA/vgg16_bn_apglc_lowloss_count_feedback_seed42/best_checkpoint.pth
+checkpoint_epoch: 635
+checkpoint_best_mae: 61.48351648351648
+  resume: 
+  apg_loss_coef: 0.75
+  qd_apg_loss_coef: 0.0
+best_eval_results: epoch=635, mae=61.48351648351648, mse=93.8570341377931, pred_cnt=428.68131868131866, gt_cnt=433.3076923076923, pred/gt=0.989
+latest_eval_results: epoch=1495, mae=75.2032967032967, mse=101.96004927593772, pred_cnt=483.74175824175825, gt_cnt=433.3076923076923, pred/gt=1.116
+----
+checkpoint: outputs/SHA/vgg16_bn_scratch_apglc_staged_dense_countcal_seed42/best_checkpoint.pth
+checkpoint_epoch: 10
+checkpoint_best_mae: 105.91208791208791
+  resume: 
+  apg_loss_coef: 1.0
+  qd_apg_loss_coef: 0.0
+best_eval_results: epoch=10, mae=105.91208791208791, mse=169.90789360030425, pred_cnt=370.27472527472526, gt_cnt=433.3076923076923, pred/gt=0.855
+latest_eval_results: epoch=60, mae=279.1758241758242, mse=345.1780238251968, pred_cnt=709.5274725274726, gt_cnt=433.3076923076923, pred/gt=1.637
+----
+checkpoint: outputs/SHA/convnextv2_base_direct/best_checkpoint.pth
+checkpoint_epoch: 170
+checkpoint_best_mae: 78.85714285714286
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+----
+checkpoint: outputs/SHA/vgg16_bn_apglc_bgapg_counthead_curriculum_seed42/best_checkpoint.pth
+checkpoint_epoch: 300
+checkpoint_best_mae: 611.9505494505495
+  resume: 
+  apg_loss_coef: 1.0
+  qd_apg_loss_coef: 0.0
+best_eval_results: epoch=300, mae=611.9505494505495, mse=702.8484783482735, pred_cnt=1045.2582417582419, gt_cnt=433.3076923076923, pred/gt=2.412
+latest_eval_results: epoch=300, mae=611.9505494505495, mse=702.8484783482735, pred_cnt=1045.2582417582419, gt_cnt=433.3076923076923, pred/gt=2.412
+----
+checkpoint: outputs/SHA/vgg16_bn_apglc_density_counthead_reproduce48_seed42/best_checkpoint.pth
+checkpoint_epoch: 6
+checkpoint_best_mae: 782.9505494505495
+  resume: outputs/SHA/vgg16_bn_drop700_apg_lc_seed42/best_checkpoint.pth
+  apg_loss_coef: 1.0
+  qd_apg_loss_coef: 0.0
+best_eval_results: epoch=6, mae=782.9505494505495, mse=902.8980781685381, pred_cnt=1216.2582417582419, gt_cnt=433.3076923076923, pred/gt=2.807, loc_f1_large=0.2933, loc_f1_small=0.1637
+latest_eval_results: epoch=8, mae=827.1978021978022, mse=920.1873555047197, pred_cnt=1260.5054945054944, gt_cnt=433.3076923076923, pred/gt=2.909, loc_f1_large=0.2929, loc_f1_small=0.1612
+----
+checkpoint: outputs/SHA/pet_msff_ca_ema_only/best_checkpoint.pth
+checkpoint_epoch: 1495
+checkpoint_best_mae: 56.0
+  resume: 
+  apg_loss_coef: 0.0
+  qd_apg_loss_coef: 0.0
+best_eval_results: epoch=1495, mae=56.0, mse=88.99462880446188, pred_cnt=449.7802197802198, gt_cnt=433.3076923076923, pred/gt=1.038
+latest_eval_results: epoch=1495, mae=56.0, mse=88.99462880446188, pred_cnt=449.7802197802198, gt_cnt=433.3076923076923, pred/gt=1.038
+----
+checkpoint: outputs/SHA/vgg16_bn_drop700_apg_lc_safe_ft_seed42/best_checkpoint.pth
+checkpoint_epoch: 145
+checkpoint_best_mae: 53.494505494505496
+  resume: outputs/SHA/vgg16_bn_drop700_apg_lc_seed42/best_checkpoint.pth
+  apg_loss_coef: 0.02
+  qd_apg_loss_coef: 0.0
+best_eval_results: epoch=145, mae=53.494505494505496, mse=86.97125962063559, pred_cnt=441.7912087912088, gt_cnt=433.3076923076923, pred/gt=1.020
+latest_eval_results: epoch=245, mae=58.989010989010985, mse=91.88059618898843, pred_cnt=452.34065934065933, gt_cnt=433.3076923076923, pred/gt=1.044
+----
+checkpoint: outputs/SHA/vgg16_bn_scratch_routed_apglc_countcal_seed42/best_checkpoint.pth
+checkpoint_epoch: 5
+checkpoint_best_mae: 119.65934065934066
+  resume: 
+  apg_loss_coef: 0.0
+  qd_apg_loss_coef: 0.0
+best_eval_results: epoch=5, mae=119.65934065934066, mse=179.14356695795018, pred_cnt=345.7802197802198, gt_cnt=433.3076923076923, pred/gt=0.798
+latest_eval_results: epoch=75, mae=550.6923076923077, mse=719.4686149597409, pred_cnt=983.3076923076923, gt_cnt=433.3076923076923, pred/gt=2.269
+----
+checkpoint: outputs/SHA/vgg16_bn_step_gelu_prenorm/best_checkpoint.pth
+checkpoint_epoch: 540
+checkpoint_best_mae: 52.47802197802198
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+best_eval_results: epoch=540, mae=52.47802197802198, mse=86.08170792659983, pred_cnt=434.2912087912088, gt_cnt=433.9010989010989, pred/gt=1.001
+latest_eval_results: epoch=915, mae=77.54395604395604, mse=119.09330075917069, pred_cnt=474.3241758241758, gt_cnt=433.9010989010989, pred/gt=1.093
+----
+checkpoint: outputs/SHA/vgg16_bn_apglc_counthead_topk_seed42/best_checkpoint.pth
+checkpoint_epoch: 4
+checkpoint_best_mae: 422.96153846153845
+  resume: outputs/SHA/vgg16_bn_drop700_apg_lc_seed42/best_checkpoint.pth
+  apg_loss_coef: 0.0
+  qd_apg_loss_coef: 0.0
+best_eval_results: epoch=4, mae=422.96153846153845, mse=551.2730770629975, pred_cnt=10.346153846153847, gt_cnt=433.3076923076923, pred/gt=0.024
+latest_eval_results: epoch=4, mae=422.96153846153845, mse=551.2730770629975, pred_cnt=10.346153846153847, gt_cnt=433.3076923076923, pred/gt=0.024
+----
+checkpoint: outputs/SHA/vgg16_bn_apg_lc_swinenc_ft_seed42/best_checkpoint.pth
+checkpoint_epoch: 110
+checkpoint_best_mae: 104.52197802197803
+  resume: outputs/SHA/vgg16_bn_drop700_apg_lc_seed42/best_checkpoint.pth
+  apg_loss_coef: 0.005
+  qd_apg_loss_coef: 0.0
+best_eval_results: epoch=110, mae=104.52197802197803, mse=155.5115450998435, pred_cnt=365.14835164835165, gt_cnt=433.3076923076923, pred/gt=0.843
+latest_eval_results: epoch=295, mae=106.42857142857143, mse=156.04271745368212, pred_cnt=369.27472527472526, gt_cnt=433.3076923076923, pred/gt=0.852
+----
+checkpoint: outputs/SHA/vgg16_bn_drop700_apg_lc_crop8_ema_seed42/best_checkpoint.pth
+checkpoint_epoch: 615
+checkpoint_best_mae: 58.5989010989011
+  resume: 
+  apg_loss_coef: 0.02
+  qd_apg_loss_coef: 0.0
+best_eval_results: epoch=615, mae=58.5989010989011, mse=90.92313502908092, pred_cnt=452.64285714285717, gt_cnt=433.3076923076923, pred/gt=1.045
+latest_eval_results: epoch=820, mae=63.956043956043956, mse=97.34457885761812, pred_cnt=455.7032967032967, gt_cnt=433.3076923076923, pred/gt=1.052
+----
+checkpoint: outputs/SHA/vgg16_bn_vmambacc_full_h4_seed42/best_checkpoint.pth
+checkpoint_epoch: 230
+checkpoint_best_mae: 53.17032967032967
+  resume: 
+  apg_loss_coef: None
+  qd_apg_loss_coef: None
+best_eval_results: epoch=230, mae=53.17032967032967, mse=92.52504858353015, pred_cnt=422.2032967032967, gt_cnt=433.3076923076923, pred/gt=0.974
+latest_eval_results: epoch=495, mae=60.61538461538461, mse=100.53745679984262, pred_cnt=445.7142857142857, gt_cnt=433.3076923076923, pred/gt=1.029
+----

@@ -1,0 +1,27 @@
+Unexpected keys (bn2.num_batches_tracked, bn2.bias, bn2.running_mean, bn2.running_var, bn2.weight, classifier.bias, classifier.weight, conv_head.weight) found while loading pretrained weights. This may be expected if model is being adapted.
+Not using distributed mode
+Namespace(lr=1.9930442065964707e-06, lr_backbone=8.816298465677333e-05, batch_size=4, weight_decay=0.0001, epochs=1500, lr_scheduler='warmup_hold_cosine', warmup_epochs=10, hold_epochs=-1, min_lr=1e-07, clip_max_norm=0.1, backbone='efficientnetv2_tiny', list_backbones=False, no_pretrained_backbone=False, position_embedding='sine', dec_layers=2, dim_feedforward=512, hidden_dim=256, dropout=0.0, nheads=8, set_cost_class=1, set_cost_point=0.05, ce_loss_coef=1.0, point_loss_coef=5.0, eos_coef=0.5, negative_loss_coef=0.1, non_div_loss_coef=0.25, quadtree_loss_coef=0.1, quadtree_prior_coef=0.025, split_count_threshold=2, split_pos_weight=1.0, split_threshold=0.5, split_threshold_quantile=0.55, score_threshold=0.42182529624518866, dataset_file='SHA', data_path='', patch_size=256, crop_attempts=8, min_crop_points=1, output_dir='results/efficientnetv2_tiny/final_train', device='cuda', seed=7, resume='outputs/SHA/results/efficientnetv2_tiny/final_train/best_checkpoint.pth', start_epoch=0, num_workers=2, eval_freq=5, syn_bn=0, world_size=1, dist_url='env://', distributed=False, enc_layers=4, sparse_stride=8, dense_stride=4, override_split_threshold_quantile=None, vis_dir='', override_split_threshold=None, override_score_threshold=None)
+params: 18.919693
+Test:  [  0/182]  eta: 0:01:03  mae: 83.0000 (83.0000)  time: 0.3493  data: 0.0419  max mem: 1745
+Test:  [ 10/182]  eta: 0:00:13  mae: 49.0000 (117.3636)  time: 0.0778  data: 0.0068  max mem: 1754
+Test:  [ 20/182]  eta: 0:00:10  mae: 69.0000 (124.8571)  time: 0.0499  data: 0.0024  max mem: 1754
+Test:  [ 30/182]  eta: 0:00:08  mae: 81.0000 (115.3871)  time: 0.0476  data: 0.0015  max mem: 1754
+Test:  [ 40/182]  eta: 0:00:07  mae: 29.0000 (103.2195)  time: 0.0464  data: 0.0015  max mem: 2311
+Test:  [ 50/182]  eta: 0:00:06  mae: 24.0000 (90.2941)  time: 0.0405  data: 0.0013  max mem: 2311
+Test:  [ 60/182]  eta: 0:00:05  mae: 23.0000 (83.0820)  time: 0.0357  data: 0.0012  max mem: 2311
+Test:  [ 70/182]  eta: 0:00:05  mae: 28.0000 (78.9577)  time: 0.0391  data: 0.0013  max mem: 2311
+Test:  [ 80/182]  eta: 0:00:04  mae: 37.0000 (80.0494)  time: 0.0428  data: 0.0014  max mem: 2311
+Test:  [ 90/182]  eta: 0:00:04  mae: 40.0000 (78.5714)  time: 0.0456  data: 0.0014  max mem: 2311
+Test:  [100/182]  eta: 0:00:03  mae: 41.0000 (76.3663)  time: 0.0502  data: 0.0015  max mem: 2311
+Test:  [110/182]  eta: 0:00:03  mae: 41.0000 (75.3243)  time: 0.0484  data: 0.0014  max mem: 2311
+Test:  [120/182]  eta: 0:00:02  mae: 45.0000 (73.9587)  time: 0.0453  data: 0.0013  max mem: 2311
+Test:  [130/182]  eta: 0:00:02  mae: 45.0000 (71.9237)  time: 0.0480  data: 0.0014  max mem: 2311
+Test:  [140/182]  eta: 0:00:01  mae: 19.0000 (71.0426)  time: 0.0450  data: 0.0013  max mem: 2311
+Test:  [150/182]  eta: 0:00:01  mae: 37.0000 (71.8543)  time: 0.0414  data: 0.0013  max mem: 2311
+Test:  [160/182]  eta: 0:00:01  mae: 39.0000 (74.8075)  time: 0.0428  data: 0.0014  max mem: 2311
+Test:  [170/182]  eta: 0:00:00  mae: 32.0000 (72.7602)  time: 0.0465  data: 0.0014  max mem: 2311
+Test:  [180/182]  eta: 0:00:00  mae: 25.0000 (72.3923)  time: 0.0428  data: 0.0013  max mem: 2311
+Test:  [181/182]  eta: 0:00:00  mae: 25.0000 (72.2363)  time: 0.0417  data: 0.0013  max mem: 2311
+Test: Total time: 0:00:08 (0.0463 s / it)
+
+epoch: 315, mae: 72.23626373626374, mse: 120.70818958532612

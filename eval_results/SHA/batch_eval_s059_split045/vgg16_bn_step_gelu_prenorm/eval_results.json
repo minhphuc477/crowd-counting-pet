@@ -1,0 +1,18 @@
+{
+  "ok": true,
+  "backbone": "vgg16_bn",
+  "dir": "vgg16_bn_step_gelu_prenorm",
+  "checkpoint": "outputs/SHA/vgg16_bn_step_gelu_prenorm/best_checkpoint.pth",
+  "checkpoint_name": "best_checkpoint.pth",
+  "eval_epoch": 540,
+  "eval_mae": 51.81868131868132,
+  "eval_mse": 86.54703986786672,
+  "returncode": 0,
+  "error": null,
+  "log_path": "eval_results/SHA/batch_eval_s059_split045/vgg16_bn_step_gelu_prenorm/eval_log.txt",
+  "evaluated_at": "2026-06-11T16:46:01",
+  "train_best_mae": 52.47802197802198,
+  "train_best_mse": 86.08170792659983,
+  "best_epoch": 540,
+  "checkpoint_epoch": 540
+}

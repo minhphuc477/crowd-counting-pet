@@ -1,0 +1,18 @@
+{
+  "ok": true,
+  "backbone": "vgg16_bn",
+  "dir": "vgg16_bn_drop700_apg_lc_resgc_ft_seed42",
+  "checkpoint": "outputs/SHA/vgg16_bn_drop700_apg_lc_resgc_ft_seed42/best_checkpoint.pth",
+  "checkpoint_name": "best_checkpoint.pth",
+  "eval_epoch": 10,
+  "eval_mae": 55.637362637362635,
+  "eval_mse": 86.21350956067866,
+  "returncode": 0,
+  "error": null,
+  "log_path": "eval_results/SHA/all_checkpoint_eval_s0575_split047/vgg16_bn_drop700_apg_lc_resgc_ft_seed42/eval_log.txt",
+  "evaluated_at": "2026-06-13T10:26:56",
+  "train_best_mae": 332.3736263736264,
+  "train_best_mse": 465.45420331608926,
+  "best_epoch": 10,
+  "checkpoint_epoch": 10
+}

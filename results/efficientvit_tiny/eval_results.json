@@ -1,0 +1,11 @@
+{
+  "backbone": "efficientvit_tiny",
+  "checkpoint": "outputs/SHA/results/efficientvit_tiny/final_train/best_checkpoint.pth",
+  "eval_mae": 74.31868131868131,
+  "eval_mse": 117.60732764791281,
+  "train_best_mae": 74.31868131868131,
+  "train_best_mse": 117.60732764791281,
+  "best_epoch": 360,
+  "total_epochs": 361,
+  "optuna_search_mae": 91.75274725274726
+}

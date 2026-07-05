@@ -1,0 +1,9 @@
+{
+  "epoch": 1499,
+  "eval_mae": 64.2032967032967,
+  "eval_mse": 106.02298631133546,
+  "pred_cnt": 461.92857142857144,
+  "gt_cnt": 433.3076923076923,
+  "checkpoint": "outputs/SHA/vgg16_bn_cosine/checkpoint.pth",
+  "eval_model": "model"
+}

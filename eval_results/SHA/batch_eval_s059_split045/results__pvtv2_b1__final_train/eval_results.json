@@ -1,0 +1,18 @@
+{
+  "ok": false,
+  "backbone": "pvtv2_b1",
+  "dir": "results/pvtv2_b1/final_train",
+  "checkpoint": "outputs/SHA/results/pvtv2_b1/final_train/best_checkpoint.pth",
+  "checkpoint_name": "best_checkpoint.pth",
+  "eval_epoch": null,
+  "eval_mae": null,
+  "eval_mse": null,
+  "returncode": 1,
+  "error": "eval.py exited with return code 1",
+  "log_path": "eval_results/SHA/batch_eval_s059_split045/results__pvtv2_b1__final_train/eval_log.txt",
+  "evaluated_at": "2026-06-11T16:37:41",
+  "train_best_mae": 63.93956043956044,
+  "train_best_mse": 105.5358644315698,
+  "best_epoch": 135,
+  "checkpoint_epoch": 135
+}

@@ -1,0 +1,33 @@
+{
+  "checkpoint": "outputs/SHA/vgg16_bn_drop700_apg_lc_seed42/best_checkpoint.pth",
+  "checkpoint_epoch": 585,
+  "checkpoint_model_key": "model",
+  "missing_keys": [],
+  "unexpected_keys": [],
+  "num_missing_keys": 0,
+  "num_unexpected_keys": 0,
+  "eval": {
+    "mae": 50.620879120879124,
+    "pred_cnt": 429.84065934065933,
+    "gt_cnt": 433.3076923076923,
+    "dbg_sparse_raw": 8156.131868131868,
+    "dbg_sparse_score": 148.01098901098902,
+    "dbg_sparse_valid_query": 147.87362637362637,
+    "dbg_sparse_valid_pred": 147.86263736263737,
+    "dbg_sparse_final": 147.86263736263737,
+    "dbg_dense_raw": 7510.361445783133,
+    "dbg_dense_score": 309.1686746987952,
+    "dbg_dense_valid_query": 309.1566265060241,
+    "dbg_dense_valid_pred": 309.1566265060241,
+    "dbg_dense_final": 309.1566265060241,
+    "dbg_final_after_nms": 429.84065934065933,
+    "mse": 79.10074949979028
+  },
+  "args": {
+    "backbone": "vgg16_bn",
+    "timm_adapter": "lite_fpn",
+    "score_threshold": 0.575,
+    "split_threshold": 0.47,
+    "eval_count_mode": "threshold"
+  }
+}

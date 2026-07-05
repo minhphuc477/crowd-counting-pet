@@ -1,0 +1,12 @@
+{
+  "backbone": "swinv2_tiny",
+  "dataset_file": "SHA",
+  "trials": 5,
+  "trials_completed": 0,
+  "seed_aggregate": "mean",
+  "extra_args": "--epochs 150 --patch_size 256",
+  "best_value": null,
+  "best_params": null,
+  "best_trial_number": null,
+  "per_seed_mae": null
+}

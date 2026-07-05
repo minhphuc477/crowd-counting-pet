@@ -1,0 +1,20 @@
+{
+  "backbone": "repvit_small",
+  "dataset_file": "SHA",
+  "trials": 5,
+  "trials_completed": 5,
+  "seed_aggregate": "mean",
+  "extra_args": "--epochs 150 --patch_size 256",
+  "best_value": 75.94505494505495,
+  "best_params": {
+    "lr": 1.1582375657809278e-05,
+    "lr_backbone": 6.23476328153724e-05,
+    "batch_size": 4,
+    "warmup": 7,
+    "score_threshold": 0.3559190480546953
+  },
+  "best_trial_number": 3,
+  "per_seed_mae": [
+    75.94505494505495
+  ]
+}

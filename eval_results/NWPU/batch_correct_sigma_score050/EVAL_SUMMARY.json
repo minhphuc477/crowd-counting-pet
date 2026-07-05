@@ -1,0 +1,55 @@
+{
+  "scan_root": "outputs/NWPU",
+  "results_dir": "eval_results/NWPU/batch_correct_sigma_score050",
+  "dataset_file": "NWPU",
+  "data_path": "data/NWPU-Crowd",
+  "checkpoint_names": [
+    "best_checkpoint.pth",
+    "final_checkpoint.pth",
+    "checkpoint.pth"
+  ],
+  "success_count": 2,
+  "failure_count": 0,
+  "summary": {
+    "vgg16_bn": {
+      "count": 2,
+      "mean_mae": 84.777,
+      "std_mae": 3.281000000000006,
+      "min_mae": 81.496,
+      "max_mae": 88.058,
+      "mean_mse": 549.0510294639288,
+      "min_train_best_mae": 82.292,
+      "results": [
+        {
+          "dir": "vgg16_bn_apglc_counthead_seed42",
+          "mae": 81.496,
+          "mse": 509.13591898431207,
+          "checkpoint": "outputs/NWPU/vgg16_bn_apglc_counthead_seed42/best_checkpoint.pth",
+          "train_best_mae": 82.292,
+          "best_epoch": 220,
+          "loc_f1_large": 0.39514531218545706,
+          "loc_prec_large": 0.41143115602281377,
+          "loc_rec_large": 0.3800996748845789,
+          "loc_f1_small": 0.301081762605554,
+          "loc_prec_small": 0.31349079395898377,
+          "loc_rec_small": 0.2896177091083276
+        },
+        {
+          "dir": "vgg16_bn_apglc_counthead_stage2_seed42",
+          "mae": 88.058,
+          "mse": 588.9661399435455,
+          "checkpoint": "outputs/NWPU/vgg16_bn_apglc_counthead_stage2_seed42/best_checkpoint.pth",
+          "train_best_mae": 88.058,
+          "best_epoch": 2,
+          "loc_f1_large": 0.39935076296118843,
+          "loc_prec_large": 0.42323206389958634,
+          "loc_rec_large": 0.37802056686268715,
+          "loc_f1_small": 0.3081507242007682,
+          "loc_prec_small": 0.32657823420339466,
+          "loc_rec_small": 0.2916917212772246
+        }
+      ]
+    }
+  },
+  "failures": []
+}

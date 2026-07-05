@@ -1,0 +1,19 @@
+{
+  "epoch": 910,
+  "eval_mae": 81.62637362637362,
+  "eval_mse": 157.56983450918753,
+  "pred_cnt": 391.5824175824176,
+  "gt_cnt": 433.3076923076923,
+  "checkpoint": "outputs/SHA/convnextv2_base_rccfpn_ce_safe_apg_seed42/best_checkpoint.pth",
+  "eval_model": "model",
+  "eval_protocol": "pet",
+  "tta_flip": false,
+  "tta_scales": [
+    1.0
+  ],
+  "eval_nms_radius": 8.0,
+  "eval_branch_gate": "none",
+  "eval_soft_split_gate": "none",
+  "eval_count_mode": "threshold",
+  "eval_filter_invalid_points": true
+}

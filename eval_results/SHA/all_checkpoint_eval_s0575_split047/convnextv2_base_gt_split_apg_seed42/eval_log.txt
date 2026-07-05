@@ -1,0 +1,18 @@
+started_at: 2026-06-13T10:18:00
+command: /home/tan/miniconda3/envs/crowd_counting/bin/python /home/tan/crowd-counting-pet/eval.py --backbone convnextv2_base --dataset_file SHA --data_path ./data/ShanghaiTech/part_A --resume outputs/SHA/convnextv2_base_gt_split_apg_seed42/best_checkpoint.pth --device cuda --num_workers 2 --override_score_threshold 0.575 --override_split_threshold 0.47
+
+Not using distributed mode
+Traceback (most recent call last):
+  File "/home/tan/crowd-counting-pet/eval.py", line 519, in <module>
+    main(args)
+  File "/home/tan/crowd-counting-pet/eval.py", line 412, in main
+    checkpoint = torch.load(args.resume, map_location='cpu', weights_only=False)
+  File "/home/tan/miniconda3/envs/crowd_counting/lib/python3.9/site-packages/torch/serialization.py", line 1530, in load
+    return _load(
+  File "/home/tan/miniconda3/envs/crowd_counting/lib/python3.9/site-packages/torch/serialization.py", line 2119, in _load
+    result = unpickler.load()
+  File "/home/tan/miniconda3/envs/crowd_counting/lib/python3.9/site-packages/torch/serialization.py", line 2083, in persistent_load
+    typed_storage = load_tensor(
+  File "/home/tan/miniconda3/envs/crowd_counting/lib/python3.9/site-packages/torch/serialization.py", line 2036, in load_tensor
+    zip_file.get_storage_from_record(name, numel, torch.UntypedStorage)
+RuntimeError: PytorchStreamReader failed locating file data/522: file not found

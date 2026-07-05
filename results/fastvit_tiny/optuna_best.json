@@ -1,0 +1,20 @@
+{
+  "backbone": "fastvit_tiny",
+  "dataset_file": "SHA",
+  "trials": 5,
+  "trials_completed": 5,
+  "seed_aggregate": "mean",
+  "extra_args": "--epochs 150 --patch_size 256",
+  "best_value": 87.93406593406593,
+  "best_params": {
+    "lr": 1.7482588433323795e-05,
+    "lr_backbone": 4.176737979328548e-05,
+    "batch_size": 4,
+    "warmup": 7,
+    "score_threshold": 0.5138753315417147
+  },
+  "best_trial_number": 2,
+  "per_seed_mae": [
+    87.93406593406593
+  ]
+}

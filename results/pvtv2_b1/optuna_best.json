@@ -1,0 +1,20 @@
+{
+  "backbone": "pvtv2_b1",
+  "dataset_file": "SHA",
+  "trials": 5,
+  "trials_completed": 5,
+  "seed_aggregate": "mean",
+  "extra_args": "--epochs 150 --patch_size 256",
+  "best_value": 64.1923076923077,
+  "best_params": {
+    "lr": 0.0001300868571218018,
+    "lr_backbone": 7.907038753058247e-05,
+    "batch_size": 4,
+    "warmup": 9,
+    "score_threshold": 0.3651778382797305
+  },
+  "best_trial_number": 3,
+  "per_seed_mae": [
+    64.1923076923077
+  ]
+}

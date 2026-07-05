@@ -1,0 +1,11 @@
+{
+  "backbone": "repvit_small",
+  "checkpoint": "outputs/SHA/results/repvit_small/final_train/best_checkpoint.pth",
+  "eval_mae": 85.36263736263736,
+  "eval_mse": 130.87272569053619,
+  "train_best_mae": 85.36263736263736,
+  "train_best_mse": 130.87272569053619,
+  "best_epoch": 615,
+  "total_epochs": 616,
+  "optuna_search_mae": 75.94505494505495
+}

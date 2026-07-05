@@ -1,0 +1,11 @@
+{
+  "backbone": "mobilenetv4_small",
+  "checkpoint": "outputs/SHA/results/mobilenetv4_small/final_train/best_checkpoint.pth",
+  "eval_mae": 74.35714285714286,
+  "eval_mse": 122.58589722232406,
+  "train_best_mae": 74.35714285714286,
+  "train_best_mse": 122.58589722232406,
+  "best_epoch": 565,
+  "total_epochs": 566,
+  "optuna_search_mae": 74.91758241758242
+}

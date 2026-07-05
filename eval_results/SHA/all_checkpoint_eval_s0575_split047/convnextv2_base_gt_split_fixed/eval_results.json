@@ -1,0 +1,18 @@
+{
+  "ok": true,
+  "backbone": "convnextv2_base",
+  "dir": "convnextv2_base_gt_split_fixed",
+  "checkpoint": "outputs/SHA/convnextv2_base_gt_split_fixed/best_checkpoint.pth",
+  "checkpoint_name": "best_checkpoint.pth",
+  "eval_epoch": 220,
+  "eval_mae": 82.61538461538461,
+  "eval_mse": 118.18940842451266,
+  "returncode": 0,
+  "error": null,
+  "log_path": "eval_results/SHA/all_checkpoint_eval_s0575_split047/convnextv2_base_gt_split_fixed/eval_log.txt",
+  "evaluated_at": "2026-06-13T10:18:27",
+  "train_best_mae": 79.6043956043956,
+  "train_best_mse": 117.7236940121577,
+  "best_epoch": 220,
+  "checkpoint_epoch": 220
+}

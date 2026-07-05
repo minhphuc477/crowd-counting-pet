@@ -1,0 +1,11 @@
+{
+  "backbone": "hgnetv2_tiny",
+  "checkpoint": "outputs/SHA/results/hgnetv2_tiny/final_train/best_checkpoint.pth",
+  "eval_mae": 66.51648351648352,
+  "eval_mse": 124.27928491643593,
+  "train_best_mae": 66.51648351648352,
+  "train_best_mse": 124.27928491643593,
+  "best_epoch": 595,
+  "total_epochs": 596,
+  "optuna_search_mae": 75.54395604395604
+}

@@ -1,0 +1,20 @@
+{
+  "backbone": "efficientvit_small",
+  "dataset_file": "SHA",
+  "trials": 5,
+  "trials_completed": 5,
+  "seed_aggregate": "mean",
+  "extra_args": "--epochs 150 --patch_size 256",
+  "best_value": 83.16483516483517,
+  "best_params": {
+    "lr": 0.0001031942600970419,
+    "lr_backbone": 3.4788655799881894e-05,
+    "batch_size": 2,
+    "warmup": 3,
+    "score_threshold": 0.31423522464572734
+  },
+  "best_trial_number": 1,
+  "per_seed_mae": [
+    83.16483516483517
+  ]
+}

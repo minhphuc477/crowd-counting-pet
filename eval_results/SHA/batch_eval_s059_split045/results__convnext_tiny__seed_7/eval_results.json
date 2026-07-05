@@ -1,0 +1,18 @@
+{
+  "ok": false,
+  "backbone": "convnext_tiny",
+  "dir": "results/convnext_tiny/seed_7",
+  "checkpoint": "outputs/SHA/results/convnext_tiny/seed_7/best_checkpoint.pth",
+  "checkpoint_name": "best_checkpoint.pth",
+  "eval_epoch": null,
+  "eval_mae": null,
+  "eval_mse": null,
+  "returncode": 1,
+  "error": "eval.py exited with return code 1",
+  "log_path": "eval_results/SHA/batch_eval_s059_split045/results__convnext_tiny__seed_7/eval_log.txt",
+  "evaluated_at": "2026-06-11T16:36:35",
+  "train_best_mae": 55.16483516483517,
+  "train_best_mse": 88.49380682371985,
+  "best_epoch": 155,
+  "checkpoint_epoch": 155
+}

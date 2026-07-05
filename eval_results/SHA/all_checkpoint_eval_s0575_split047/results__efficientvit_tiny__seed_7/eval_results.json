@@ -1,0 +1,18 @@
+{
+  "ok": false,
+  "backbone": "efficientvit_tiny",
+  "dir": "results/efficientvit_tiny/seed_7",
+  "checkpoint": "outputs/SHA/results/efficientvit_tiny/seed_7/best_checkpoint.pth",
+  "checkpoint_name": "best_checkpoint.pth",
+  "eval_epoch": null,
+  "eval_mae": null,
+  "eval_mse": null,
+  "returncode": 1,
+  "error": "eval.py exited with return code 1",
+  "log_path": "eval_results/SHA/all_checkpoint_eval_s0575_split047/results__efficientvit_tiny__seed_7/eval_log.txt",
+  "evaluated_at": "2026-06-13T10:21:43",
+  "train_best_mae": 87.77472527472527,
+  "train_best_mse": 139.38091139585242,
+  "best_epoch": 540,
+  "checkpoint_epoch": 540
+}

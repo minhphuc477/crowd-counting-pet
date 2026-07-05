@@ -1,0 +1,11 @@
+{
+  "backbone": "convnextv2_base",
+  "checkpoint": "outputs/SHA/results/convnextv2_base/final_train/best_checkpoint.pth",
+  "eval_mae": 57.66483516483517,
+  "eval_mse": 98.95589538157508,
+  "train_best_mae": 57.66483516483517,
+  "train_best_mse": 98.95589538157508,
+  "best_epoch": 765,
+  "total_epochs": 766,
+  "optuna_search_mae": 60.84065934065934
+}

@@ -1,0 +1,18 @@
+{
+  "ok": false,
+  "backbone": "convnextv2_base",
+  "dir": "convnextv2_base_lite_fpn",
+  "checkpoint": "outputs/SHA/convnextv2_base_lite_fpn/best_checkpoint.pth",
+  "checkpoint_name": "best_checkpoint.pth",
+  "eval_epoch": null,
+  "eval_mae": null,
+  "eval_mse": null,
+  "returncode": 1,
+  "error": "eval.py exited with return code 1",
+  "log_path": "eval_results/SHA/batch_eval_s059_split045/convnextv2_base_lite_fpn/eval_log.txt",
+  "evaluated_at": "2026-06-11T16:35:27",
+  "train_best_mae": 73.21428571428571,
+  "train_best_mse": 114.74996708084471,
+  "best_epoch": 30,
+  "checkpoint_epoch": 30
+}

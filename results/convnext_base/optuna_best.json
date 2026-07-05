@@ -1,0 +1,20 @@
+{
+  "backbone": "convnext_base",
+  "dataset_file": "SHA",
+  "trials": 5,
+  "trials_completed": 5,
+  "seed_aggregate": "mean",
+  "extra_args": "--epochs 150 --patch_size 256",
+  "best_value": 64.55494505494505,
+  "best_params": {
+    "lr": 0.00010955702781915908,
+    "lr_backbone": 5.470068572618542e-06,
+    "batch_size": 2,
+    "warmup": 0,
+    "score_threshold": 0.5574716039843413
+  },
+  "best_trial_number": 2,
+  "per_seed_mae": [
+    64.55494505494505
+  ]
+}

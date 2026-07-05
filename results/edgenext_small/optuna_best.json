@@ -1,0 +1,20 @@
+{
+  "backbone": "edgenext_small",
+  "dataset_file": "SHA",
+  "trials": 5,
+  "trials_completed": 5,
+  "seed_aggregate": "mean",
+  "extra_args": "--epochs 150 --patch_size 256",
+  "best_value": 61.379120879120876,
+  "best_params": {
+    "lr": 0.000248150909752943,
+    "lr_backbone": 6.895855239330433e-05,
+    "batch_size": 4,
+    "warmup": 8,
+    "score_threshold": 0.5364543449016745
+  },
+  "best_trial_number": 3,
+  "per_seed_mae": [
+    61.379120879120876
+  ]
+}

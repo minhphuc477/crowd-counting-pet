@@ -1,0 +1,27 @@
+Unexpected keys (norm_head.num_batches_tracked, classifier.bias, classifier.weight, conv_head.weight, norm_head.bias, norm_head.running_mean, norm_head.running_var, norm_head.weight) found while loading pretrained weights. This may be expected if model is being adapted.
+Not using distributed mode
+Namespace(lr=4.685413168736526e-06, lr_backbone=6.721092055999842e-05, batch_size=8, weight_decay=0.0001, epochs=1500, lr_scheduler='warmup_hold_cosine', warmup_epochs=9, hold_epochs=-1, min_lr=1e-07, clip_max_norm=0.1, backbone='mobilenetv4_hybrid', list_backbones=False, no_pretrained_backbone=False, position_embedding='sine', dec_layers=2, dim_feedforward=512, hidden_dim=256, dropout=0.0, nheads=8, set_cost_class=1, set_cost_point=0.05, ce_loss_coef=1.0, point_loss_coef=5.0, eos_coef=0.5, negative_loss_coef=0.1, non_div_loss_coef=0.25, quadtree_loss_coef=0.1, quadtree_prior_coef=0.025, split_count_threshold=2, split_pos_weight=1.0, split_threshold=0.5, split_threshold_quantile=0.55, score_threshold=0.5969646883982219, dataset_file='SHA', data_path='', patch_size=256, crop_attempts=8, min_crop_points=1, output_dir='results/mobilenetv4_hybrid/final_train', device='cuda', seed=7, resume='outputs/SHA/results/mobilenetv4_hybrid/final_train/best_checkpoint.pth', start_epoch=0, num_workers=2, eval_freq=5, syn_bn=0, world_size=1, dist_url='env://', distributed=False, enc_layers=4, sparse_stride=8, dense_stride=4, override_split_threshold=None, override_score_threshold=None, vis_dir='', override_split_threshold_quantile=None)
+params: 15.093113
+Test:  [  0/182]  eta: 0:01:03  mae: 1.0000 (1.0000)  time: 0.3487  data: 0.0404  max mem: 1739
+Test:  [ 10/182]  eta: 0:00:13  mae: 55.0000 (98.5455)  time: 0.0792  data: 0.0076  max mem: 1739
+Test:  [ 20/182]  eta: 0:00:10  mae: 52.0000 (73.0476)  time: 0.0502  data: 0.0028  max mem: 1739
+Test:  [ 30/182]  eta: 0:00:08  mae: 35.0000 (91.4516)  time: 0.0472  data: 0.0014  max mem: 1739
+Test:  [ 40/182]  eta: 0:00:07  mae: 23.0000 (87.5122)  time: 0.0469  data: 0.0014  max mem: 2296
+Test:  [ 50/182]  eta: 0:00:06  mae: 23.0000 (78.2745)  time: 0.0409  data: 0.0013  max mem: 2296
+Test:  [ 60/182]  eta: 0:00:06  mae: 26.0000 (76.4426)  time: 0.0358  data: 0.0012  max mem: 2296
+Test:  [ 70/182]  eta: 0:00:05  mae: 35.0000 (72.3803)  time: 0.0393  data: 0.0012  max mem: 2296
+Test:  [ 80/182]  eta: 0:00:04  mae: 30.0000 (69.7037)  time: 0.0430  data: 0.0013  max mem: 2296
+Test:  [ 90/182]  eta: 0:00:04  mae: 31.0000 (69.2308)  time: 0.0455  data: 0.0014  max mem: 2296
+Test:  [100/182]  eta: 0:00:03  mae: 30.0000 (66.3960)  time: 0.0499  data: 0.0014  max mem: 2296
+Test:  [110/182]  eta: 0:00:03  mae: 30.0000 (64.9820)  time: 0.0485  data: 0.0015  max mem: 2296
+Test:  [120/182]  eta: 0:00:02  mae: 42.0000 (64.3884)  time: 0.0456  data: 0.0014  max mem: 2296
+Test:  [130/182]  eta: 0:00:02  mae: 42.0000 (62.9847)  time: 0.0484  data: 0.0014  max mem: 2296
+Test:  [140/182]  eta: 0:00:01  mae: 25.0000 (61.1631)  time: 0.0457  data: 0.0013  max mem: 2296
+Test:  [150/182]  eta: 0:00:01  mae: 20.0000 (65.2384)  time: 0.0416  data: 0.0013  max mem: 2296
+Test:  [160/182]  eta: 0:00:01  mae: 56.0000 (66.9379)  time: 0.0428  data: 0.0013  max mem: 2296
+Test:  [170/182]  eta: 0:00:00  mae: 29.0000 (65.2164)  time: 0.0466  data: 0.0013  max mem: 2296
+Test:  [180/182]  eta: 0:00:00  mae: 24.0000 (63.1768)  time: 0.0427  data: 0.0013  max mem: 2296
+Test:  [181/182]  eta: 0:00:00  mae: 24.0000 (63.4945)  time: 0.0417  data: 0.0012  max mem: 2296
+Test: Total time: 0:00:08 (0.0465 s / it)
+
+epoch: 470, mae: 63.494505494505496, mse: 115.43543935612087

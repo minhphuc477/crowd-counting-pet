@@ -1,0 +1,15 @@
+{
+  "ok": false,
+  "backbone": "convnextv2_base",
+  "dir": "convnextv2_base_gt_split_apg_seed42",
+  "checkpoint": "outputs/SHA/convnextv2_base_gt_split_apg_seed42/best_checkpoint.pth",
+  "checkpoint_name": "best_checkpoint.pth",
+  "eval_epoch": null,
+  "eval_mae": null,
+  "eval_mse": null,
+  "returncode": 1,
+  "error": "eval.py exited with return code 1",
+  "log_path": "eval_results/SHA/all_checkpoint_eval_s0575_split047/convnextv2_base_gt_split_apg_seed42/eval_log.txt",
+  "evaluated_at": "2026-06-13T10:18:02",
+  "checkpoint_metadata_error": "PytorchStreamReader failed locating file data/522: file not found"
+}

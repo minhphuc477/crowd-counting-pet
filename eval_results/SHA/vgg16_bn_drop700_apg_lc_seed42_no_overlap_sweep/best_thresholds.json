@@ -1,0 +1,20 @@
+{
+  "score_threshold": 0.59,
+  "split_threshold": 0.45,
+  "eval_nms_radius": 0.0,
+  "eval_branch_gate": "none",
+  "eval_protocol": "crowd_no_overlap",
+  "tta_flip": false,
+  "returncode": 0,
+  "elapsed_sec": 11.392389059066772,
+  "results_file": "eval_results/SHA/vgg16_bn_drop700_apg_lc_seed42_no_overlap_sweep/score_0p59_split_0p45_nms_0_gate_none.json",
+  "log_file": "eval_results/SHA/vgg16_bn_drop700_apg_lc_seed42_no_overlap_sweep/score_0p59_split_0p45_nms_0_gate_none.log",
+  "epoch": 585,
+  "eval_mae": 50.434065934065934,
+  "eval_mse": 79.21222710590155,
+  "pred_cnt": 0.0,
+  "gt_cnt": 0.0,
+  "checkpoint": "outputs/SHA/vgg16_bn_drop700_apg_lc_seed42/best_checkpoint.pth",
+  "eval_model": "model",
+  "ok": true
+}

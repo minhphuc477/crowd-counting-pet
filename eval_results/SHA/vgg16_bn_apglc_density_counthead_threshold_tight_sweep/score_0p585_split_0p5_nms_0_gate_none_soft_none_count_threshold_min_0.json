@@ -1,0 +1,17 @@
+{
+  "epoch": 32,
+  "eval_mae": 48.81318681318681,
+  "eval_mse": 76.71976979190616,
+  "pred_cnt": 432.85714285714283,
+  "gt_cnt": 433.3076923076923,
+  "checkpoint": "outputs/SHA/vgg16_bn_apglc_density_counthead_seed42/best_checkpoint.pth",
+  "eval_model": "model",
+  "eval_protocol": "pet",
+  "tta_flip": false,
+  "tta_scales": [
+    1.0
+  ],
+  "eval_nms_radius": 0.0,
+  "eval_branch_gate": "none",
+  "eval_soft_split_gate": "none"
+}

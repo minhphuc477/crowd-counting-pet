@@ -1,0 +1,18 @@
+{
+  "ok": false,
+  "backbone": "efficientnet_b1",
+  "dir": "results/efficientnet_b1/final_train",
+  "checkpoint": "outputs/SHA/results/efficientnet_b1/final_train/best_checkpoint.pth",
+  "checkpoint_name": "best_checkpoint.pth",
+  "eval_epoch": null,
+  "eval_mae": null,
+  "eval_mse": null,
+  "returncode": 1,
+  "error": "eval.py exited with return code 1",
+  "log_path": "eval_results/SHA/batch_eval_s059_split045/results__efficientnet_b1__final_train/eval_log.txt",
+  "evaluated_at": "2026-06-11T16:36:58",
+  "train_best_mae": 65.43956043956044,
+  "train_best_mse": 107.72293520523273,
+  "best_epoch": 885,
+  "checkpoint_epoch": 885
+}

@@ -1,0 +1,18 @@
+{
+  "ok": false,
+  "backbone": "mobilenetv4_small",
+  "dir": "results/mobilenetv4_small/final_train",
+  "checkpoint": "outputs/SHA/results/mobilenetv4_small/final_train/best_checkpoint.pth",
+  "checkpoint_name": "best_checkpoint.pth",
+  "eval_epoch": null,
+  "eval_mae": null,
+  "eval_mse": null,
+  "returncode": 1,
+  "error": "eval.py exited with return code 1",
+  "log_path": "eval_results/SHA/all_checkpoint_eval_s0575_split047/results__mobilenetv4_small__final_train/eval_log.txt",
+  "evaluated_at": "2026-06-13T10:22:08",
+  "train_best_mae": 74.35714285714286,
+  "train_best_mse": 122.58589722232406,
+  "best_epoch": 565,
+  "checkpoint_epoch": 565
+}

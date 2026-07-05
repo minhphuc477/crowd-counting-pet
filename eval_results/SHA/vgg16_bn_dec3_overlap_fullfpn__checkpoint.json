@@ -1,0 +1,9 @@
+{
+  "epoch": 499,
+  "eval_mae": 68.53846153846153,
+  "eval_mse": 104.0011622927444,
+  "pred_cnt": 461.64835164835165,
+  "gt_cnt": 433.3076923076923,
+  "checkpoint": "outputs/SHA/vgg16_bn_dec3_overlap_fullfpn/checkpoint.pth",
+  "eval_model": "model"
+}

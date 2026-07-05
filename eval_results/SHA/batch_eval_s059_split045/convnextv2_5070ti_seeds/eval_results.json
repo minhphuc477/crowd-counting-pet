@@ -1,0 +1,16 @@
+{
+  "ok": false,
+  "backbone": "convnextv2_base",
+  "dir": "convnextv2_5070ti_seeds",
+  "checkpoint": "outputs/SHA/convnextv2_5070ti_seeds/checkpoint.pth",
+  "checkpoint_name": "checkpoint.pth",
+  "eval_epoch": null,
+  "eval_mae": null,
+  "eval_mse": null,
+  "returncode": 1,
+  "error": "eval.py exited with return code 1",
+  "log_path": "eval_results/SHA/batch_eval_s059_split045/convnextv2_5070ti_seeds/eval_log.txt",
+  "evaluated_at": "2026-06-11T16:34:19",
+  "train_best_mae": 100000000.0,
+  "checkpoint_epoch": 5
+}

@@ -1,0 +1,18 @@
+{
+  "ok": false,
+  "backbone": "fastvit_tiny",
+  "dir": "results/fastvit_tiny/seed_7",
+  "checkpoint": "outputs/SHA/results/fastvit_tiny/seed_7/best_checkpoint.pth",
+  "checkpoint_name": "best_checkpoint.pth",
+  "eval_epoch": null,
+  "eval_mae": null,
+  "eval_mse": null,
+  "returncode": 1,
+  "error": "eval.py exited with return code 1",
+  "log_path": "eval_results/SHA/batch_eval_s059_split045/results__fastvit_tiny__seed_7/eval_log.txt",
+  "evaluated_at": "2026-06-11T16:37:18",
+  "train_best_mae": 67.63186813186813,
+  "train_best_mse": 112.22810856308838,
+  "best_epoch": 1110,
+  "checkpoint_epoch": 1110
+}

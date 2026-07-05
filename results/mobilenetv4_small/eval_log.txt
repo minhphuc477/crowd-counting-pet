@@ -1,0 +1,28 @@
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+Unexpected keys (norm_head.num_batches_tracked, classifier.bias, classifier.weight, conv_head.weight, norm_head.bias, norm_head.running_mean, norm_head.running_var, norm_head.weight) found while loading pretrained weights. This may be expected if model is being adapted.
+Not using distributed mode
+Namespace(lr=3.969391368297567e-05, lr_backbone=6.832412823152916e-05, batch_size=8, weight_decay=0.0001, epochs=1500, lr_scheduler='warmup_hold_cosine', warmup_epochs=8, hold_epochs=-1, min_lr=1e-07, clip_max_norm=0.1, backbone='mobilenetv4_small', list_backbones=False, no_pretrained_backbone=False, position_embedding='sine', dec_layers=2, dim_feedforward=512, hidden_dim=256, dropout=0.0, nheads=8, set_cost_class=1, set_cost_point=0.05, ce_loss_coef=1.0, point_loss_coef=5.0, eos_coef=0.5, negative_loss_coef=0.1, non_div_loss_coef=0.25, quadtree_loss_coef=0.1, quadtree_prior_coef=0.025, split_count_threshold=2, split_pos_weight=1.0, split_threshold=0.5, split_threshold_quantile=0.55, score_threshold=0.5365803286816251, dataset_file='SHA', data_path='', patch_size=256, crop_attempts=8, min_crop_points=1, output_dir='results/mobilenetv4_small/final_train', device='cuda', seed=7, resume='outputs/SHA/results/mobilenetv4_small/final_train/best_checkpoint.pth', start_epoch=0, num_workers=2, eval_freq=5, syn_bn=0, world_size=1, dist_url='env://', distributed=False, enc_layers=4, sparse_stride=8, dense_stride=4, override_split_threshold_quantile=None, override_score_threshold=None, override_split_threshold=None, vis_dir='')
+params: 7.767913
+Test:  [  0/182]  eta: 0:00:59  mae: 6.0000 (6.0000)  time: 0.3276  data: 0.0382  max mem: 1702
+Test:  [ 10/182]  eta: 0:00:12  mae: 96.0000 (80.8182)  time: 0.0712  data: 0.0059  max mem: 1711
+Test:  [ 20/182]  eta: 0:00:09  mae: 98.0000 (105.5714)  time: 0.0448  data: 0.0020  max mem: 1711
+Test:  [ 30/182]  eta: 0:00:08  mae: 40.0000 (99.5161)  time: 0.0428  data: 0.0013  max mem: 1711
+Test:  [ 40/182]  eta: 0:00:07  mae: 40.0000 (99.5854)  time: 0.0419  data: 0.0013  max mem: 2268
+Test:  [ 50/182]  eta: 0:00:06  mae: 35.0000 (89.5294)  time: 0.0365  data: 0.0012  max mem: 2268
+Test:  [ 60/182]  eta: 0:00:05  mae: 45.0000 (86.1475)  time: 0.0322  data: 0.0011  max mem: 2268
+Test:  [ 70/182]  eta: 0:00:04  mae: 46.0000 (79.8028)  time: 0.0354  data: 0.0011  max mem: 2268
+Test:  [ 80/182]  eta: 0:00:04  mae: 30.0000 (79.6543)  time: 0.0388  data: 0.0012  max mem: 2268
+Test:  [ 90/182]  eta: 0:00:03  mae: 62.0000 (81.2857)  time: 0.0413  data: 0.0012  max mem: 2268
+Test:  [100/182]  eta: 0:00:03  mae: 51.0000 (77.2376)  time: 0.0453  data: 0.0013  max mem: 2268
+Test:  [110/182]  eta: 0:00:03  mae: 45.0000 (75.4414)  time: 0.0437  data: 0.0014  max mem: 2268
+Test:  [120/182]  eta: 0:00:02  mae: 47.0000 (74.1240)  time: 0.0411  data: 0.0013  max mem: 2268
+Test:  [130/182]  eta: 0:00:02  mae: 25.0000 (76.0305)  time: 0.0438  data: 0.0013  max mem: 2268
+Test:  [140/182]  eta: 0:00:01  mae: 27.0000 (74.5603)  time: 0.0411  data: 0.0013  max mem: 2268
+Test:  [150/182]  eta: 0:00:01  mae: 47.0000 (75.2318)  time: 0.0377  data: 0.0013  max mem: 2268
+Test:  [160/182]  eta: 0:00:00  mae: 39.0000 (76.4224)  time: 0.0391  data: 0.0014  max mem: 2268
+Test:  [170/182]  eta: 0:00:00  mae: 26.0000 (74.2047)  time: 0.0427  data: 0.0014  max mem: 2268
+Test:  [180/182]  eta: 0:00:00  mae: 26.0000 (74.0331)  time: 0.0390  data: 0.0013  max mem: 2268
+Test:  [181/182]  eta: 0:00:00  mae: 26.0000 (74.3571)  time: 0.0379  data: 0.0013  max mem: 2268
+Test: Total time: 0:00:07 (0.0420 s / it)
+
+epoch: 565, mae: 74.35714285714286, mse: 122.58589722232406

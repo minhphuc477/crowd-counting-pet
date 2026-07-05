@@ -1,0 +1,11 @@
+{
+  "backbone": "resnet18",
+  "checkpoint": "outputs/SHA/results/resnet18/final_train/best_checkpoint.pth",
+  "eval_mae": 80.57142857142857,
+  "eval_mse": 130.2974618763872,
+  "train_best_mae": 80.57142857142857,
+  "train_best_mse": 130.2974618763872,
+  "best_epoch": 280,
+  "total_epochs": 281,
+  "optuna_search_mae": 82.82967032967034
+}

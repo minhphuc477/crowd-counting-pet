@@ -1,0 +1,11 @@
+{
+  "epoch": 585,
+  "eval_mae": 59.47802197802198,
+  "eval_mse": 107.16217042049293,
+  "pred_cnt": 401.7307692307692,
+  "gt_cnt": 433.3076923076923,
+  "checkpoint": "outputs/SHA/vgg16_bn_drop700_apg_lc_seed42/best_checkpoint.pth",
+  "eval_model": "model",
+  "tta_flip": false,
+  "eval_nms_radius": 5.0
+}

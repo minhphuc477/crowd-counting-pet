@@ -1,0 +1,27 @@
+{
+  "score_threshold": 0.59,
+  "split_threshold": 0.47,
+  "eval_nms_radius": 0.0,
+  "eval_branch_gate": "none",
+  "eval_soft_split_gate": "none",
+  "eval_count_mode": "threshold",
+  "eval_count_head_min_score": 0.0,
+  "eval_protocol": "pet",
+  "tta_flip": false,
+  "tta_scales": [
+    1.0
+  ],
+  "returncode": 0,
+  "elapsed_sec": 11.018615484237671,
+  "results_file": "eval_results/SHA/vgg16_bn_drop700_apg_lc_counting_fix_sweep/score_0p59_split_0p47_nms_0_gate_none_soft_none_count_threshold_min_0.json",
+  "log_file": "eval_results/SHA/vgg16_bn_drop700_apg_lc_counting_fix_sweep/score_0p59_split_0p47_nms_0_gate_none_soft_none_count_threshold_min_0.log",
+  "epoch": 585,
+  "eval_mae": 50.40659340659341,
+  "eval_mse": 79.11925898829654,
+  "pred_cnt": 427.34065934065933,
+  "gt_cnt": 433.3076923076923,
+  "checkpoint": "outputs/SHA/vgg16_bn_drop700_apg_lc_seed42/best_checkpoint.pth",
+  "eval_model": "model",
+  "eval_filter_invalid_points": true,
+  "ok": true
+}

@@ -1,0 +1,18 @@
+{
+  "ok": false,
+  "backbone": "edgenext_tiny",
+  "dir": "results/edgenext_tiny/final_train",
+  "checkpoint": "outputs/SHA/results/edgenext_tiny/final_train/best_checkpoint.pth",
+  "checkpoint_name": "best_checkpoint.pth",
+  "eval_epoch": null,
+  "eval_mae": null,
+  "eval_mse": null,
+  "returncode": 1,
+  "error": "eval.py exited with return code 1",
+  "log_path": "eval_results/SHA/all_checkpoint_eval_s0575_split047/results__edgenext_tiny__final_train/eval_log.txt",
+  "evaluated_at": "2026-06-13T10:21:27",
+  "train_best_mae": 67.96153846153847,
+  "train_best_mse": 106.55099898459603,
+  "best_epoch": 340,
+  "checkpoint_epoch": 340
+}

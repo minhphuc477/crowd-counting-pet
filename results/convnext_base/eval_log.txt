@@ -1,0 +1,27 @@
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+Not using distributed mode
+Namespace(lr=0.00010955702781915908, lr_backbone=5.470068572618542e-06, batch_size=2, weight_decay=0.0001, epochs=1500, lr_scheduler='warmup_hold_cosine', warmup_epochs=0, hold_epochs=-1, min_lr=1e-07, clip_max_norm=0.1, backbone='convnext_base', list_backbones=False, no_pretrained_backbone=False, position_embedding='sine', dec_layers=2, dim_feedforward=512, hidden_dim=256, dropout=0.0, nheads=8, set_cost_class=1, set_cost_point=0.05, ce_loss_coef=1.0, point_loss_coef=5.0, eos_coef=0.5, negative_loss_coef=0.1, non_div_loss_coef=0.25, quadtree_loss_coef=0.1, quadtree_prior_coef=0.025, split_count_threshold=2, split_pos_weight=1.0, split_threshold=0.5, split_threshold_quantile=0.55, score_threshold=0.5574716039843413, dataset_file='SHA', data_path='', patch_size=256, crop_attempts=8, min_crop_points=1, output_dir='results/convnext_base/final_train', device='cuda', seed=7, resume='outputs/SHA/results/convnext_base/final_train/best_checkpoint.pth', start_epoch=0, num_workers=2, eval_freq=5, syn_bn=0, world_size=1, dist_url='env://', distributed=False, enc_layers=4, sparse_stride=8, dense_stride=4, override_split_threshold_quantile=None, override_split_threshold=None, vis_dir='', override_score_threshold=None)
+params: 94.504841
+Test:  [  0/182]  eta: 0:03:20  mae: 43.0000 (43.0000)  time: 1.1010  data: 0.0423  max mem: 2041
+Test:  [ 10/182]  eta: 0:01:03  mae: 36.0000 (62.0000)  time: 0.3664  data: 0.0064  max mem: 2041
+Test:  [ 20/182]  eta: 0:00:41  mae: 34.0000 (66.6190)  time: 0.2152  data: 0.0021  max mem: 2041
+Test:  [ 30/182]  eta: 0:00:29  mae: 33.0000 (68.4194)  time: 0.0974  data: 0.0013  max mem: 2041
+Test:  [ 40/182]  eta: 0:00:28  mae: 30.0000 (66.8780)  time: 0.1343  data: 0.0013  max mem: 2600
+Test:  [ 50/182]  eta: 0:00:22  mae: 24.0000 (63.4706)  time: 0.1267  data: 0.0013  max mem: 2600
+Test:  [ 60/182]  eta: 0:00:19  mae: 31.0000 (60.3443)  time: 0.0823  data: 0.0012  max mem: 2600
+Test:  [ 70/182]  eta: 0:00:17  mae: 31.0000 (57.3380)  time: 0.1251  data: 0.0012  max mem: 2600
+Test:  [ 80/182]  eta: 0:00:14  mae: 27.0000 (58.0864)  time: 0.0915  data: 0.0013  max mem: 2600
+Test:  [ 90/182]  eta: 0:00:12  mae: 38.0000 (58.9011)  time: 0.0569  data: 0.0013  max mem: 2600
+Test:  [100/182]  eta: 0:00:10  mae: 38.0000 (57.4752)  time: 0.0631  data: 0.0014  max mem: 2600
+Test:  [110/182]  eta: 0:00:08  mae: 44.0000 (56.7387)  time: 0.0606  data: 0.0014  max mem: 2600
+Test:  [120/182]  eta: 0:00:07  mae: 44.0000 (56.0661)  time: 0.0567  data: 0.0013  max mem: 2600
+Test:  [130/182]  eta: 0:00:05  mae: 26.0000 (55.0992)  time: 0.0603  data: 0.0014  max mem: 2600
+Test:  [140/182]  eta: 0:00:04  mae: 22.0000 (54.8227)  time: 0.0566  data: 0.0014  max mem: 2600
+Test:  [150/182]  eta: 0:00:03  mae: 21.0000 (54.6821)  time: 0.0517  data: 0.0013  max mem: 2600
+Test:  [160/182]  eta: 0:00:02  mae: 26.0000 (57.1925)  time: 0.0532  data: 0.0013  max mem: 2600
+Test:  [170/182]  eta: 0:00:01  mae: 30.0000 (55.5965)  time: 0.0583  data: 0.0013  max mem: 2600
+Test:  [180/182]  eta: 0:00:00  mae: 19.0000 (56.1768)  time: 0.0534  data: 0.0013  max mem: 2600
+Test:  [181/182]  eta: 0:00:00  mae: 19.0000 (56.2582)  time: 0.0519  data: 0.0013  max mem: 2600
+Test: Total time: 0:00:17 (0.0950 s / it)
+
+epoch: 260, mae: 56.25824175824176, mse: 88.8434541238652

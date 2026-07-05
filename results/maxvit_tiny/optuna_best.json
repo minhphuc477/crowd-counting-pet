@@ -1,0 +1,20 @@
+{
+  "backbone": "maxvit_tiny",
+  "dataset_file": "SHA",
+  "trials": 5,
+  "trials_completed": 5,
+  "seed_aggregate": "mean",
+  "extra_args": "--epochs 150 --patch_size 256",
+  "best_value": 129.1098901098901,
+  "best_params": {
+    "lr": 0.0006921947802659323,
+    "lr_backbone": 8.123431926010077e-05,
+    "batch_size": 8,
+    "warmup": 4,
+    "score_threshold": 0.3766312727079447
+  },
+  "best_trial_number": 0,
+  "per_seed_mae": [
+    129.1098901098901
+  ]
+}

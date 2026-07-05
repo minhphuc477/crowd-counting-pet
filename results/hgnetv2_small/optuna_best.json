@@ -1,0 +1,20 @@
+{
+  "backbone": "hgnetv2_small",
+  "dataset_file": "SHA",
+  "trials": 5,
+  "trials_completed": 5,
+  "seed_aggregate": "mean",
+  "extra_args": "--epochs 150 --patch_size 256",
+  "best_value": 96.64285714285714,
+  "best_params": {
+    "lr": 0.00018411692565032533,
+    "lr_backbone": 3.98546554526774e-05,
+    "batch_size": 2,
+    "warmup": 5,
+    "score_threshold": 0.253136839900939
+  },
+  "best_trial_number": 5,
+  "per_seed_mae": [
+    96.64285714285714
+  ]
+}

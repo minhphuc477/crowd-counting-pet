@@ -1,0 +1,18 @@
+{
+  "ok": true,
+  "backbone": "vgg16_bn",
+  "dir": "vgg16_bn_apglc_inheritance_ft_seed42",
+  "checkpoint": "outputs/SHA/vgg16_bn_apglc_inheritance_ft_seed42/best_checkpoint.pth",
+  "checkpoint_name": "best_checkpoint.pth",
+  "eval_epoch": 10,
+  "eval_mae": 113.5,
+  "eval_mse": 145.57915787911128,
+  "returncode": 0,
+  "error": null,
+  "log_path": "eval_results/SHA/all_checkpoint_eval_s0575_split047/vgg16_bn_apglc_inheritance_ft_seed42/eval_log.txt",
+  "evaluated_at": "2026-06-13T10:24:17",
+  "train_best_mae": 105.18681318681318,
+  "train_best_mse": 136.82739588158603,
+  "best_epoch": 10,
+  "checkpoint_epoch": 10
+}

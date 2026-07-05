@@ -1,0 +1,17 @@
+{
+  "score_threshold": 0.59,
+  "split_threshold": 0.45,
+  "tta_flip": true,
+  "returncode": 0,
+  "elapsed_sec": 19.273580074310303,
+  "results_file": "eval_results/SHA/vgg16_bn_drop700_apg_lc_seed42_tta_threshold_sweep/score_0p59_split_0p45.json",
+  "log_file": "eval_results/SHA/vgg16_bn_drop700_apg_lc_seed42_tta_threshold_sweep/score_0p59_split_0p45.log",
+  "epoch": 585,
+  "eval_mae": 50.57692307692308,
+  "eval_mse": 80.14694608675347,
+  "pred_cnt": 426.47802197802196,
+  "gt_cnt": 433.3076923076923,
+  "checkpoint": "outputs/SHA/vgg16_bn_drop700_apg_lc_seed42/best_checkpoint.pth",
+  "eval_model": "model",
+  "ok": true
+}

@@ -1,0 +1,20 @@
+{
+  "backbone": "convnextv2_base",
+  "dataset_file": "SHA",
+  "trials": 5,
+  "trials_completed": 5,
+  "seed_aggregate": "mean",
+  "extra_args": "--epochs 150 --patch_size 256",
+  "best_value": 60.84065934065934,
+  "best_params": {
+    "lr": 1.5295261717688444e-05,
+    "lr_backbone": 1.667217525108323e-05,
+    "batch_size": 2,
+    "warmup": 9,
+    "score_threshold": 0.42577271586472343
+  },
+  "best_trial_number": 1,
+  "per_seed_mae": [
+    60.84065934065934
+  ]
+}

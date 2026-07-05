@@ -1,0 +1,18 @@
+{
+  "ok": false,
+  "backbone": "resnet50",
+  "dir": "results/resnet50/final_train",
+  "checkpoint": "outputs/SHA/results/resnet50/final_train/best_checkpoint.pth",
+  "checkpoint_name": "best_checkpoint.pth",
+  "eval_epoch": null,
+  "eval_mae": null,
+  "eval_mse": null,
+  "returncode": 1,
+  "error": "eval.py exited with return code 1",
+  "log_path": "eval_results/SHA/all_checkpoint_eval_s0575_split047/results__resnet50__final_train/eval_log.txt",
+  "evaluated_at": "2026-06-13T10:22:26",
+  "train_best_mae": 68.18131868131869,
+  "train_best_mse": 100.06731250996518,
+  "best_epoch": 285,
+  "checkpoint_epoch": 285
+}

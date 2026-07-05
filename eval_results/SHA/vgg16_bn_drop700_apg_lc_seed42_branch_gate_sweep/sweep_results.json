@@ -1,0 +1,93 @@
+[
+  {
+    "score_threshold": 0.42,
+    "split_threshold": 0.45,
+    "eval_nms_radius": 0.0,
+    "eval_branch_gate": "none",
+    "tta_flip": false,
+    "returncode": 1,
+    "elapsed_sec": 2.593305826187134,
+    "results_file": "eval_results/SHA/vgg16_bn_drop700_apg_lc_seed42_branch_gate_sweep/score_0p42_split_0p45_nms_0_gate_none.json",
+    "log_file": "eval_results/SHA/vgg16_bn_drop700_apg_lc_seed42_branch_gate_sweep/score_0p42_split_0p45_nms_0_gate_none.log",
+    "ok": false,
+    "error": "eval.py failed with return code 1"
+  },
+  {
+    "score_threshold": 0.45,
+    "split_threshold": 0.45,
+    "eval_nms_radius": 0.0,
+    "eval_branch_gate": "none",
+    "tta_flip": false,
+    "returncode": 1,
+    "elapsed_sec": 2.521113157272339,
+    "results_file": "eval_results/SHA/vgg16_bn_drop700_apg_lc_seed42_branch_gate_sweep/score_0p45_split_0p45_nms_0_gate_none.json",
+    "log_file": "eval_results/SHA/vgg16_bn_drop700_apg_lc_seed42_branch_gate_sweep/score_0p45_split_0p45_nms_0_gate_none.log",
+    "ok": false,
+    "error": "eval.py failed with return code 1"
+  },
+  {
+    "score_threshold": 0.48,
+    "split_threshold": 0.45,
+    "eval_nms_radius": 0.0,
+    "eval_branch_gate": "none",
+    "tta_flip": false,
+    "returncode": 1,
+    "elapsed_sec": 2.4908580780029297,
+    "results_file": "eval_results/SHA/vgg16_bn_drop700_apg_lc_seed42_branch_gate_sweep/score_0p48_split_0p45_nms_0_gate_none.json",
+    "log_file": "eval_results/SHA/vgg16_bn_drop700_apg_lc_seed42_branch_gate_sweep/score_0p48_split_0p45_nms_0_gate_none.log",
+    "ok": false,
+    "error": "eval.py failed with return code 1"
+  },
+  {
+    "score_threshold": 0.5,
+    "split_threshold": 0.45,
+    "eval_nms_radius": 0.0,
+    "eval_branch_gate": "none",
+    "tta_flip": false,
+    "returncode": 1,
+    "elapsed_sec": 2.5033504962921143,
+    "results_file": "eval_results/SHA/vgg16_bn_drop700_apg_lc_seed42_branch_gate_sweep/score_0p5_split_0p45_nms_0_gate_none.json",
+    "log_file": "eval_results/SHA/vgg16_bn_drop700_apg_lc_seed42_branch_gate_sweep/score_0p5_split_0p45_nms_0_gate_none.log",
+    "ok": false,
+    "error": "eval.py failed with return code 1"
+  },
+  {
+    "score_threshold": 0.52,
+    "split_threshold": 0.45,
+    "eval_nms_radius": 0.0,
+    "eval_branch_gate": "none",
+    "tta_flip": false,
+    "returncode": 1,
+    "elapsed_sec": 2.513762950897217,
+    "results_file": "eval_results/SHA/vgg16_bn_drop700_apg_lc_seed42_branch_gate_sweep/score_0p52_split_0p45_nms_0_gate_none.json",
+    "log_file": "eval_results/SHA/vgg16_bn_drop700_apg_lc_seed42_branch_gate_sweep/score_0p52_split_0p45_nms_0_gate_none.log",
+    "ok": false,
+    "error": "eval.py failed with return code 1"
+  },
+  {
+    "score_threshold": 0.54,
+    "split_threshold": 0.45,
+    "eval_nms_radius": 0.0,
+    "eval_branch_gate": "none",
+    "tta_flip": false,
+    "returncode": 1,
+    "elapsed_sec": 2.503335475921631,
+    "results_file": "eval_results/SHA/vgg16_bn_drop700_apg_lc_seed42_branch_gate_sweep/score_0p54_split_0p45_nms_0_gate_none.json",
+    "log_file": "eval_results/SHA/vgg16_bn_drop700_apg_lc_seed42_branch_gate_sweep/score_0p54_split_0p45_nms_0_gate_none.log",
+    "ok": false,
+    "error": "eval.py failed with return code 1"
+  },
+  {
+    "score_threshold": 0.55,
+    "split_threshold": 0.45,
+    "eval_nms_radius": 0.0,
+    "eval_branch_gate": "none",
+    "tta_flip": false,
+    "returncode": 1,
+    "elapsed_sec": 2.515519142150879,
+    "results_file": "eval_results/SHA/vgg16_bn_drop700_apg_lc_seed42_branch_gate_sweep/score_0p55_split_0p45_nms_0_gate_none.json",
+    "log_file": "eval_results/SHA/vgg16_bn_drop700_apg_lc_seed42_branch_gate_sweep/score_0p55_split_0p45_nms_0_gate_none.log",
+    "ok": false,
+    "error": "eval.py failed with return code 1"
+  }
+]

@@ -1,0 +1,9 @@
+{
+  "epoch": 290,
+  "eval_mae": 55.21978021978022,
+  "eval_mse": 89.72234337721514,
+  "pred_cnt": 429.72527472527474,
+  "gt_cnt": 433.3076923076923,
+  "checkpoint": "outputs/SHA/convnextv2_base_fpn_gelu_prenorm_d2/best_checkpoint.pth",
+  "eval_model": "model"
+}

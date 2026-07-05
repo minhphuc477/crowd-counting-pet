@@ -1,0 +1,17 @@
+{
+  "ok": false,
+  "backbone": "maxvit_rmlp_tiny",
+  "dir": "maxvit_rmlp_tiny_rw_256_base",
+  "checkpoint": "outputs/SHA/maxvit_rmlp_tiny_rw_256_base/best_checkpoint.pth",
+  "checkpoint_name": "best_checkpoint.pth",
+  "eval_epoch": null,
+  "eval_mae": null,
+  "eval_mse": null,
+  "returncode": 1,
+  "error": "eval.py exited with return code 1",
+  "log_path": "eval_results/SHA/all_checkpoint_eval_s0575_split047/maxvit_rmlp_tiny_rw_256_base/eval_log.txt",
+  "evaluated_at": "2026-06-13T10:20:29",
+  "train_best_mae": 59.57692337036133,
+  "best_epoch": 320,
+  "checkpoint_epoch": 320
+}

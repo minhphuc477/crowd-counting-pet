@@ -1,0 +1,28 @@
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+Unexpected keys (bn2.num_batches_tracked, bn2.bias, bn2.running_mean, bn2.running_var, bn2.weight, classifier.bias, classifier.weight, conv_head.weight) found while loading pretrained weights. This may be expected if model is being adapted.
+Not using distributed mode
+Namespace(lr=0.00012894163245916047, lr_backbone=1.497968468971324e-06, batch_size=4, weight_decay=0.0001, epochs=1500, lr_scheduler='warmup_hold_cosine', warmup_epochs=4, hold_epochs=-1, min_lr=1e-07, clip_max_norm=0.1, backbone='efficientnet_b0', list_backbones=False, no_pretrained_backbone=False, position_embedding='sine', dec_layers=2, dim_feedforward=512, hidden_dim=256, dropout=0.0, nheads=8, set_cost_class=1, set_cost_point=0.05, ce_loss_coef=1.0, point_loss_coef=5.0, eos_coef=0.5, negative_loss_coef=0.1, non_div_loss_coef=0.25, quadtree_loss_coef=0.1, quadtree_prior_coef=0.025, split_count_threshold=2, split_pos_weight=1.0, split_threshold=0.5, split_threshold_quantile=0.55, score_threshold=0.5457016727605626, dataset_file='SHA', data_path='', patch_size=256, crop_attempts=8, min_crop_points=1, output_dir='results/efficientnet_b0/final_train', device='cuda', seed=7, resume='outputs/SHA/results/efficientnet_b0/final_train/best_checkpoint.pth', start_epoch=0, num_workers=2, eval_freq=5, syn_bn=0, world_size=1, dist_url='env://', distributed=False, enc_layers=4, sparse_stride=8, dense_stride=4, override_score_threshold=None, vis_dir='', override_split_threshold=None, override_split_threshold_quantile=None)
+params: 10.093445
+Test:  [  0/182]  eta: 0:01:02  mae: 62.0000 (62.0000)  time: 0.3458  data: 0.0394  max mem: 1712
+Test:  [ 10/182]  eta: 0:00:13  mae: 58.0000 (78.3636)  time: 0.0763  data: 0.0076  max mem: 1720
+Test:  [ 20/182]  eta: 0:00:10  mae: 75.0000 (85.5714)  time: 0.0479  data: 0.0030  max mem: 1720
+Test:  [ 30/182]  eta: 0:00:08  mae: 75.0000 (81.4839)  time: 0.0452  data: 0.0015  max mem: 1720
+Test:  [ 40/182]  eta: 0:00:07  mae: 35.0000 (82.5366)  time: 0.0443  data: 0.0014  max mem: 2277
+Test:  [ 50/182]  eta: 0:00:06  mae: 37.0000 (76.7451)  time: 0.0384  data: 0.0012  max mem: 2277
+Test:  [ 60/182]  eta: 0:00:05  mae: 53.0000 (77.0492)  time: 0.0336  data: 0.0011  max mem: 2277
+Test:  [ 70/182]  eta: 0:00:05  mae: 52.0000 (73.8310)  time: 0.0369  data: 0.0012  max mem: 2277
+Test:  [ 80/182]  eta: 0:00:04  mae: 30.0000 (69.7654)  time: 0.0407  data: 0.0013  max mem: 2277
+Test:  [ 90/182]  eta: 0:00:04  mae: 21.0000 (67.7033)  time: 0.0435  data: 0.0013  max mem: 2277
+Test:  [100/182]  eta: 0:00:03  mae: 35.0000 (64.8911)  time: 0.0479  data: 0.0015  max mem: 2277
+Test:  [110/182]  eta: 0:00:03  mae: 36.0000 (64.7207)  time: 0.0461  data: 0.0015  max mem: 2277
+Test:  [120/182]  eta: 0:00:02  mae: 59.0000 (64.3058)  time: 0.0431  data: 0.0014  max mem: 2277
+Test:  [130/182]  eta: 0:00:02  mae: 30.0000 (63.0840)  time: 0.0459  data: 0.0015  max mem: 2277
+Test:  [140/182]  eta: 0:00:01  mae: 30.0000 (62.7801)  time: 0.0431  data: 0.0014  max mem: 2277
+Test:  [150/182]  eta: 0:00:01  mae: 43.0000 (64.1523)  time: 0.0394  data: 0.0014  max mem: 2277
+Test:  [160/182]  eta: 0:00:00  mae: 44.0000 (66.2484)  time: 0.0406  data: 0.0013  max mem: 2277
+Test:  [170/182]  eta: 0:00:00  mae: 44.0000 (64.6608)  time: 0.0443  data: 0.0013  max mem: 2277
+Test:  [180/182]  eta: 0:00:00  mae: 35.0000 (65.7680)  time: 0.0407  data: 0.0012  max mem: 2277
+Test:  [181/182]  eta: 0:00:00  mae: 35.0000 (65.7418)  time: 0.0396  data: 0.0012  max mem: 2277
+Test: Total time: 0:00:08 (0.0442 s / it)
+
+epoch: 595, mae: 65.74175824175825, mse: 100.57032420097943

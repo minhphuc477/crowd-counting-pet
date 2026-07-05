@@ -1,0 +1,23 @@
+{
+  "epoch": 680,
+  "eval_mae": 252.5164835164835,
+  "eval_mse": 298.2606353399768,
+  "pred_cnt": 685.0439560439561,
+  "gt_cnt": 433.3076923076923,
+  "checkpoint": "outputs/SHA/vgg16_bn_scratch_apglc_countcal_seed42/best_checkpoint.pth",
+  "eval_model": "model",
+  "eval_protocol": "pet",
+  "tta_flip": false,
+  "tta_scales": [
+    1.0
+  ],
+  "eval_nms_radius": 0.0,
+  "eval_branch_gate": "none",
+  "eval_soft_split_gate": "none",
+  "eval_count_mode": "threshold",
+  "eval_count_head_min_score": 0.5,
+  "eval_score_calibration": "none",
+  "eval_score_calibration_strength": 1.0,
+  "eval_score_calibration_max_bias": 8.0,
+  "eval_filter_invalid_points": true
+}

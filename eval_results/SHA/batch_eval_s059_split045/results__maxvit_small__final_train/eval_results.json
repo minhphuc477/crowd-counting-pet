@@ -1,0 +1,18 @@
+{
+  "ok": false,
+  "backbone": "maxvit_small",
+  "dir": "results/maxvit_small/final_train",
+  "checkpoint": "outputs/SHA/results/maxvit_small/final_train/best_checkpoint.pth",
+  "checkpoint_name": "best_checkpoint.pth",
+  "eval_epoch": null,
+  "eval_mae": null,
+  "eval_mse": null,
+  "returncode": 1,
+  "error": "eval.py exited with return code 1",
+  "log_path": "eval_results/SHA/batch_eval_s059_split045/results__maxvit_small__final_train/eval_log.txt",
+  "evaluated_at": "2026-06-11T16:37:28",
+  "train_best_mae": 107.8956043956044,
+  "train_best_mse": 175.2905750868703,
+  "best_epoch": 380,
+  "checkpoint_epoch": 380
+}

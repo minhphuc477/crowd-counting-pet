@@ -1,0 +1,11 @@
+{
+  "backbone": "efficientnetv2_small",
+  "checkpoint": "outputs/SHA/results/efficientnetv2_small/final_train/best_checkpoint.pth",
+  "eval_mae": 75.04395604395604,
+  "eval_mse": 115.98190461361719,
+  "train_best_mae": 75.04395604395604,
+  "train_best_mse": 115.98190461361719,
+  "best_epoch": 535,
+  "total_epochs": 536,
+  "optuna_search_mae": 131.96153846153845
+}

@@ -1,0 +1,27 @@
+{
+  "score_threshold": 0.68,
+  "split_threshold": 0.45,
+  "eval_nms_radius": 4.0,
+  "eval_branch_gate": "none",
+  "eval_soft_split_gate": "pred",
+  "eval_count_mode": "threshold",
+  "eval_count_head_min_score": 0.5,
+  "eval_protocol": "pet",
+  "tta_flip": false,
+  "tta_scales": [
+    1.0
+  ],
+  "returncode": 0,
+  "elapsed_sec": 27.42615270614624,
+  "results_file": "eval_results/SHA/convnextv2_base_rccfpn_ce_safe_apg_seed42_sweep/score_0p68_split_0p45_nms_4_gate_none_soft_pred_count_threshold_min_0p5.json",
+  "log_file": "eval_results/SHA/convnextv2_base_rccfpn_ce_safe_apg_seed42_sweep/score_0p68_split_0p45_nms_4_gate_none_soft_pred_count_threshold_min_0p5.log",
+  "epoch": 910,
+  "eval_mae": 74.47252747252747,
+  "eval_mse": 120.6329461312609,
+  "pred_cnt": 413.86813186813185,
+  "gt_cnt": 433.3076923076923,
+  "checkpoint": "outputs/SHA/convnextv2_base_rccfpn_ce_safe_apg_seed42/best_checkpoint.pth",
+  "eval_model": "model",
+  "eval_filter_invalid_points": true,
+  "ok": true
+}
