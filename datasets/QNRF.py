@@ -238,7 +238,7 @@ def _find_points_array(value):
     return None
 
 
-def load_points(gt_path, image_size=None):
+def load_raw_points_xy(gt_path):
     if not gt_path or not os.path.exists(gt_path):
         return np.empty((0, 2), dtype=np.float32)
 
@@ -263,19 +263,31 @@ def load_points(gt_path, image_size=None):
     points = np.asarray(points, dtype=np.float32)
     if points.size == 0:
         return np.empty((0, 2), dtype=np.float32)
+    points = points.reshape(-1, 2)
+    if not np.isfinite(points).all():
+        invalid_count = int((~np.isfinite(points).all(axis=1)).sum())
+        raise ValueError(
+            f'Annotation file contains {invalid_count} non-finite point(s): {gt_path}'
+        )
+    return points
+
+
+def load_points(gt_path, image_size=None):
+    points = load_raw_points_xy(gt_path)
+    if points.size == 0:
+        return np.empty((0, 2), dtype=np.float32)
 
     # UCF-QNRF stores points as (x, y); PET targets use (y, x).
-    points = points.reshape(-1, 2)[:, ::-1].copy()
+    points = points[:, ::-1].copy()
 
-    if image_size is not None and points.shape[0] > 0:
+    if image_size is not None:
         height, width = image_size
-        keep = (
-            (points[:, 0] >= 0)
-            & (points[:, 0] < height)
-            & (points[:, 1] >= 0)
-            & (points[:, 1] < width)
-        )
-        points = points[keep]
+        if int(height) <= 0 or int(width) <= 0:
+            raise ValueError(f'image_size must be positive, got {image_size}')
+        # Do not remove finite annotations here. PET's released QNRF
+        # preprocessing preserves every annPoints row, and benchmark MAE/MSE
+        # use that exact per-image count. The dataset audit reports any points
+        # outside the decoded image bounds so malformed data remains visible.
 
     return points.astype(np.float32, copy=False)
 

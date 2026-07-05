@@ -57,6 +57,7 @@ def main_audit():
     cli.add_argument('--image-size', type=int, default=256)
     cli.add_argument('--pretrained', action='store_true')
     cli.add_argument('--skip-eval', action='store_true')
+    cli.add_argument('--skip-train', action='store_true')
     audit_args = cli.parse_args()
 
     requested = [
@@ -114,22 +115,25 @@ def main_audit():
             if torch.is_tensor(value) and key in {'pred_logits', 'pred_points', 'pred_offsets', 'points_queries'}
         }
 
-    model.train()
-    model.zero_grad(set_to_none=True)
-    train_output = model(samples, epoch=6, train=True, criterion=criterion, targets=targets)
-    total_loss = train_output['losses']
-    total_loss.backward()
-    loss_values = {
-        key: float(value.detach().cpu())
-        for key, value in train_output['loss_dict'].items()
-        if torch.is_tensor(value)
-    }
-    loss_values['losses'] = float(total_loss.detach().cpu())
-    gradient_stats = _tensor_dict_stats({
-        name: parameter.grad
-        for name, parameter in model.named_parameters()
-        if parameter.grad is not None
-    })
+    loss_values = {}
+    gradient_stats = {}
+    if not audit_args.skip_train:
+        model.train()
+        model.zero_grad(set_to_none=True)
+        train_output = model(samples, epoch=6, train=True, criterion=criterion, targets=targets)
+        total_loss = train_output['losses']
+        total_loss.backward()
+        loss_values = {
+            key: float(value.detach().cpu())
+            for key, value in train_output['loss_dict'].items()
+            if torch.is_tensor(value)
+        }
+        loss_values['losses'] = float(total_loss.detach().cpu())
+        gradient_stats = _tensor_dict_stats({
+            name: parameter.grad
+            for name, parameter in model.named_parameters()
+            if parameter.grad is not None
+        })
 
     payload = {
         'args': vars(args),

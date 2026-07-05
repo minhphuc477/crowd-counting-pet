@@ -87,6 +87,10 @@ MODEL_RECIPES = {
         'eval_nms_radius': 0.0,
         'eval_branch_gate': 'none',
         'eval_soft_split_gate': 'none',
+        # Released PET counts every score-thresholded query, including a
+        # regressed point just outside the valid image area. Keep the stricter
+        # filter available for new models, but disable it in this parity recipe.
+        'no_eval_filter_invalid_points': True,
         'score_threshold': 0.5,
         'split_threshold': 0.5,
         'split_threshold_quantile': 0.5,

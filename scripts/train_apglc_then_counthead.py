@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Run PET with paper-aligned APG/IFI followed by count-head adaptation.
+"""Run PET with APG+LC followed by optional count-head adaptation.
 
-The detector architecture is identical in both stages. Stage 2 initializes the
-additional density-sum count head and applies its low-gradient auxiliary objective;
-inference continues to use normal PET point thresholding.
+IFI variants are explicit ablations and are never selected by default. Stage 2
+initializes the additional density-sum count head; inference continues to use
+normal PET point thresholding.
 """
 
 from __future__ import annotations
@@ -25,14 +25,15 @@ def resolve_output_path(value: str, dataset_file: str) -> Path:
     return Path("outputs") / dataset_file / path
 
 
-def run(cmd: list[str]) -> None:
+def run(cmd: list[str], dry_run: bool = False) -> None:
     print("\n" + " ".join(cmd) + "\n", flush=True)
-    subprocess.run(cmd, cwd=REPO_ROOT, check=True)
+    if not dry_run:
+        subprocess.run(cmd, cwd=REPO_ROOT, check=True)
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Train PET with APG/IFI, then adapt it with an auxiliary density-sum count head."
+        description="Train PET with APG+LC, then adapt it with an auxiliary density-sum count head."
     )
     parser.add_argument("--data_path", default="./data/ShanghaiTech/part_A")
     parser.add_argument("--dataset_file", default="SHA")
@@ -45,8 +46,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--stage2_output", default=None)
     parser.add_argument("--stage1_recipe", default=None)
     parser.add_argument("--stage2_recipe", default=None)
-    parser.add_argument("--ifi_variant", default="robust", choices=("robust", "paper", "branch", "unified"),
-                        help="robust preserves native PET features with residual IFI; paper/branch/unified are ablations")
+    parser.add_argument(
+        "--ifi_variant",
+        default="none",
+        choices=("none", "robust", "paper", "branch", "unified"),
+        help="none runs established APG+LC; every IFI value is an explicit ablation",
+    )
     parser.add_argument("--seed", default=42, type=int)
     parser.add_argument("--stage1_epochs", default=1500, type=int)
     parser.add_argument("--stage2_epochs", default=120, type=int)
@@ -79,6 +84,8 @@ def parse_args() -> argparse.Namespace:
                         help="reuse stage1_output/best_checkpoint.pth and only run the count-head stage")
     parser.add_argument("--resume_existing", action="store_true",
                         help="resume each stage from its own checkpoint.pth when present")
+    parser.add_argument("--dry_run", action="store_true",
+                        help="print the resolved stage commands without launching training")
     parser.add_argument("--stage1_extra_args", default="",
                         help="extra args appended to the APG+LC stage, shell-style quoted")
     parser.add_argument("--stage2_extra_args", default="",
@@ -90,8 +97,15 @@ def parse_args() -> argparse.Namespace:
         if token.startswith("--")
     }
     is_nwpu = args.dataset_file in ("NWPU", "NWPU_Crowd", "NWPU-Crowd")
+    is_sha = args.dataset_file in ("SHA", "ShanghaiTech_A")
     if args.stage1_recipe is None:
-        if args.ifi_variant == "robust":
+        if args.ifi_variant == "none":
+            args.stage1_recipe = (
+                "vgg_apglc_nwpu_tail"
+                if is_nwpu
+                else "vgg_apglc"
+            )
+        elif args.ifi_variant == "robust":
             args.stage1_recipe = (
                 "vgg_pet_apg_rifi_nwpu"
                 if is_nwpu
@@ -116,7 +130,19 @@ def parse_args() -> argparse.Namespace:
                 else "vgg_apglc_branch_ifi"
             )
     if args.stage2_recipe is None:
-        if args.ifi_variant == "robust":
+        if args.ifi_variant == "none":
+            if is_nwpu:
+                args.stage2_recipe = "vgg_apglc_counthead_stage2_nwpu"
+            elif is_sha:
+                # This is the only archived stage-2 configuration that
+                # produced the approximately 48.8 SHA result. Keep the
+                # checkpoint adaptation visible in the recipe name.
+                args.stage2_recipe = "vgg_apglc_density_counthead_ft_legacy"
+                if "stage2_epochs" not in args._explicit_args:
+                    args.stage2_epochs = 80
+            else:
+                args.stage2_recipe = "vgg_apglc_counthead_stage2_adapt"
+        elif args.ifi_variant == "robust":
             args.stage2_recipe = (
                 "vgg_pet_apg_rifi_counthead_stage2_nwpu"
                 if is_nwpu
@@ -142,10 +168,19 @@ def parse_args() -> argparse.Namespace:
             )
     dataset_dir = args.dataset_file
     if args.stage1_output is None:
-        run_name = f"vgg16_bn_apglc_{args.ifi_variant}_ifi_stage1_seed{args.seed}"
+        if args.ifi_variant == "none":
+            run_name = f"vgg16_bn_apglc_stage1_seed{args.seed}"
+        else:
+            run_name = f"vgg16_bn_apglc_{args.ifi_variant}_ifi_stage1_seed{args.seed}"
         args.stage1_output = str(Path("outputs") / dataset_dir / run_name)
     if args.stage2_output is None:
-        run_name = f"vgg16_bn_apglc_{args.ifi_variant}_ifi_counthead_stage2_seed{args.seed}"
+        if args.ifi_variant == "none":
+            if is_sha:
+                run_name = f"vgg16_bn_apglc_density_counthead_recovery_seed{args.seed}"
+            else:
+                run_name = f"vgg16_bn_apglc_counthead_stage2_seed{args.seed}"
+        else:
+            run_name = f"vgg16_bn_apglc_{args.ifi_variant}_ifi_counthead_stage2_seed{args.seed}"
         args.stage2_output = str(Path("outputs") / dataset_dir / run_name)
     return args
 
@@ -222,13 +257,13 @@ def main() -> int:
         stage1_latest = stage1_output / "checkpoint.pth"
         if args.resume_existing and stage1_latest.is_file():
             stage1_command.extend(["--resume", str(stage1_latest)])
-        run(stage1_command)
+        run(stage1_command, dry_run=args.dry_run)
 
-    if not args.stage1_checkpoint:
+    if not args.stage1_checkpoint and not args.dry_run:
         complete_best = stage1_output / "best_complete_checkpoint.pth"
         if complete_best.is_file():
             stage1_best = complete_best
-    if not stage1_best.is_file():
+    if not args.dry_run and not stage1_best.is_file():
         raise FileNotFoundError(f"stage-1 best checkpoint not found: {stage1_best}")
 
     stage2_command = [
@@ -253,7 +288,7 @@ def main() -> int:
             "--resume", str(stage1_best),
             "--resume_model_only",
         ])
-    run(stage2_command)
+    run(stage2_command, dry_run=args.dry_run)
     return 0
 
 

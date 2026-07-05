@@ -14,10 +14,11 @@ from datasets.JHU import load_jhu_annotation
 from datasets.NWPU import build as build_nwpu
 from datasets.NWPU import _sigma_from_boxes
 from datasets.QNRF import build as build_qnrf
+from datasets.QNRF import load_points as load_qnrf_points
 from datasets.QNRF import resize_long_side
 from datasets.SHA import fixed_partial_annotation_mask
 from datasets import build_dataset
-from main import ModelEma, resolve_validation_protocol
+from main import ModelEma, apply_model_recipe, get_args_parser, resolve_validation_protocol
 from models.matcher import HungarianMatcher, get_query_supervision_mask
 
 
@@ -160,6 +161,49 @@ class HighResolutionDatasetContractTests(unittest.TestCase):
             image, target = build_qnrf('train_eval', self._args(root))[0]
             self.assertEqual(tuple(image.shape[-2:]), (50, 100))
             self.assertEqual(target['points'].tolist(), [[25.0, 50.0]])
+
+    def test_qnrf_loader_preserves_finite_annotation_count(self):
+        with tempfile.TemporaryDirectory() as directory:
+            annotation = Path(directory) / 'img_0001_ann.mat'
+            savemat(
+                annotation,
+                {
+                    'annPoints': np.asarray(
+                        [[10.0, 20.0], [100.0, 50.0], [-1.0, 5.0]],
+                        dtype=np.float32,
+                    ),
+                },
+            )
+            points = load_qnrf_points(
+                str(annotation),
+                image_size=(50, 100),
+            )
+            self.assertEqual(points.shape, (3, 2))
+            self.assertEqual(
+                points.tolist(),
+                [[20.0, 10.0], [50.0, 100.0], [5.0, -1.0]],
+            )
+
+    def test_qnrf_loader_rejects_nonfinite_annotations(self):
+        with tempfile.TemporaryDirectory() as directory:
+            annotation = Path(directory) / 'img_0001_ann.mat'
+            savemat(
+                annotation,
+                {
+                    'annPoints': np.asarray(
+                        [[10.0, 20.0], [np.nan, 50.0]],
+                        dtype=np.float32,
+                    ),
+                },
+            )
+            with self.assertRaisesRegex(ValueError, 'non-finite'):
+                load_qnrf_points(str(annotation), image_size=(50, 100))
+
+    def test_paper_recipe_uses_released_pet_count_filtering(self):
+        args = get_args_parser().parse_args(['--model_recipe', 'vgg_pet_paper'])
+        args._explicit_args = set()
+        apply_model_recipe(args)
+        self.assertTrue(args.no_eval_filter_invalid_points)
 
     def test_resize_uses_real_rounded_axis_scales(self):
         image = Image.new('RGB', (101, 53))
