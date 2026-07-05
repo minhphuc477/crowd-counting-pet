@@ -120,7 +120,6 @@ work_dirs/
 *.sh~
 
 # Local files
-outputs/
 data/
 tmp/
 pretrained/
