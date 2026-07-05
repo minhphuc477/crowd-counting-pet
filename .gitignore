@@ -127,3 +127,4 @@ pretrained/
 
 # Markdown notes and documentation
 *.md
+.audit/
