@@ -1,3 +1,9 @@
+<<<<<<< HEAD
 ok,score_threshold,split_threshold,eval_nms_radius,eval_branch_gate,eval_soft_split_gate,eval_protocol,tta_flip,tta_scales,eval_mae,eval_mse,pred_cnt,gt_cnt,epoch,returncode,elapsed_sec,results_file,log_file
 True,0.54,0.45,0.0,none,none,pet,False,[1.0],50.934065934065934,79.52848684452772,435.9120879120879,433.3076923076923,585,0,10.966030359268188,eval_results/SHA/verify_apglc_best_sweep/score_0p54_split_0p45_nms_0_gate_none_soft_none.json,eval_results/SHA/verify_apglc_best_sweep/score_0p54_split_0p45_nms_0_gate_none_soft_none.log
 True,0.55,0.45,0.0,none,none,pet,False,[1.0],50.994505494505496,79.44992894138552,434.2032967032967,433.3076923076923,585,0,10.960026741027832,eval_results/SHA/verify_apglc_best_sweep/score_0p55_split_0p45_nms_0_gate_none_soft_none.json,eval_results/SHA/verify_apglc_best_sweep/score_0p55_split_0p45_nms_0_gate_none_soft_none.log
+=======
+ok,score_threshold,split_threshold,eval_nms_radius,eval_branch_gate,eval_soft_split_gate,eval_protocol,tta_flip,tta_scales,eval_mae,eval_mse,pred_cnt,gt_cnt,epoch,returncode,elapsed_sec,results_file,log_file
+True,0.54,0.45,0.0,none,none,pet,False,[1.0],50.934065934065934,79.52848684452772,435.9120879120879,433.3076923076923,585,0,10.966030359268188,eval_results/SHA/verify_apglc_best_sweep/score_0p54_split_0p45_nms_0_gate_none_soft_none.json,eval_results/SHA/verify_apglc_best_sweep/score_0p54_split_0p45_nms_0_gate_none_soft_none.log
+True,0.55,0.45,0.0,none,none,pet,False,[1.0],50.994505494505496,79.44992894138552,434.2032967032967,433.3076923076923,585,0,10.960026741027832,eval_results/SHA/verify_apglc_best_sweep/score_0p55_split_0p45_nms_0_gate_none_soft_none.json,eval_results/SHA/verify_apglc_best_sweep/score_0p55_split_0p45_nms_0_gate_none_soft_none.log
+>>>>>>> 845bc033b06ad7b6d6cdfef8c59aa803bb1e7450
