@@ -2802,12 +2802,18 @@ def sanitize_unstable_training_args(args):
         apg_coef = float(getattr(args, 'apg_loss_coef', 0.0))
         apg_bg_coef = float(getattr(args, 'apg_bg_coef', 0.0))
         apg_bg_k = int(getattr(args, 'apg_bg_k', 0))
+        recipe = MODEL_RECIPES.get(recipe_name, {})
+        recipe_defines_apg_bg = (
+            'apg_bg_coef' in recipe
+            or 'apg_bg_k' in recipe
+        )
         if (
             apg_coef > 0
             and apg_bg_coef <= 0
             and apg_bg_k <= 0
             and 'apg_bg_coef' not in explicit_args
             and 'apg_bg_k' not in explicit_args
+            and not recipe_defines_apg_bg
         ):
             print(
                 'WARNING: positive-only APG on a fresh timm backbone caused severe SHA over-counting. '
