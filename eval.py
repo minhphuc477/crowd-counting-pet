@@ -317,9 +317,9 @@ def get_args_parser():
     parser.add_argument('--split_threshold_quantile', default=0.5, type=float)
     parser.add_argument('--query_prune_threshold', default=0.5, type=float)
     parser.add_argument('--score_threshold', default=0.5, type=float)
-    parser.add_argument('--eval_nms_radius', default=4.0, type=float)
-    parser.add_argument('--eval_branch_gate', default='pred', choices=('none', 'query', 'pred'))
-    parser.add_argument('--eval_soft_split_gate', default='pred', choices=('none', 'query', 'pred'))
+    parser.add_argument('--eval_nms_radius', default=0.0, type=float)
+    parser.add_argument('--eval_branch_gate', default='none', choices=('none', 'query', 'pred'))
+    parser.add_argument('--eval_soft_split_gate', default='none', choices=('none', 'query', 'pred'))
     parser.add_argument('--eval_foreground_gate', default='none', choices=('none', 'query', 'pred'))
     parser.add_argument('--eval_foreground_gate_mode', default='suppress', choices=('suppress', 'logit_add'))
     parser.add_argument('--eval_foreground_gate_strength', default=0.75, type=float)
@@ -817,9 +817,9 @@ def main(args):
             'score_threshold': float(getattr(args, 'score_threshold', 0.5)),
             'split_threshold': float(getattr(args, 'split_threshold', 0.5)),
             'query_prune_threshold': float(getattr(args, 'query_prune_threshold', 0.5)),
-            'eval_nms_radius': float(getattr(args, 'eval_nms_radius', 4.0)),
-            'eval_branch_gate': getattr(args, 'eval_branch_gate', 'pred'),
-            'eval_soft_split_gate': getattr(args, 'eval_soft_split_gate', 'pred'),
+            'eval_nms_radius': float(getattr(args, 'eval_nms_radius', 0.0)),
+            'eval_branch_gate': getattr(args, 'eval_branch_gate', 'none'),
+            'eval_soft_split_gate': getattr(args, 'eval_soft_split_gate', 'none'),
             'eval_count_mode': getattr(args, 'eval_count_mode', 'threshold'),
             'eval_count_source': getattr(args, 'eval_count_source', 'pet'),
             'eval_count_blend_alpha': float(getattr(args, 'eval_count_blend_alpha', 0.5)),
