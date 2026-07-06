@@ -1381,6 +1381,31 @@ MODEL_RECIPES['vgg_apglc_ebczip'] = {
     'eval_count_source': 'zip',
 }
 
+# QNRF Tail-Gated ZIP PET.
+#
+# QNRF's remaining error is dominated by dense high-count images. A pure ZIP
+# replacement regressed SHA/QNRF in earlier runs, so this recipe keeps APG+LC
+# point predictions as the default count and only blends toward a detached ZIP
+# head when PET itself predicts a tail-count scene. Wider bins and 32px blocks
+# avoid the low ceiling of the generic ZIP ablation.
+MODEL_RECIPES['vgg_apglc_qnrf_zip_tail'] = {
+    **MODEL_RECIPES['vgg_apglc'],
+    'zip_count_loss_coef': 1.0,
+    'zip_count_block_size': 32,
+    'zip_count_feature_source': 'fpn4x8x',
+    'zip_count_bin_centers': '1,2,3,4,6,8,12,16,24,32,48,64,96',
+    'zip_count_zero_prior': 0.8,
+    'zip_count_ce_coef': 1.0,
+    'zip_count_count_coef': 1.0,
+    'zip_count_start_epoch': 0,
+    'zip_count_end_epoch': -1,
+    'zip_count_warmup_epochs': 20,
+    'zip_count_feature_grad_scale': 0.0,
+    'eval_count_source': 'zip_tail_blend',
+    'eval_count_blend_alpha': 0.5,
+    'eval_count_tail_threshold': 800.0,
+}
+
 # NWPU Tail-Robust APG+LC.
 #
 # NWPU differs from SHA in the exact way that broke the current run: it has
@@ -1698,6 +1723,7 @@ EXPERIMENTAL_MODEL_RECIPES = {
     'vgg_apglc_quality',
     'vgg_apglc_localzip',
     'vgg_apglc_ebczip',
+    'vgg_apglc_qnrf_zip_tail',
     'vgg_routed_apglc_countcal',
 }
 
@@ -2393,10 +2419,12 @@ def get_args_parser():
                         help='foreground gate strength during evaluation')
     parser.add_argument('--eval_count_mode', default='threshold', choices=('threshold', 'count_head_topk'),
                         help='threshold keeps PET behavior; count_head_topk keeps top-K APG candidates using the separate count head')
-    parser.add_argument('--eval_count_source', default='pet', choices=('pet', 'zip', 'zip_pet_blend'),
-                        help='count used for MAE/RMSE: pet counts thresholded point predictions; zip sums the EBC-ZIP count branch; zip_pet_blend mixes both')
+    parser.add_argument('--eval_count_source', default='pet', choices=('pet', 'zip', 'zip_pet_blend', 'zip_tail_blend'),
+                        help='count used for MAE/RMSE: pet counts thresholded point predictions; zip sums the EBC-ZIP count branch; zip_pet_blend mixes both; zip_tail_blend only blends high PET-count images')
     parser.add_argument('--eval_count_blend_alpha', default=0.5, type=float,
                         help='ZIP weight for --eval_count_source zip_pet_blend; 0=PET count, 1=ZIP count')
+    parser.add_argument('--eval_count_tail_threshold', default=1500.0, type=float,
+                        help='PET-count threshold for --eval_count_source zip_tail_blend')
     parser.add_argument('--eval_count_head_min_score', default=0.5, type=float,
                         help='minimum candidate score before count-head top-K selection')
     parser.add_argument('--eval_dense_start_epoch', default=0, type=int,
@@ -2909,7 +2937,7 @@ def merge_checkpoint_args(args, checkpoint):
         'train_count_weight_power', 'train_count_weight_max',
         'no_localization_metrics', 'localization_large_threshold', 'localization_small_threshold',
         'localization_protocol', 'localization_large_scale', 'localization_small_scale',
-        'eval_count_source', 'eval_count_blend_alpha',
+        'eval_count_source', 'eval_count_blend_alpha', 'eval_count_tail_threshold',
         'eval_tile_size', 'eval_tile_overlap', 'eval_tile_nms_radius',
         'eval_tile_min_gt', 'eval_tile_max_tiles',
         'eval_tile_trigger_count', 'eval_tile_trigger_area',
@@ -2976,6 +3004,7 @@ def merge_checkpoint_args(args, checkpoint):
             'zip_count_zero_prior', 'zip_count_ce_coef', 'zip_count_count_coef',
             'zip_count_start_epoch', 'zip_count_end_epoch', 'zip_count_warmup_epochs',
             'zip_count_feature_grad_scale', 'eval_count_source', 'eval_count_blend_alpha',
+            'eval_count_tail_threshold',
             'foreground_loss_coef', 'foreground_sigma',
             'foreground_neg_shrink', 'foreground_init_prior',
             'eval_foreground_gate', 'eval_foreground_gate_mode', 'eval_foreground_gate_strength',
@@ -3248,7 +3277,7 @@ def model_only_allowed_missing_prefixes(args):
         prefixes.append('count_head.')
     needs_zip_count_head = (
         float(getattr(args, 'zip_count_loss_coef', 0.0)) > 0
-        or getattr(args, 'eval_count_source', 'pet') in ('zip', 'zip_pet_blend')
+        or getattr(args, 'eval_count_source', 'pet') in ('zip', 'zip_pet_blend', 'zip_tail_blend')
     )
     if needs_zip_count_head:
         prefixes.append('zip_count_head.')
@@ -4252,6 +4281,7 @@ def main(args):
                     'eval_count_mode': getattr(args, 'eval_count_mode', 'threshold'),
                     'eval_count_source': getattr(args, 'eval_count_source', 'pet'),
                     'eval_count_blend_alpha': float(getattr(args, 'eval_count_blend_alpha', 0.5)),
+                    'eval_count_tail_threshold': float(getattr(args, 'eval_count_tail_threshold', 1500.0)),
                     'eval_count_head_min_score': float(getattr(args, 'eval_count_head_min_score', 0.5)),
                     'eval_score_calibration': getattr(args, 'eval_score_calibration', 'none'),
                     'eval_score_calibration_strength': float(getattr(args, 'eval_score_calibration_strength', 1.0)),

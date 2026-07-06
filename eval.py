@@ -89,6 +89,7 @@ ARCHITECTURE_OVERRIDE_KEYS = {
     'zip_count_warmup_epochs',
     'zip_count_feature_grad_scale',
     'eval_count_blend_alpha',
+    'eval_count_tail_threshold',
 }
 
 
@@ -324,8 +325,9 @@ def get_args_parser():
     parser.add_argument('--eval_foreground_gate_mode', default='suppress', choices=('suppress', 'logit_add'))
     parser.add_argument('--eval_foreground_gate_strength', default=0.75, type=float)
     parser.add_argument('--eval_count_mode', default='threshold', choices=('threshold', 'count_head_topk'))
-    parser.add_argument('--eval_count_source', default='pet', choices=('pet', 'zip', 'zip_pet_blend'))
+    parser.add_argument('--eval_count_source', default='pet', choices=('pet', 'zip', 'zip_pet_blend', 'zip_tail_blend'))
     parser.add_argument('--eval_count_blend_alpha', default=0.5, type=float)
+    parser.add_argument('--eval_count_tail_threshold', default=1500.0, type=float)
     parser.add_argument('--eval_count_head_min_score', default=0.5, type=float)
     parser.add_argument('--eval_dense_start_epoch', default=0, type=int)
     parser.add_argument('--eval_dense_residual_mode', default='none', choices=('none', 'count_head'))
@@ -475,7 +477,8 @@ def merge_checkpoint_args(args, checkpoint):
         'tta_flip', 'tta_scales',
         'eval_nms_radius', 'eval_branch_gate', 'eval_soft_split_gate',
         'eval_foreground_gate', 'eval_foreground_gate_mode', 'eval_foreground_gate_strength',
-        'eval_count_mode', 'eval_count_source', 'eval_count_blend_alpha', 'eval_count_head_min_score',
+        'eval_count_mode', 'eval_count_source', 'eval_count_blend_alpha',
+        'eval_count_tail_threshold', 'eval_count_head_min_score',
         'eval_score_calibration', 'eval_score_calibration_strength',
         'eval_score_calibration_start_epoch',
         'eval_score_calibration_min_bias', 'eval_score_calibration_max_bias',
@@ -823,6 +826,7 @@ def main(args):
             'eval_count_mode': getattr(args, 'eval_count_mode', 'threshold'),
             'eval_count_source': getattr(args, 'eval_count_source', 'pet'),
             'eval_count_blend_alpha': float(getattr(args, 'eval_count_blend_alpha', 0.5)),
+            'eval_count_tail_threshold': float(getattr(args, 'eval_count_tail_threshold', 1500.0)),
             'eval_count_head_min_score': float(getattr(args, 'eval_count_head_min_score', 0.5)),
             'eval_score_calibration': getattr(args, 'eval_score_calibration', 'none'),
             'eval_score_calibration_strength': float(getattr(args, 'eval_score_calibration_strength', 1.0)),

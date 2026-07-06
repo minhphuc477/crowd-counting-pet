@@ -1315,11 +1315,14 @@ class PET(nn.Module):
             )
 
         self.eval_count_source = getattr(args, 'eval_count_source', 'pet')
-        if self.eval_count_source not in ('pet', 'zip', 'zip_pet_blend'):
-            raise ValueError('eval_count_source must be one of "pet", "zip", or "zip_pet_blend"')
+        if self.eval_count_source not in ('pet', 'zip', 'zip_pet_blend', 'zip_tail_blend'):
+            raise ValueError('eval_count_source must be one of "pet", "zip", "zip_pet_blend", or "zip_tail_blend"')
         self.eval_count_blend_alpha = float(getattr(args, 'eval_count_blend_alpha', 0.5))
         if not 0.0 <= self.eval_count_blend_alpha <= 1.0:
             raise ValueError('eval_count_blend_alpha must be in [0, 1]')
+        self.eval_count_tail_threshold = float(getattr(args, 'eval_count_tail_threshold', 1500.0))
+        if self.eval_count_tail_threshold < 0.0:
+            raise ValueError('eval_count_tail_threshold must be non-negative')
         self.zip_count_loss_coef = max(0.0, float(getattr(args, 'zip_count_loss_coef', 0.0)))
         self.zip_count_ce_coef = max(0.0, float(getattr(args, 'zip_count_ce_coef', 1.0)))
         self.zip_count_count_coef = max(0.0, float(getattr(args, 'zip_count_count_coef', 1.0)))
@@ -1565,7 +1568,7 @@ class PET(nn.Module):
             GlobalCountHead(hidden_dim, init_count=self.count_head_init_count, init_cells=self.count_head_init_cells)
             if needs_count_head else None
         )
-        needs_zip_count_head = self.zip_count_loss_coef > 0 or self.eval_count_source in ('zip', 'zip_pet_blend')
+        needs_zip_count_head = self.zip_count_loss_coef > 0 or self.eval_count_source in ('zip', 'zip_pet_blend', 'zip_tail_blend')
         self.zip_count_head = (
             EBCZipCountHead(**self._zip_count_config)
             if needs_zip_count_head else None
@@ -4574,13 +4577,22 @@ class PET(nn.Module):
             div_out['zip_count_pred'] = outputs['zip_count_pred']
             if self.eval_count_source == 'zip':
                 div_out['count_for_mae'] = outputs['zip_count_pred']
-            elif self.eval_count_source == 'zip_pet_blend':
+            elif self.eval_count_source in ('zip_pet_blend', 'zip_tail_blend'):
                 pet_count = outputs['zip_count_pred'].new_full(
                     outputs['zip_count_pred'].shape,
                     float(pred_logits.shape[0]),
                 )
                 alpha = self.eval_count_blend_alpha
-                div_out['count_for_mae'] = alpha * outputs['zip_count_pred'] + (1.0 - alpha) * pet_count
+                blended_count = alpha * outputs['zip_count_pred'] + (1.0 - alpha) * pet_count
+                if self.eval_count_source == 'zip_tail_blend':
+                    use_zip = pet_count >= self.eval_count_tail_threshold
+                    div_out['count_for_mae'] = torch.where(use_zip, blended_count, pet_count)
+                    if self.eval_debug_counting:
+                        div_out.setdefault('eval_count_debug', {})['zip_tail_used'] = float(
+                            use_zip[0].detach().float().item()
+                        )
+                else:
+                    div_out['count_for_mae'] = blended_count
         return div_out
 
     def format_custom_query_output(

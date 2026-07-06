@@ -291,6 +291,8 @@ def run_eval(item, args, log_path):
         cmd.extend(['--eval_count_source', args.eval_count_source])
     if args.eval_count_blend_alpha is not None:
         cmd.extend(['--eval_count_blend_alpha', str(args.eval_count_blend_alpha)])
+    if args.eval_count_tail_threshold is not None:
+        cmd.extend(['--eval_count_tail_threshold', str(args.eval_count_tail_threshold)])
     if args.eval_count_head_min_score is not None:
         cmd.extend(['--eval_count_head_min_score', str(args.eval_count_head_min_score)])
     if args.eval_score_calibration:
@@ -447,7 +449,8 @@ def parse_args():
     parser.add_argument('--eval_foreground_gate_mode', default='', choices=('', 'suppress', 'logit_add'))
     parser.add_argument('--eval_foreground_gate_strength', default=None, type=float)
     parser.add_argument('--eval_count_mode', default='', choices=('', 'threshold', 'count_head_topk'))
-    parser.add_argument('--eval_count_source', default='', choices=('', 'pet', 'zip', 'zip_pet_blend'))
+    parser.add_argument('--eval_count_source', default='', choices=('', 'pet', 'zip', 'zip_pet_blend', 'zip_tail_blend'))
+    parser.add_argument('--eval_count_tail_threshold', default=None, type=float)
     parser.add_argument('--eval_count_blend_alpha', default=None, type=float)
     parser.add_argument('--eval_count_head_min_score', default=None, type=float)
     parser.add_argument('--eval_score_calibration', default='', choices=('', 'none', 'count_head_bias'))
