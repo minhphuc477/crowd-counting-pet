@@ -1436,6 +1436,30 @@ MODEL_RECIPES['vgg_apglc_measure_qnrf'] = {
     'eval_score_calibration': 'none',
 }
 
+# QNRF VGG APG+LC tail protocol.
+#
+# This keeps the same VGG/PET/APG+LC detector that produced the current best
+# QNRF seed-7 result, but changes the training distribution instead of adding
+# a competing count/density head. QNRF errors are dominated by high-count,
+# high-resolution scenes; denser crop retries, mild count-weighted sampling,
+# and a larger crop option expose the VGG detector to those tails without
+# changing the backbone or inference count source.
+MODEL_RECIPES['vgg_apglc_qnrf_tail'] = {
+    **MODEL_RECIPES['vgg_apglc'],
+    'patch_size_choices': '256,384',
+    'crop_attempts': 8,
+    'min_crop_points': 1,
+    'train_count_weight_power': 0.3,
+    'train_count_weight_max': 4.0,
+    'eval_max_size': 1536,
+    'eval_count_mode': 'threshold',
+    'eval_count_source': 'pet',
+    'eval_score_calibration': 'none',
+    'eval_nms_radius': 0.0,
+    'eval_branch_gate': 'none',
+    'eval_soft_split_gate': 'none',
+}
+
 # NWPU Tail-Robust APG+LC.
 #
 # NWPU differs from SHA in the exact way that broke the current run: it has
