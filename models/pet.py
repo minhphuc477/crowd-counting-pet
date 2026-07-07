@@ -4989,6 +4989,7 @@ class SetCriterion(nn.Module):
 
         # compute classification loss
         if self.pet_loss_variant == 'paper':
+            empty_weight = self.empty_weight.to(device=src_logits.device, dtype=src_logits.dtype)
             if 'div' in kwargs:
                 den = torch.stack([target['density'].reshape(()) for target in targets]).to(src_logits.device)
                 den_sort = torch.sort(den)[1]
@@ -4997,8 +4998,8 @@ class SetCriterion(nn.Module):
                 eps = 1e-5
 
                 weights = torch.zeros_like(target_classes, dtype=src_logits.dtype)
-                weights[target_classes == 0] = self.empty_weight[0]
-                weights[target_classes == 1] = self.empty_weight[1]
+                weights[target_classes == 0] = empty_weight[0]
+                weights[target_classes == 1] = empty_weight[1]
                 raw_ce_loss = self.classification_loss_per_query(src_logits, target_classes)
 
                 split_map = kwargs['div'].to(src_logits.device)
@@ -5014,8 +5015,8 @@ class SetCriterion(nn.Module):
                 raw_ce_loss = self.classification_loss_per_query(src_logits, target_classes)
                 if self.class_loss_type == 'ce':
                     weights = torch.zeros_like(target_classes, dtype=src_logits.dtype)
-                    weights[target_classes == 0] = self.empty_weight[0]
-                    weights[target_classes == 1] = self.empty_weight[1]
+                    weights[target_classes == 0] = empty_weight[0]
+                    weights[target_classes == 1] = empty_weight[1]
                     loss_ce = self.weighted_mean_loss(raw_ce_loss, weights)
                 else:
                     loss_ce = self.weighted_mean_loss(
@@ -5026,9 +5027,10 @@ class SetCriterion(nn.Module):
 
         raw_ce_loss = self.classification_loss_per_query(src_logits, target_classes)
         if self.class_loss_type == 'ce':
+            empty_weight = self.empty_weight.to(device=src_logits.device, dtype=src_logits.dtype)
             class_weight = torch.zeros_like(target_classes, dtype=src_logits.dtype)
-            class_weight[target_classes == 0] = self.empty_weight[0]
-            class_weight[target_classes == 1] = self.empty_weight[1]
+            class_weight[target_classes == 0] = empty_weight[0]
+            class_weight[target_classes == 1] = empty_weight[1]
             raw_ce_loss = raw_ce_loss * class_weight
         if 'div' in kwargs:
             split_weight = kwargs['div'].to(src_logits.device, dtype=raw_ce_loss.dtype).reshape_as(raw_ce_loss).clamp(0, 1)
