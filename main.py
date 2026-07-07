@@ -1778,6 +1778,7 @@ EXPERIMENTAL_MODEL_RECIPES = {
     'vgg_apglc_localzip',
     'vgg_apglc_ebczip',
     'vgg_apglc_qnrf_zip_tail',
+    'vgg_apglc_measure_qnrf',
     'vgg_routed_apglc_countcal',
 }
 

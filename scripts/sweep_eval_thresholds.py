@@ -180,6 +180,10 @@ def run_eval(
         args.device,
         "--num_workers",
         str(args.num_workers),
+        "--checkpoint_model_key",
+        args.checkpoint_model_key,
+        "--eval_max_size",
+        str(args.eval_max_size),
         "--results_file",
         str(results_file),
         "--eval_image_set",
@@ -248,6 +252,8 @@ def run_eval(
         cmd.append("--tta_flip")
     if args.tta_scales:
         cmd.extend(["--tta_scales", args.tta_scales])
+    if args.resume_allow_arch_change:
+        cmd.append("--resume_allow_arch_change")
     if args.no_localization_metrics:
         cmd.append("--no_localization_metrics")
     cmd.extend([
@@ -315,6 +321,9 @@ def run_eval(
         ),
         "eval_protocol": args.eval_protocol,
         "eval_image_set": args.eval_image_set,
+        "checkpoint_model_key": args.checkpoint_model_key,
+        "eval_max_size": int(args.eval_max_size),
+        "resume_allow_arch_change": bool(args.resume_allow_arch_change),
         "tta_flip": bool(args.tta_flip),
         "tta_scales": args.tta_scales,
         "returncode": int(proc.returncode),
@@ -436,6 +445,23 @@ def get_args() -> argparse.Namespace:
     parser.add_argument("--backbone", default="", help="Backbone; default reads checkpoint args")
     parser.add_argument("--device", default="cuda", choices=("cuda", "cpu"))
     parser.add_argument("--num_workers", default=2, type=int)
+    parser.add_argument(
+        "--checkpoint_model_key",
+        default="auto",
+        choices=("auto", "model", "model_ema", "model_raw"),
+        help="checkpoint state key passed to eval.py",
+    )
+    parser.add_argument(
+        "--eval_max_size",
+        default=-1,
+        type=int,
+        help="high-resolution long-side cap passed to eval.py; -1 keeps dataset default",
+    )
+    parser.add_argument(
+        "--resume_allow_arch_change",
+        action="store_true",
+        help="non-strict eval checkpoint load passed to eval.py",
+    )
     parser.add_argument("--timeout", default=1800, type=int, help="Per-eval timeout in seconds; 0 disables")
     parser.add_argument("--output_dir", default="", help="Where to save sweep logs/results")
     parser.add_argument("--eval_image_set", default="val", choices=("val", "train_eval", "train_holdout"),

@@ -72,6 +72,7 @@ class QNRF(Dataset):
         self.crop_attempts = max(1, int(crop_attempts))
         self.min_crop_points = max(0, int(min_crop_points))
         self.eval_max_size = int(eval_max_size) if eval_max_size is not None else 1536
+        self.sample_counts = None
 
     def compute_density(self, points):
         points_tensor = torch.from_numpy(points.copy())
@@ -84,6 +85,14 @@ class QNRF(Dataset):
 
     def __len__(self):
         return self.nSamples
+
+    def get_sample_counts(self):
+        if self.sample_counts is None:
+            self.sample_counts = [
+                int(load_raw_points_xy(self.gt_list[img_path]).shape[0])
+                for img_path in self.img_list
+            ]
+        return self.sample_counts
 
     def __getitem__(self, index):
         assert index < len(self), 'index range error'
