@@ -993,6 +993,43 @@ class GlobalCountHead(nn.Module):
         return density.flatten(1).sum(dim=1)
 
 
+class MeasureDensityHead(nn.Module):
+    """Auxiliary density-measure head for representation learning.
+
+    This head is intentionally separate from PET point inference. It predicts a
+    non-negative measure on encoder cells so the model can learn global mass and
+    spatial distribution without using a scalar count head to choose PET
+    detections.
+    """
+
+    def __init__(self, hidden_dim, init_count=40.0, init_cells=1024.0):
+        super().__init__()
+        init_density = max(float(init_count), 0.0) / max(float(init_cells), 1.0)
+        init_density_logit = math.log(math.expm1(max(init_density, 1e-6)))
+        mid_dim = max(hidden_dim // 2, 1)
+        self.net = nn.Sequential(
+            nn.Conv2d(hidden_dim, mid_dim, 3, padding=1, bias=False),
+            _make_group_norm(mid_dim),
+            nn.GELU(),
+            nn.Conv2d(mid_dim, mid_dim, 3, padding=2, dilation=2, bias=False),
+            _make_group_norm(mid_dim),
+            nn.GELU(),
+            nn.Conv2d(mid_dim, 1, 1),
+        )
+        nn.init.zeros_(self.net[-1].weight)
+        nn.init.constant_(self.net[-1].bias, init_density_logit)
+
+    def predict_density(self, x, mask=None):
+        density = F.softplus(self.net(x.float()).squeeze(1))
+        if mask is not None:
+            density = density * (~mask).to(dtype=density.dtype, device=density.device)
+        return density
+
+    def forward(self, x, mask=None):
+        density = self.predict_density(x, mask)
+        return density, density.flatten(1).sum(dim=1)
+
+
 class EBCZipCountHead(nn.Module):
     """Blockwise Zero-Inflated Poisson count head.
 
@@ -1538,6 +1575,27 @@ class PET(nn.Module):
             raise ValueError('density_map_grad_scale must be non-negative')
         self.density_map_start_epoch = int(getattr(args, 'density_map_start_epoch', 0))
         self.density_map_end_epoch = int(getattr(args, 'density_map_end_epoch', -1))
+        self.measure_loss_coef = float(getattr(args, 'measure_loss_coef', 0.0))
+        self.measure_loss_distribution_coef = float(getattr(args, 'measure_loss_distribution_coef', 1.0))
+        self.measure_loss_count_coef = float(getattr(args, 'measure_loss_count_coef', 0.25))
+        self.measure_loss_transport_coef = float(getattr(args, 'measure_loss_transport_coef', 0.0))
+        self.measure_loss_start_epoch = int(getattr(args, 'measure_loss_start_epoch', 0))
+        self.measure_loss_end_epoch = int(getattr(args, 'measure_loss_end_epoch', -1))
+        self.measure_loss_warmup_epochs = max(0, int(getattr(args, 'measure_loss_warmup_epochs', 0)))
+        self.measure_loss_feature_grad_scale = float(getattr(args, 'measure_loss_feature_grad_scale', 1.0))
+        self.measure_loss_feature_grad_start_epoch = int(getattr(args, 'measure_loss_feature_grad_start_epoch', 0))
+        self.measure_loss_feature_grad_warmup_epochs = max(
+            0,
+            int(getattr(args, 'measure_loss_feature_grad_warmup_epochs', 0)),
+        )
+        self.measure_loss_sinkhorn_iters = max(1, int(getattr(args, 'measure_loss_sinkhorn_iters', 20)))
+        self.measure_loss_sinkhorn_epsilon = max(1e-4, float(getattr(args, 'measure_loss_sinkhorn_epsilon', 0.05)))
+        self.measure_loss_init_count = float(getattr(args, 'measure_loss_init_count', self.count_head_init_count))
+        self.measure_loss_init_cells = float(getattr(args, 'measure_loss_init_cells', self.count_head_init_cells))
+        if self.measure_loss_feature_grad_scale < 0.0:
+            raise ValueError('measure_loss_feature_grad_scale must be non-negative')
+        if self.measure_loss_distribution_coef < 0.0 or self.measure_loss_count_coef < 0.0 or self.measure_loss_transport_coef < 0.0:
+            raise ValueError('measure loss component coefficients must be non-negative')
         self.foreground_loss_coef = float(getattr(args, 'foreground_loss_coef', 0.0))
         self.foreground_sigma = max(1e-6, float(getattr(args, 'foreground_sigma', 8.0)))
         self.foreground_neg_shrink = max(1.0, float(getattr(args, 'foreground_neg_shrink', 16.0)))
@@ -1567,6 +1625,14 @@ class PET(nn.Module):
         self.count_head = (
             GlobalCountHead(hidden_dim, init_count=self.count_head_init_count, init_cells=self.count_head_init_cells)
             if needs_count_head else None
+        )
+        self.measure_head = (
+            MeasureDensityHead(
+                hidden_dim,
+                init_count=self.measure_loss_init_count,
+                init_cells=self.measure_loss_init_cells,
+            )
+            if self.measure_loss_coef > 0 else None
         )
         needs_zip_count_head = self.zip_count_loss_coef > 0 or self.eval_count_source in ('zip', 'zip_pet_blend', 'zip_tail_blend')
         self.zip_count_head = (
@@ -1797,6 +1863,25 @@ class PET(nn.Module):
                 1.0,
                 float(int(epoch) - self.count_head_feature_grad_start_epoch + 1)
                 / float(self.count_head_feature_grad_warmup_epochs),
+            )
+        if scale >= 1.0:
+            return encode_src.float()
+        if scale <= 0.0:
+            return encode_src.detach().float()
+        return (encode_src.detach() + scale * (encode_src - encode_src.detach())).float()
+
+    def measure_head_features(self, encode_src, epoch=0):
+        """Return measure-head features with an independent encoder-gradient schedule."""
+        if not self.training:
+            return encode_src.float()
+        if int(epoch) < self.measure_loss_feature_grad_start_epoch:
+            return encode_src.detach().float()
+        scale = self.measure_loss_feature_grad_scale
+        if self.measure_loss_feature_grad_warmup_epochs > 0:
+            scale *= min(
+                1.0,
+                float(int(epoch) - self.measure_loss_feature_grad_start_epoch + 1)
+                / float(self.measure_loss_feature_grad_warmup_epochs),
             )
         if scale >= 1.0:
             return encode_src.float()
@@ -2252,6 +2337,33 @@ class PET(nn.Module):
             loss_dict['loss_density_map'] = loss_density_map
             weight_dict['loss_density_map'] = self.density_map_loss_coef
             losses += loss_density_map * self.density_map_loss_coef
+        if self.measure_loss_coef > 0:
+            measure_active = epoch >= self.measure_loss_start_epoch and (
+                self.measure_loss_end_epoch < 0 or epoch <= self.measure_loss_end_epoch
+            )
+            measure_weight = self.schedule_weight(
+                epoch,
+                self.measure_loss_start_epoch,
+                self.measure_loss_warmup_epochs,
+                self.measure_loss_coef,
+            ) if measure_active else 0.0
+            if measure_active:
+                measure_losses = self.compute_measure_loss(outputs, targets, samples)
+            else:
+                zero = outputs['split_map_raw'].sum() * 0.0
+                measure_losses = {
+                    'loss_measure_dist': zero,
+                    'loss_measure_count': zero,
+                    'loss_measure_transport': zero,
+                }
+            measure_weights = {
+                'loss_measure_dist': measure_weight * self.measure_loss_distribution_coef,
+                'loss_measure_count': measure_weight * self.measure_loss_count_coef,
+                'loss_measure_transport': measure_weight * self.measure_loss_transport_coef,
+            }
+            loss_dict.update(measure_losses)
+            weight_dict.update(measure_weights)
+            losses += sum(measure_losses[name] * measure_weights[name] for name in measure_losses)
         if self.foreground_loss_coef > 0:
             loss_foreground = self.compute_foreground_loss(outputs, targets, samples)
             loss_dict['loss_foreground'] = loss_foreground
@@ -3697,6 +3809,120 @@ class PET(nn.Module):
         weights = 1.0 + pos_weight * (target_density > 0).to(dtype=raw_loss.dtype)
         return (raw_loss * weights).sum() / weights.sum().clamp_min(1.0)
 
+    def build_measure_targets(self, outputs, targets, samples):
+        if 'measure_density' not in outputs:
+            raise KeyError('measure_density is required for measure supervision')
+        pred_density = outputs['measure_density']
+        device = pred_density.device
+        dtype = pred_density.dtype
+        batch_size, map_h, map_w = pred_density.shape
+        target_density = torch.zeros(batch_size, map_h, map_w, dtype=dtype, device=device)
+        img_h, img_w = outputs['sparse']['img_shape']
+        img_h = max(float(img_h), 1.0)
+        img_w = max(float(img_w), 1.0)
+
+        for batch_idx, target in enumerate(targets[:batch_size]):
+            points = target['points'].to(device=device, dtype=dtype)
+            if points.numel() == 0:
+                continue
+            y = (points[:, 0] / img_h * max(float(map_h - 1), 1.0)).clamp(0.0, max(float(map_h - 1), 0.0))
+            x = (points[:, 1] / img_w * max(float(map_w - 1), 1.0)).clamp(0.0, max(float(map_w - 1), 0.0))
+            y0 = y.floor().long()
+            x0 = x.floor().long()
+            y1 = (y0 + 1).clamp(max=map_h - 1)
+            x1 = (x0 + 1).clamp(max=map_w - 1)
+            wy = y - y0.to(dtype=dtype)
+            wx = x - x0.to(dtype=dtype)
+
+            flat = target_density[batch_idx].flatten()
+            idx00 = y0 * map_w + x0
+            idx01 = y0 * map_w + x1
+            idx10 = y1 * map_w + x0
+            idx11 = y1 * map_w + x1
+            flat.scatter_add_(0, idx00, (1.0 - wy) * (1.0 - wx))
+            flat.scatter_add_(0, idx01, (1.0 - wy) * wx)
+            flat.scatter_add_(0, idx10, wy * (1.0 - wx))
+            flat.scatter_add_(0, idx11, wy * wx)
+
+        if samples.mask is None:
+            valid = torch.ones(batch_size, map_h, map_w, dtype=torch.bool, device=device)
+        else:
+            valid = ~F.interpolate(
+                samples.mask[:, None].float(),
+                size=(map_h, map_w),
+                mode='nearest',
+            ).to(device=device).squeeze(1).bool()
+        return target_density * valid.to(dtype=dtype), valid
+
+    def sinkhorn_measure_loss(self, pred_prob, target_prob, valid):
+        batch_size, map_h, map_w = pred_prob.shape
+        device = pred_prob.device
+        dtype = pred_prob.dtype
+        yy = torch.linspace(0.0, 1.0, map_h, device=device, dtype=dtype)
+        xx = torch.linspace(0.0, 1.0, map_w, device=device, dtype=dtype)
+        grid_y, grid_x = torch.meshgrid(yy, xx, indexing='ij')
+        grid = torch.stack([grid_y, grid_x], dim=-1).reshape(-1, 2)
+        losses = []
+        eps = pred_prob.new_tensor(self.measure_loss_sinkhorn_epsilon)
+        for batch_idx in range(batch_size):
+            valid_flat = valid[batch_idx].reshape(-1)
+            pred_flat = pred_prob[batch_idx].reshape(-1)[valid_flat]
+            target_flat = target_prob[batch_idx].reshape(-1)[valid_flat]
+            support = target_flat > 0
+            if pred_flat.numel() == 0 or not support.any():
+                losses.append(pred_prob[batch_idx].sum() * 0.0)
+                continue
+            target_mass = target_flat[support]
+            target_mass = target_mass / target_mass.sum().clamp_min(1e-6)
+            pred_mass = pred_flat / pred_flat.sum().clamp_min(1e-6)
+            valid_grid = grid[valid_flat]
+            target_grid = valid_grid[support]
+            cost = torch.cdist(target_grid, valid_grid, p=2).pow(2)
+            kernel = torch.exp(-cost / eps).clamp_min(1e-12)
+            u = torch.ones_like(target_mass)
+            v = torch.ones_like(pred_mass)
+            for _ in range(self.measure_loss_sinkhorn_iters):
+                u = target_mass / (kernel @ v).clamp_min(1e-8)
+                v = pred_mass / (kernel.transpose(0, 1) @ u).clamp_min(1e-8)
+            plan = u[:, None] * kernel * v[None, :]
+            losses.append((plan * cost).sum())
+        return torch.stack(losses).mean()
+
+    def compute_measure_loss(self, outputs, targets, samples):
+        if self.measure_head is None or 'measure_density' not in outputs:
+            return {
+                'loss_measure_dist': outputs['split_map_raw'].sum() * 0.0,
+                'loss_measure_count': outputs['split_map_raw'].sum() * 0.0,
+                'loss_measure_transport': outputs['split_map_raw'].sum() * 0.0,
+            }
+        pred_density = outputs['measure_density'].to(dtype=outputs['split_map_raw'].dtype)
+        target_density, valid = self.build_measure_targets(outputs, targets, samples)
+        valid_f = valid.to(device=pred_density.device, dtype=pred_density.dtype)
+        pred_density = pred_density * valid_f
+        pred_count = pred_density.flatten(1).sum(dim=1)
+        target_count = target_density.flatten(1).sum(dim=1)
+
+        pred_prob = pred_density / pred_count[:, None, None].clamp_min(1e-6)
+        target_prob = target_density / target_count[:, None, None].clamp_min(1e-6)
+        has_points = target_count > 0
+        if has_points.any():
+            loss_dist = 0.5 * (
+                (pred_prob[has_points] - target_prob[has_points]).abs()
+                * valid_f[has_points]
+            ).flatten(1).sum(dim=1).mean()
+        else:
+            loss_dist = pred_density.sum() * 0.0
+        loss_count = F.l1_loss(torch.log1p(pred_count), torch.log1p(target_count))
+        if self.measure_loss_transport_coef > 0 and has_points.any():
+            loss_transport = self.sinkhorn_measure_loss(pred_prob[has_points], target_prob[has_points], valid[has_points])
+        else:
+            loss_transport = pred_density.sum() * 0.0
+        return {
+            'loss_measure_dist': loss_dist,
+            'loss_measure_count': loss_count,
+            'loss_measure_transport': loss_transport,
+        }
+
     def build_foreground_targets(self, outputs, targets, samples):
         if 'foreground_logits' not in outputs:
             raise KeyError('foreground_logits is required for foreground supervision')
@@ -4367,6 +4593,14 @@ class PET(nn.Module):
             count_density = self.count_head.predict_density(self.count_head_features(encode_src, count_epoch), mask)
             outputs['count_density'] = count_density
             outputs['count_pred'] = count_density.flatten(1).sum(dim=1)
+        if self.measure_head is not None:
+            measure_epoch = int(kwargs.get('epoch', 0))
+            measure_density, measure_count = self.measure_head(
+                self.measure_head_features(encode_src, measure_epoch),
+                mask,
+            )
+            outputs['measure_density'] = measure_density
+            outputs['measure_count'] = measure_count
         if self.zip_count_head is not None:
             zip_detail = features['4x'].tensors if self.zip_count_feature_source == 'fpn4x8x' else None
             if zip_detail is not None and self.training:

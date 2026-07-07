@@ -1406,6 +1406,36 @@ MODEL_RECIPES['vgg_apglc_qnrf_zip_tail'] = {
     'eval_count_tail_threshold': 800.0,
 }
 
+# QNRF APG+LC + point-measure auxiliary.
+#
+# This is the next architecture branch after the ZIP-tail falsification. It
+# keeps the seed-7 APG+LC detector/inference contract intact and adds a
+# separate density-measure head trained from annotation points. The auxiliary
+# uses normalized spatial measure + log count, with a small Sinkhorn transport
+# term and delayed low-scale encoder gradients. It is not used as the eval
+# count source; PET/APG+LC remains the reported detector unless explicitly
+# changed in a future ablation.
+MODEL_RECIPES['vgg_apglc_measure_qnrf'] = {
+    **MODEL_RECIPES['vgg_apglc'],
+    'measure_loss_coef': 0.2,
+    'measure_loss_distribution_coef': 1.0,
+    'measure_loss_count_coef': 0.2,
+    'measure_loss_transport_coef': 0.03,
+    'measure_loss_start_epoch': 0,
+    'measure_loss_end_epoch': -1,
+    'measure_loss_warmup_epochs': 50,
+    'measure_loss_feature_grad_scale': 0.2,
+    'measure_loss_feature_grad_start_epoch': 50,
+    'measure_loss_feature_grad_warmup_epochs': 150,
+    'measure_loss_sinkhorn_iters': 20,
+    'measure_loss_sinkhorn_epsilon': 0.05,
+    'measure_loss_init_count': 80.0,
+    'measure_loss_init_cells': 1024.0,
+    'eval_count_mode': 'threshold',
+    'eval_count_source': 'pet',
+    'eval_score_calibration': 'none',
+}
+
 # NWPU Tail-Robust APG+LC.
 #
 # NWPU differs from SHA in the exact way that broke the current run: it has
@@ -1839,6 +1869,20 @@ ARCHITECTURE_OVERRIDE_KEYS = {
     'fusion_mhf_spatial_kernel',
     'fusion_mhf_output_activation',
     'foreground_loss_coef',
+    'measure_loss_coef',
+    'measure_loss_distribution_coef',
+    'measure_loss_count_coef',
+    'measure_loss_transport_coef',
+    'measure_loss_start_epoch',
+    'measure_loss_end_epoch',
+    'measure_loss_warmup_epochs',
+    'measure_loss_feature_grad_scale',
+    'measure_loss_feature_grad_start_epoch',
+    'measure_loss_feature_grad_warmup_epochs',
+    'measure_loss_sinkhorn_iters',
+    'measure_loss_sinkhorn_epsilon',
+    'measure_loss_init_count',
+    'measure_loss_init_cells',
     'foreground_sigma',
     'foreground_neg_shrink',
     'foreground_init_prior',
@@ -2169,6 +2213,34 @@ def get_args_parser():
                         help='epoch when density-map auxiliary starts')
     parser.add_argument('--density_map_end_epoch', default=-1, type=int,
                         help='epoch after which density-map auxiliary turns off; negative keeps it on')
+    parser.add_argument('--measure_loss_coef', default=0.0, type=float,
+                        help='auxiliary point-measure density branch weight; 0 disables it')
+    parser.add_argument('--measure_loss_distribution_coef', default=1.0, type=float,
+                        help='normalized spatial-measure loss multiplier inside --measure_loss_coef')
+    parser.add_argument('--measure_loss_count_coef', default=0.25, type=float,
+                        help='log-count loss multiplier inside --measure_loss_coef')
+    parser.add_argument('--measure_loss_transport_coef', default=0.0, type=float,
+                        help='optional Sinkhorn transport multiplier inside --measure_loss_coef')
+    parser.add_argument('--measure_loss_start_epoch', default=0, type=int,
+                        help='epoch when point-measure auxiliary starts')
+    parser.add_argument('--measure_loss_end_epoch', default=-1, type=int,
+                        help='epoch after which point-measure auxiliary turns off; negative keeps it on')
+    parser.add_argument('--measure_loss_warmup_epochs', default=0, type=int,
+                        help='linearly ramp point-measure auxiliary after --measure_loss_start_epoch')
+    parser.add_argument('--measure_loss_feature_grad_scale', default=1.0, type=float,
+                        help='scale gradients from point-measure auxiliary into PET encoder')
+    parser.add_argument('--measure_loss_feature_grad_start_epoch', default=0, type=int,
+                        help='epoch when point-measure gradients may flow into PET features')
+    parser.add_argument('--measure_loss_feature_grad_warmup_epochs', default=0, type=int,
+                        help='linearly ramp point-measure feature gradients')
+    parser.add_argument('--measure_loss_sinkhorn_iters', default=20, type=int,
+                        help='Sinkhorn iterations when --measure_loss_transport_coef > 0')
+    parser.add_argument('--measure_loss_sinkhorn_epsilon', default=0.05, type=float,
+                        help='Sinkhorn entropy epsilon for point-measure transport loss')
+    parser.add_argument('--measure_loss_init_count', default=40.0, type=float,
+                        help='initial count prior for point-measure density head')
+    parser.add_argument('--measure_loss_init_cells', default=1024.0, type=float,
+                        help='reference cell count for --measure_loss_init_count')
     parser.add_argument('--foreground_loss_coef', default=0.0, type=float,
                         help='spatial foreground heatmap auxiliary weight; 0 disables it')
     parser.add_argument('--foreground_sigma', default=8.0, type=float,
@@ -2657,6 +2729,7 @@ def validate_partial_annotation_contract(args):
         'region_count_loss_coef': getattr(args, 'region_count_loss_coef', 0.0),
         'count_head_loss_coef': getattr(args, 'count_head_loss_coef', 0.0),
         'density_map_loss_coef': getattr(args, 'density_map_loss_coef', 0.0),
+        'measure_loss_coef': getattr(args, 'measure_loss_coef', 0.0),
         'zip_count_loss_coef': getattr(args, 'zip_count_loss_coef', 0.0),
         'local_zip_loss_coef': getattr(args, 'local_zip_loss_coef', 0.0),
         'foreground_loss_coef': getattr(args, 'foreground_loss_coef', 0.0),
@@ -3000,6 +3073,15 @@ def merge_checkpoint_args(args, checkpoint):
             'density_map_loss_type', 'density_map_pos_weight',
             'density_map_grad_scale',
             'density_map_start_epoch', 'density_map_end_epoch',
+            'measure_loss_coef', 'measure_loss_distribution_coef',
+            'measure_loss_count_coef', 'measure_loss_transport_coef',
+            'measure_loss_start_epoch', 'measure_loss_end_epoch',
+            'measure_loss_warmup_epochs',
+            'measure_loss_feature_grad_scale',
+            'measure_loss_feature_grad_start_epoch',
+            'measure_loss_feature_grad_warmup_epochs',
+            'measure_loss_sinkhorn_iters', 'measure_loss_sinkhorn_epsilon',
+            'measure_loss_init_count', 'measure_loss_init_cells',
             'zip_count_loss_coef', 'zip_count_block_size', 'zip_count_feature_source', 'zip_count_bin_centers',
             'zip_count_zero_prior', 'zip_count_ce_coef', 'zip_count_count_coef',
             'zip_count_start_epoch', 'zip_count_end_epoch', 'zip_count_warmup_epochs',
@@ -3281,6 +3363,8 @@ def model_only_allowed_missing_prefixes(args):
     )
     if needs_zip_count_head:
         prefixes.append('zip_count_head.')
+    if float(getattr(args, 'measure_loss_coef', 0.0)) > 0:
+        prefixes.append('measure_head.')
     needs_foreground_head = (
         float(getattr(args, 'foreground_loss_coef', 0.0)) > 0
         or getattr(args, 'eval_foreground_gate', 'none') != 'none'
