@@ -40,13 +40,26 @@ class PositionEmbeddingSine(nn.Module):
         dim_t = torch.arange(self.num_pos_feats, dtype=torch.float32, device=x.device)
         dim_t = self.temperature ** (2 * (dim_t // 2) / self.num_pos_feats)
         
-        pos_x = x_embed[:, :, :, None] / dim_t
-        pos_y = y_embed[:, :, :, None] / dim_t
-        
-        pos_x = torch.stack((pos_x[:, :, :, 0::2].sin(), pos_x[:, :, :, 1::2].cos()), dim=4).flatten(3)
-        pos_y = torch.stack((pos_y[:, :, :, 0::2].sin(), pos_y[:, :, :, 1::2].cos()), dim=4).flatten(3)
-        
-        pos = torch.cat((pos_y, pos_x), dim=3).permute(0, 3, 1, 2)
+        # Build the final CHW tensor directly. The standard DETR expression
+        # materializes BxHxWxF tensors and then stacks another copy, which can
+        # spike memory on QNRF/JHU-sized validation images.
+        batch_size, height, width = x_embed.shape
+        pos = x_embed.new_empty(
+            (batch_size, self.num_pos_feats * 2, height, width),
+            dtype=torch.float32,
+        )
+        pos[:, 0:self.num_pos_feats:2] = (
+            y_embed[:, :, :, None] / dim_t[0::2]
+        ).sin().permute(0, 3, 1, 2)
+        pos[:, 1:self.num_pos_feats:2] = (
+            y_embed[:, :, :, None] / dim_t[1::2]
+        ).cos().permute(0, 3, 1, 2)
+        pos[:, self.num_pos_feats::2] = (
+            x_embed[:, :, :, None] / dim_t[0::2]
+        ).sin().permute(0, 3, 1, 2)
+        pos[:, self.num_pos_feats + 1::2] = (
+            x_embed[:, :, :, None] / dim_t[1::2]
+        ).cos().permute(0, 3, 1, 2)
         return pos
 
 
