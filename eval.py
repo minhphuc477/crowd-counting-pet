@@ -46,6 +46,9 @@ ARCHITECTURE_OVERRIDE_KEYS = {
     'enc_shift_mode',
     'sparse_dec_win_size',
     'dense_dec_win_size',
+    'encoder_context_fusion',
+    'encoder_context_fusion_activation',
+    'encoder_context_fusion_gate',
     'query_feature_interpolation',
     'ifi_interpolation',
     'ifi_pos_dim',
@@ -110,6 +113,9 @@ def get_args_parser():
                         help='normalization after timm feature adapter; gn preserves old timm behavior, none is VGG-like')
     parser.add_argument('--scale_fusion', default='none', choices=('none', 'bidirectional'))
     parser.add_argument('--scale_fusion_activation', default='gelu', choices=('relu', 'gelu'))
+    parser.add_argument('--encoder_context_fusion', default='none', choices=('none', 'detail_to_context'))
+    parser.add_argument('--encoder_context_fusion_activation', default='gelu', choices=('relu', 'gelu'))
+    parser.add_argument('--encoder_context_fusion_gate', default='channel_spatial', choices=('none', 'channel_spatial'))
     parser.add_argument('--fusion_mhf_mode', default='none', choices=('none', 'cem', 'cem_msem', 'full'))
     parser.add_argument('--fusion_mhf_heads', default=1, type=int)
     parser.add_argument('--fusion_mhf_position', default='before', choices=('before', 'post'))
@@ -170,6 +176,10 @@ def get_args_parser():
                         help="Class coefficient in the matching cost")
     parser.add_argument('--set_cost_point', default=0.05, type=float,
                         help="SmoothL1 point coefficient in the matching cost")
+    parser.add_argument('--set_cost_context', default=0.0, type=float)
+    parser.add_argument('--set_cost_query', default=0.0, type=float)
+    parser.add_argument('--matcher_context_k', default=4, type=int)
+    parser.add_argument('--matcher_context_min_scale', default=4.0, type=float)
     # - loss coefficients
     parser.add_argument('--ce_loss_coef', default=1.0, type=float)       # classification loss coefficient
     parser.add_argument('--point_loss_coef', default=5.0, type=float)    # regression loss coefficient

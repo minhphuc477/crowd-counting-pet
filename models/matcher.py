@@ -59,16 +59,51 @@ class HungarianMatcher(nn.Module):
     """
     This class computes an assignment between the targets and the predictions of the network
     """
-    def __init__(self, cost_class: float = 1, cost_point: float = 1):
+    def __init__(
+        self,
+        cost_class: float = 1,
+        cost_point: float = 1,
+        cost_context: float = 0,
+        cost_query: float = 0,
+        context_k: int = 4,
+        context_min_scale: float = 4.0,
+    ):
         """
         Params:
             cost_class: This is the relative weight of the classification error in the matching cost
             cost_point: This is the relative weight of the L2 error of the point coordinates in the matching cost
+            cost_context: Weight for target-neighborhood normalized point cost. This makes matching compare
+                localization error relative to the local crowd spacing instead of raw pixels only.
+            cost_query: Weight for query-center to target cost. This stabilizes proposal assignment before
+                regression and reduces arbitrary swaps in dense scenes.
+            context_k: Number of nearest target points used to estimate local crowd spacing.
+            context_min_scale: Minimum local spacing in pixels used for normalization.
         """
         super().__init__()
         self.cost_class = cost_class
         self.cost_point = cost_point
-        assert cost_class != 0 or cost_point != 0, "all costs can't be 0"
+        self.cost_context = cost_context
+        self.cost_query = cost_query
+        self.context_k = int(context_k)
+        self.context_min_scale = float(context_min_scale)
+        assert (
+            cost_class != 0
+            or cost_point != 0
+            or cost_context != 0
+            or cost_query != 0
+        ), "all costs can't be 0"
+
+    def _target_context_scale(self, target_points):
+        target_count = target_points.shape[0]
+        if target_count <= 1 or self.context_k <= 0:
+            return target_points.new_full((target_count,), self.context_min_scale)
+
+        distances = torch.cdist(target_points, target_points, p=2)
+        inf = torch.tensor(float('inf'), device=distances.device, dtype=distances.dtype)
+        distances.fill_diagonal_(inf)
+        k = min(self.context_k, target_count - 1)
+        scale = distances.topk(k, dim=1, largest=False).values.mean(dim=1)
+        return scale.clamp_min(self.context_min_scale)
 
     @torch.no_grad()
     def forward(self, outputs, targets, **kwargs):
@@ -148,10 +183,39 @@ class HungarianMatcher(nn.Module):
                     target_points,
                     p=2,
                 )
+                target_scale = None
                 cost = (
                     self.cost_point * cost_point
                     + self.cost_class * cost_class
                 )
+                if self.cost_context != 0:
+                    target_scale = self._target_context_scale(target_points)
+                    cost = cost + self.cost_context * (
+                        cost_point / target_scale.unsqueeze(0)
+                    )
+                if self.cost_query != 0:
+                    query_points_all = outputs.get("points_queries")
+                    if query_points_all is not None:
+                        if target_scale is None:
+                            target_scale = self._target_context_scale(target_points)
+                        if query_points_all.ndim == 3:
+                            query_points = query_points_all[
+                                batch_index,
+                                valid_query_indices,
+                            ]
+                        else:
+                            query_points = query_points_all[valid_query_indices]
+                        query_points = query_points.detach().float().clone()
+                        query_points[:, 0] *= float(img_h)
+                        query_points[:, 1] *= float(img_w)
+                        cost_query = torch.cdist(
+                            query_points,
+                            target_points,
+                            p=2,
+                        )
+                        cost = cost + self.cost_query * (
+                            cost_query / target_scale.unsqueeze(0)
+                        )
                 if not torch.isfinite(cost).all():
                     raise ValueError(
                         'HungarianMatcher produced a non-finite cost matrix'
@@ -177,4 +241,11 @@ class HungarianMatcher(nn.Module):
 
 
 def build_matcher(args):
-    return HungarianMatcher(cost_class=args.set_cost_class, cost_point=args.set_cost_point)
+    return HungarianMatcher(
+        cost_class=args.set_cost_class,
+        cost_point=args.set_cost_point,
+        cost_context=getattr(args, 'set_cost_context', 0.0),
+        cost_query=getattr(args, 'set_cost_query', 0.0),
+        context_k=getattr(args, 'matcher_context_k', 4),
+        context_min_scale=getattr(args, 'matcher_context_min_scale', 4.0),
+    )

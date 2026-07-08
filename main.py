@@ -1460,6 +1460,68 @@ MODEL_RECIPES['vgg_apglc_qnrf_tail'] = {
     'eval_soft_split_gate': 'none',
 }
 
+# QNRF K-nearest Matching Optimization + APG/LC.
+#
+# This is a detector-side branch, not a post-hoc count correction. It keeps the
+# VGG/PET/APG+LC inference path but changes Hungarian assignment during
+# training: point-query matches are normalized by local target spacing and
+# mildly biased toward the query proposal center. The intent is to reduce dense
+# QNRF assignment swaps while preserving the VGG backbone used by the other
+# datasets.
+MODEL_RECIPES['vgg_pet_kmo_apg_qnrf'] = {
+    **MODEL_RECIPES['vgg_apglc_qnrf_tail'],
+    'set_cost_context': 0.10,
+    'set_cost_query': 0.03,
+    'matcher_context_k': 4,
+    'matcher_context_min_scale': 4.0,
+    'scale_point_loss_coef': 0.05,
+    'scale_point_sigma': 'small',
+    'scale_point_sigma_min': 2.0,
+    'scale_point_sigma_max': 128.0,
+}
+
+# QNRF window-context APG/LC.
+#
+# This branch tests the more aggressive architectural hypothesis suggested by
+# MAN/PET/CLTR-style results: fixed local windows under-handle QNRF scale
+# variation. It keeps VGG and PET's point-query formulation, but changes the
+# attention context path itself:
+# - shifted encoder windows allow information exchange across PET's original
+#   rectangle boundaries;
+# - decoder memory halo gives each local query window neighboring key/value
+#   tokens without changing the query grid;
+# - residual global context is zero-initialized and learns an image-level bias
+#   only if useful.
+MODEL_RECIPES['vgg_pet_window_apg_qnrf'] = {
+    **MODEL_RECIPES['vgg_pet_kmo_apg_qnrf'],
+    'enc_shift_mode': 'swin',
+    'decoder_memory_halo': 2,
+    'decoder_global_context': True,
+    'decoder_global_context_mode': 'residual',
+}
+
+# QNRF window + multi-head fusion APG/LC.
+#
+# This is the aggressive VGG-preserving branch. It keeps the KMO/APG matching
+# and shifted-window transformer context above, then adds the existing
+# residual MHF feature-fusion gate before the FPN. The residual implementation
+# is zero-initialized, so the branch starts from the normal VGG-FPN behavior
+# and must learn any scale-adaptive feature correction from data.
+MODEL_RECIPES['vgg_pet_window_mhf_apg_qnrf'] = {
+    **MODEL_RECIPES['vgg_pet_window_apg_qnrf'],
+    'fusion_mhf_mode': 'full',
+    'fusion_mhf_heads': 4,
+    'fusion_mhf_position': 'before',
+    'fusion_mhf_strength': 1.0,
+    'fusion_mhf_activation': 'gelu',
+    'fusion_mhf_impl': 'residual',
+    'fusion_mhf_norm': 'gn',
+    'fusion_mhf_spatial_kernel': 7,
+    'encoder_context_fusion': 'detail_to_context',
+    'encoder_context_fusion_activation': 'gelu',
+    'encoder_context_fusion_gate': 'channel_spatial',
+}
+
 # NWPU Tail-Robust APG+LC.
 #
 # NWPU differs from SHA in the exact way that broke the current run: it has
@@ -1778,6 +1840,9 @@ EXPERIMENTAL_MODEL_RECIPES = {
     'vgg_apglc_localzip',
     'vgg_apglc_ebczip',
     'vgg_apglc_qnrf_zip_tail',
+    'vgg_pet_kmo_apg_qnrf',
+    'vgg_pet_window_apg_qnrf',
+    'vgg_pet_window_mhf_apg_qnrf',
     'vgg_apglc_measure_qnrf',
     'vgg_routed_apglc_countcal',
 }
@@ -2143,6 +2208,14 @@ def get_args_parser():
                         help="Class coefficient in the matching cost")
     parser.add_argument('--set_cost_point', default=0.05, type=float,
                         help="SmoothL1 point coefficient in the matching cost")
+    parser.add_argument('--set_cost_context', default=0.0, type=float,
+                        help='local target-spacing normalized point matching cost; 0 disables it')
+    parser.add_argument('--set_cost_query', default=0.0, type=float,
+                        help='query-center to target matching cost; 0 disables it')
+    parser.add_argument('--matcher_context_k', default=4, type=int,
+                        help='nearest GT points used to estimate local target spacing for matching')
+    parser.add_argument('--matcher_context_min_scale', default=4.0, type=float,
+                        help='minimum pixel spacing used by context-normalized matching')
     # - loss coefficients
     parser.add_argument('--ce_loss_coef', default=1.0, type=float)
     parser.add_argument('--point_loss_coef', default=5.0, type=float)
@@ -3399,7 +3472,25 @@ def model_only_allowed_missing_prefixes(args):
     if getattr(args, 'scale_fusion', 'none') != 'none':
         prefixes.append('scale_fusion.')
     if getattr(args, 'encoder_context_fusion', 'none') != 'none':
-        prefixes.append('encoder_context_fusion.')
+        prefixes.extend((
+            'encoder_context_fusion.',
+            'quadtree_sparse.encoder_context_fusion.',
+            'quadtree_dense.encoder_context_fusion.',
+        ))
+    if getattr(args, 'fusion_mhf_mode', 'none') != 'none':
+        prefixes.extend((
+            'backbone.0.fpn.mhf_c4.',
+            'backbone.0.fpn.mhf_c3.',
+            'quadtree_sparse.backbone.0.fpn.mhf_c4.',
+            'quadtree_sparse.backbone.0.fpn.mhf_c3.',
+            'quadtree_dense.backbone.0.fpn.mhf_c4.',
+            'quadtree_dense.backbone.0.fpn.mhf_c3.',
+        ))
+    if bool(getattr(args, 'decoder_global_context', False)):
+        prefixes.extend((
+            'quadtree_sparse.transformer.global_context_',
+            'quadtree_dense.transformer.global_context_',
+        ))
     if float(getattr(args, 'ifi_loss_coef', 0.0)) > 0 and getattr(args, 'ifi_head_source', 'separate') == 'separate':
         prefixes.extend(('ifi_cls_embed.', 'ifi_coord_embed.'))
     return tuple(prefixes)
