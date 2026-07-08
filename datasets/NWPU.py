@@ -39,6 +39,7 @@ class NWPU(Dataset):
         require_official_sigma=False,
         dense_crop_prob=0.0,
         dense_crop_attempts=16,
+        no_random_scale=False,
     ):
         self.root_path = str(data_root)
         self.data_root = Path(data_root)
@@ -55,6 +56,7 @@ class NWPU(Dataset):
         self.require_official_sigma = bool(require_official_sigma)
         self.dense_crop_prob = max(0.0, min(1.0, float(dense_crop_prob)))
         self.dense_crop_attempts = max(1, int(dense_crop_attempts))
+        self.no_random_scale = bool(no_random_scale)
         self.official_localization = load_official_localization_data(
             self.data_root / f'{split}_gt_loc.txt'
         )
@@ -208,7 +210,8 @@ class NWPU(Dataset):
                 )
             else:
                 point_records = points
-            img, point_records = safe_random_scale(img, point_records, patch_size)
+            if not self.no_random_scale:
+                img, point_records = safe_random_scale(img, point_records, patch_size)
             if point_records.shape[0] > 0 and random.random() < self.dense_crop_prob:
                 img, point_records = max_count_random_crop(
                     img,
@@ -715,6 +718,7 @@ def build(image_set, args):
             sigma_mode=getattr(args, 'nwpu_sigma_mode', 'official'),
             dense_crop_prob=getattr(args, 'nwpu_dense_crop_prob', 0.0),
             dense_crop_attempts=getattr(args, 'nwpu_dense_crop_attempts', 16),
+            no_random_scale=getattr(args, 'no_random_scale', False),
         )
     if image_set == 'train_eval':
         return NWPU(

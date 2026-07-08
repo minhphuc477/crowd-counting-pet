@@ -25,6 +25,7 @@ class QNRF(Dataset):
         crop_attempts=1,
         min_crop_points=0,
         eval_max_size=1536,
+        no_random_scale=False,
     ):
         self.root_path = data_root
         if source_split is None:
@@ -72,6 +73,7 @@ class QNRF(Dataset):
         self.crop_attempts = max(1, int(crop_attempts))
         self.min_crop_points = max(0, int(min_crop_points))
         self.eval_max_size = int(eval_max_size) if eval_max_size is not None else 1536
+        self.no_random_scale = bool(no_random_scale)
         self.sample_counts = None
 
     def compute_density(self, points):
@@ -113,7 +115,8 @@ class QNRF(Dataset):
         patch_size = random.choice(self.patch_size_choices) if self.train else int(self.patch_size)
 
         if self.train:
-            img, points = safe_random_scale(img, points, patch_size)
+            if not self.no_random_scale:
+                img, points = safe_random_scale(img, points, patch_size)
 
             img, points = random_crop_with_retries(
                 img,
@@ -326,6 +329,7 @@ def build(image_set, args):
             crop_attempts=getattr(args, 'crop_attempts', 1),
             min_crop_points=getattr(args, 'min_crop_points', 0),
             eval_max_size=eval_max_size,
+            no_random_scale=getattr(args, 'no_random_scale', False),
         )
     if image_set == 'train_eval':
         return QNRF(

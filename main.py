@@ -1449,6 +1449,7 @@ MODEL_RECIPES['vgg_apglc_qnrf_tail'] = {
     'patch_size_choices': '256,384',
     'crop_attempts': 8,
     'min_crop_points': 1,
+    'drop_abnormal_dense_loss_sample': True,
     'train_count_weight_power': 0.3,
     'train_count_weight_max': 4.0,
     'eval_max_size': 1536,
@@ -2555,6 +2556,8 @@ def get_args_parser():
                         help='paper matches official PET; balanced enables experimental zero/negative-region losses')
     parser.add_argument('--split_loss_variant', default='auto', choices=('auto', 'none', 'paper', 'gt', 'paper_gt'),
                         help='split-map supervision: auto follows pet_loss_variant, none disables explicit split loss, paper uses PET min/max, gt uses per-cell GT BCE, paper_gt combines both')
+    parser.add_argument('--drop_abnormal_dense_loss_sample', action='store_true',
+                        help='skip the lowest-density item in PET paper split-loss dense group; QNRF workaround from the PET issue tracker')
     parser.add_argument('--negative_loss_coef', default=0.1, type=float,
                         help='extra scale for all-negative classification and split-map regions')
     parser.add_argument('--non_div_loss_coef', default=0.25, type=float,
@@ -2666,6 +2669,8 @@ def get_args_parser():
                         help='number of random crop candidates tried per positive training image')
     parser.add_argument('--min_crop_points', default=0, type=int,
                         help='minimum people desired in a positive training crop')
+    parser.add_argument('--no_random_scale', action='store_true',
+                        help='disable random-scale augmentation in training datasets')
     parser.add_argument('--eval_max_size', default=-1, type=int,
                         help='high-resolution dataset long-side cap applied before training crops and evaluation; -1 selects the published default (QNRF 1536, JHU/NWPU 2048), 0 disables resizing')
     parser.add_argument('--nwpu_eval_split', default='val', choices=('val', 'test', 'train'),
@@ -2705,6 +2710,8 @@ def get_args_parser():
                         help='sample training images with weight (count+1)^power; 0 keeps uniform sampling')
     parser.add_argument('--train_count_weight_max', default=8.0, type=float,
                         help='maximum per-image sampling weight when --train_count_weight_power is enabled')
+    parser.add_argument('--train_sample_multiplier', default=0.0, type=float,
+                        help='non-distributed samples per epoch multiplier; 0 auto-compensates dense-loss sample dropping, 1 keeps dataset length')
 
     # misc parameters
     parser.add_argument('--output_dir', default='',
@@ -3104,8 +3111,9 @@ def merge_checkpoint_args(args, checkpoint):
         'allow_benchmark_test_selection',
         'allow_output_overwrite',
         'patch_size', 'patch_size_choices', 'crop_attempts', 'min_crop_points',
+        'no_random_scale',
         'nwpu_dense_crop_prob', 'nwpu_dense_crop_attempts',
-        'train_count_weight_power', 'train_count_weight_max',
+        'train_count_weight_power', 'train_count_weight_max', 'train_sample_multiplier',
         'no_localization_metrics', 'localization_large_threshold', 'localization_small_threshold',
         'localization_protocol', 'localization_large_scale', 'localization_small_scale',
         'eval_count_source', 'eval_count_blend_alpha', 'eval_count_tail_threshold',
@@ -3862,7 +3870,24 @@ def main(args):
         sampler_val = DistributedSampler(dataset_val, shuffle=False)
         if float(getattr(args, 'train_count_weight_power', 0.0)) > 0 and utils.is_main_process():
             print('WARNING: --train_count_weight_power is ignored with DistributedSampler')
+        if (
+            (
+                float(getattr(args, 'train_sample_multiplier', 0.0)) not in (0.0, 1.0)
+                or bool(getattr(args, 'drop_abnormal_dense_loss_sample', False))
+            )
+            and utils.is_main_process()
+        ):
+            print('WARNING: --train_sample_multiplier is ignored with DistributedSampler')
     else:
+        sample_multiplier = float(getattr(args, 'train_sample_multiplier', 0.0))
+        if sample_multiplier <= 0.0:
+            sample_multiplier = (
+                1.0 + 1.0 / max(1, int(args.batch_size))
+                if bool(getattr(args, 'drop_abnormal_dense_loss_sample', False))
+                else 1.0
+            )
+        sample_multiplier = max(1.0, sample_multiplier)
+        num_train_samples = max(1, int(math.ceil(len(dataset_train) * sample_multiplier)))
         count_weight_power = float(getattr(args, 'train_count_weight_power', 0.0))
         if count_weight_power > 0 and hasattr(dataset_train, 'get_sample_counts'):
             counts = torch.as_tensor(dataset_train.get_sample_counts(), dtype=torch.float64)
@@ -3873,7 +3898,7 @@ def main(args):
             weights = weights / weights.mean().clamp_min(1e-12)
             sampler_train = torch.utils.data.WeightedRandomSampler(
                 weights,
-                num_samples=len(weights),
+                num_samples=num_train_samples,
                 replacement=True,
                 generator=data_loader_generator,
             )
@@ -3882,7 +3907,21 @@ def main(args):
                     'count-weighted sampler:',
                     f'power={count_weight_power}',
                     f'max_weight={max_weight}',
+                    f'samples={num_train_samples}',
                     f'weight_range=[{float(weights.min()):.3f},{float(weights.max()):.3f}]',
+                )
+        elif sample_multiplier > 1.0:
+            sampler_train = torch.utils.data.RandomSampler(
+                dataset_train,
+                replacement=True,
+                num_samples=num_train_samples,
+                generator=data_loader_generator,
+            )
+            if utils.is_main_process():
+                print(
+                    'replacement sampler:',
+                    f'multiplier={sample_multiplier:.4f}',
+                    f'samples={num_train_samples}',
                 )
         else:
             sampler_train = torch.utils.data.RandomSampler(dataset_train, generator=data_loader_generator)

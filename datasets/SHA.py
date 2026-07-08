@@ -25,6 +25,7 @@ class SHA(Dataset):
         patch_size=256,
         crop_attempts=1,
         min_crop_points=0,
+        no_random_scale=False,
         partial_annotation_ratio=1.0,
         partial_annotation_seed=0,
         partial_annotation_height_ratio=0.5,
@@ -82,6 +83,7 @@ class SHA(Dataset):
         self.patch_size_choices = _parse_patch_size_choices(patch_size)
         self.crop_attempts = max(1, int(crop_attempts))
         self.min_crop_points = max(0, int(min_crop_points))
+        self.no_random_scale = bool(no_random_scale)
         self.partial_annotation_ratio = float(partial_annotation_ratio)
         if not 0.0 < self.partial_annotation_ratio <= 1.0:
             raise ValueError('partial_annotation_ratio must be in (0, 1]')
@@ -143,7 +145,7 @@ class SHA(Dataset):
         patch_size = random.choice(self.patch_size_choices) if self.train else int(self.patch_size)
 
         # random scale
-        if self.train:
+        if self.train and not self.no_random_scale:
             if supervision_mask is None:
                 img, points = safe_random_scale(img, points, patch_size)
             else:
@@ -532,6 +534,7 @@ def build(image_set, args):
             patch_size=getattr(args, 'patch_size_choices', '') or args.patch_size,
             crop_attempts=getattr(args, 'crop_attempts', 1),
             min_crop_points=getattr(args, 'min_crop_points', 0),
+            no_random_scale=getattr(args, 'no_random_scale', False),
             partial_annotation_ratio=getattr(
                 args,
                 'partial_annotation_ratio',

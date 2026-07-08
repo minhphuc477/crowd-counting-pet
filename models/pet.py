@@ -4928,6 +4928,25 @@ class SetCriterion(nn.Module):
         self.non_div_loss_coef = non_div_loss_coef
         self.pet_loss_variant = pet_loss_variant
         self.div_thrs_dict = {8: 0.0, 4: 0.5}
+        self.drop_abnormal_dense_loss_sample = bool(
+            getattr(args, 'drop_abnormal_dense_loss_sample', False)
+        )
+
+    def paper_div_image_indices(self, density):
+        """Return PET paper sparse/dense image groups for split-map losses.
+
+        The public PET issue tracker documents a QNRF failure mode where the
+        lowest-density item in the dense half can produce abnormal dense losses.
+        When enabled, skip that single item while keeping the original grouping
+        for all other samples.
+        """
+        den_sort = torch.sort(density)[1]
+        split_at = len(den_sort) // 2
+        dense_idx = den_sort[:split_at]
+        if self.drop_abnormal_dense_loss_sample and split_at > 1:
+            dense_idx = den_sort[1:split_at]
+        sparse_idx = den_sort[split_at:]
+        return dense_idx, sparse_idx
 
     def classification_loss_per_query(self, src_logits, target_classes):
         if self.class_loss_type == 'ce':
@@ -4992,9 +5011,7 @@ class SetCriterion(nn.Module):
             empty_weight = self.empty_weight.to(device=src_logits.device, dtype=src_logits.dtype)
             if 'div' in kwargs:
                 den = torch.stack([target['density'].reshape(()) for target in targets]).to(src_logits.device)
-                den_sort = torch.sort(den)[1]
-                ds_idx = den_sort[:len(den_sort)//2]
-                sp_idx = den_sort[len(den_sort)//2:]
+                ds_idx, sp_idx = self.paper_div_image_indices(den)
                 eps = 1e-5
 
                 weights = torch.zeros_like(target_classes, dtype=src_logits.dtype)
@@ -5118,9 +5135,7 @@ class SetCriterion(nn.Module):
 
             if 'div' in kwargs:
                 den = torch.stack([target['density'].reshape(()) for target in targets]).to(outputs['pred_points'].device)
-                den_sort = torch.sort(den)[1]
-                img_ds_idx = den_sort[:len(den_sort)//2]
-                img_sp_idx = den_sort[len(den_sort)//2:]
+                img_ds_idx, img_sp_idx = self.paper_div_image_indices(den)
                 ds_parts = [torch.where(idx[0] == bs_id)[0] for bs_id in img_ds_idx]
                 sp_parts = [torch.where(idx[0] == bs_id)[0] for bs_id in img_sp_idx]
                 pt_ds_idx = torch.cat(ds_parts) if ds_parts else torch.empty(0, dtype=torch.int64, device=idx[0].device)

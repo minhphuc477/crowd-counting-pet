@@ -125,6 +125,7 @@ class UCFCC50(Dataset):
         crop_attempts=1,
         min_crop_points=0,
         eval_max_size=2048,
+        no_random_scale=False,
     ):
         if source_split not in ('train', 'test'):
             raise ValueError("source_split must be 'train' or 'test'")
@@ -187,6 +188,7 @@ class UCFCC50(Dataset):
         self.crop_attempts = max(1, int(crop_attempts))
         self.min_crop_points = max(0, int(min_crop_points))
         self.eval_max_size = int(eval_max_size)
+        self.no_random_scale = bool(no_random_scale)
 
     def __len__(self):
         return self.nSamples
@@ -220,7 +222,8 @@ class UCFCC50(Dataset):
 
         if self.train:
             patch_size = random.choice(self.patch_size_choices)
-            image, points = safe_random_scale(image, points, patch_size)
+            if not self.no_random_scale:
+                image, points = safe_random_scale(image, points, patch_size)
             image, points = random_crop_with_retries(
                 image,
                 points,
@@ -262,6 +265,7 @@ def build(image_set, args):
         'fold_seed': getattr(args, 'ucfcc50_fold_seed', 42),
         'fold_manifest': getattr(args, 'ucfcc50_fold_manifest', ''),
         'eval_max_size': eval_max_size,
+        'no_random_scale': getattr(args, 'no_random_scale', False),
     }
     if image_set == 'train':
         return UCFCC50(

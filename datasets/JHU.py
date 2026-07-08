@@ -30,6 +30,7 @@ class JHUCrowd(Dataset):
         crop_attempts=1,
         min_crop_points=0,
         eval_max_size=2048,
+        no_random_scale=False,
     ):
         self.root_path = Path(data_root)
         self.split = split
@@ -72,6 +73,7 @@ class JHUCrowd(Dataset):
         self.crop_attempts = max(1, int(crop_attempts))
         self.min_crop_points = max(0, int(min_crop_points))
         self.eval_max_size = int(eval_max_size)
+        self.no_random_scale = bool(no_random_scale)
 
     def __len__(self):
         return len(self.samples)
@@ -112,11 +114,12 @@ class JHUCrowd(Dataset):
         if self.train:
             patch_size = random.choice(self.patch_size_choices)
             records = np.concatenate([points, sigma], axis=1)
-            image, records = safe_random_scale(
-                image,
-                records,
-                patch_size,
-            )
+            if not self.no_random_scale:
+                image, records = safe_random_scale(
+                    image,
+                    records,
+                    patch_size,
+                )
             image, records = random_crop_with_retries(
                 image,
                 records,
@@ -224,6 +227,7 @@ def build(image_set, args):
             crop_attempts=getattr(args, 'crop_attempts', 1),
             min_crop_points=getattr(args, 'min_crop_points', 0),
             eval_max_size=eval_max_size,
+            no_random_scale=getattr(args, 'no_random_scale', False),
         )
     if image_set == 'train_eval':
         return JHUCrowd(

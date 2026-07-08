@@ -60,6 +60,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--patch_size_choices", default="")
     parser.add_argument("--crop_attempts", default=1, type=int)
     parser.add_argument("--min_crop_points", default=0, type=int)
+    parser.add_argument("--no_random_scale", action="store_true")
     parser.add_argument("--eval_max_size", default=-1, type=int)
     parser.add_argument("--eval_tile_size", default=0, type=int)
     parser.add_argument("--eval_tile_overlap", default=0, type=int)
@@ -213,6 +214,7 @@ def main() -> int:
         "patch_size_choices": ("--patch_size_choices", args.patch_size_choices),
         "crop_attempts": ("--crop_attempts", str(args.crop_attempts)),
         "min_crop_points": ("--min_crop_points", str(args.min_crop_points)),
+        "no_random_scale": ("--no_random_scale", ""),
         "eval_tile_size": ("--eval_tile_size", str(args.eval_tile_size)),
         "eval_tile_overlap": ("--eval_tile_overlap", str(args.eval_tile_overlap)),
         "eval_tile_nms_radius": ("--eval_tile_nms_radius", str(args.eval_tile_nms_radius)),
@@ -224,6 +226,8 @@ def main() -> int:
     for key, (flag, value) in recipe_owned.items():
         if key in args._explicit_args and value != "":
             common.extend([flag, value])
+        elif key in args._explicit_args:
+            common.append(flag)
     if args.dataset_file in ("NWPU", "NWPU_Crowd", "NWPU-Crowd"):
         for key, flag, value in (
             ("nwpu_dense_crop_prob", "--nwpu_dense_crop_prob", str(args.nwpu_dense_crop_prob)),
