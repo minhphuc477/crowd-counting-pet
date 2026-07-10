@@ -1461,6 +1461,40 @@ MODEL_RECIPES['vgg_apglc_qnrf_tail'] = {
     'eval_soft_split_gate': 'none',
 }
 
+# QNRF tail protocol + residual IFI.
+#
+# This is the IFI branch that fits the fixed QNRF result: keep the tail-aware
+# crop/sampling recipe and PET/APG+LC count source unchanged, then add a small
+# residual multi-scale IFI refinement for point-query features. The residual
+# path is intentionally used instead of independent branch IFI because old QNRF
+# IFI runs replaced calibrated branch features and regressed counting. This
+# branch should be judged against vgg_apglc_qnrf_tail, not against the older
+# non-tail IFI runs.
+MODEL_RECIPES['vgg_apglc_qnrf_tail_rifi'] = {
+    **MODEL_RECIPES['vgg_apglc_qnrf_tail'],
+    'query_feature_interpolation': 'implicit',
+    'query_ifi_sharing': 'shared',
+    'query_ifi_feature_source': 'fpn4x8x',
+    'query_ifi_residual': True,
+    'query_ifi_residual_init': 1e-3,
+    'ifi_interpolation': 'implicit',
+    'ifi_feature_source': 'branch',
+    'ifi_pos_dim': 32,
+    'ifi_mlp_hidden_dim': 256,
+    'ifi_activation': 'gelu',
+    'ifi_loss_coef': 0.01,
+    'ifi_head_source': 'routed',
+    'ifi_point_coef': 0.2,
+    'ifi_pos_k': 2,
+    'ifi_pos_radius': 2.0,
+    'ifi_random_sampling': True,
+    'ifi_neg_k': 2,
+    'ifi_neg_radius': 8.0,
+    'ifi_neg_min_dist': 2.0,
+    'ifi_start_epoch': 0,
+    'ifi_end_epoch': 700,
+}
+
 # QNRF K-nearest Matching Optimization + APG/LC.
 #
 # This is a detector-side branch, not a post-hoc count correction. It keeps the
@@ -1782,6 +1816,47 @@ MODEL_RECIPES['vgg_apglc_branch_ifi_nwpu'] = {
     'scale_point_sigma_max': 128.0,
 }
 
+# NWPU localization-first residual IFI.
+#
+# Previous NWPU runs split into two failure modes: branch IFI gave the best MAE
+# but weak sigma F1, while full IFI improved localization but damaged counting.
+# This recipe keeps the APG+LC detector/count source intact and uses IFI as a
+# residual multi-scale refinement. KMO context cost and scale-normalized point
+# loss align the assignment and regression losses with NWPU's official
+# box-derived sigma_l/s localization metric.
+MODEL_RECIPES['vgg_apglc_nwpu_tail_rifi'] = {
+    **MODEL_RECIPES['vgg_apglc_nwpu_tail'],
+    'query_feature_interpolation': 'implicit',
+    'query_ifi_sharing': 'shared',
+    'query_ifi_feature_source': 'fpn4x8x',
+    'query_ifi_residual': True,
+    'query_ifi_residual_init': 1e-3,
+    'ifi_interpolation': 'implicit',
+    'ifi_feature_source': 'branch',
+    'ifi_pos_dim': 32,
+    'ifi_mlp_hidden_dim': 256,
+    'ifi_activation': 'gelu',
+    'ifi_loss_coef': 0.02,
+    'ifi_head_source': 'routed',
+    'ifi_point_coef': 0.2,
+    'ifi_pos_k': 2,
+    'ifi_pos_radius': 2.0,
+    'ifi_random_sampling': True,
+    'ifi_neg_k': 2,
+    'ifi_neg_radius': 8.0,
+    'ifi_neg_min_dist': 2.0,
+    'ifi_start_epoch': 0,
+    'ifi_end_epoch': 700,
+    'set_cost_context': 0.10,
+    'set_cost_query': 0.03,
+    'matcher_context_k': 4,
+    'matcher_context_min_scale': 4.0,
+    'scale_point_loss_coef': 0.05,
+    'scale_point_sigma': 'small',
+    'scale_point_sigma_min': 2.0,
+    'scale_point_sigma_max': 128.0,
+}
+
 MODEL_RECIPES['vgg_apglc_branch_ifi_counthead_stage2_nwpu'] = {
     **MODEL_RECIPES['vgg_apglc_counthead_stage2_nwpu'],
     'query_feature_interpolation': 'implicit',
@@ -1823,6 +1898,7 @@ EXPERIMENTAL_MODEL_RECIPES = {
     'vgg_pet_apg_rifi_counthead_stage2_nwpu',
     'vgg_apglc_density_routed_ifi',
     'vgg_apglc_density_routed_ifi_nwpu',
+    'vgg_apglc_nwpu_tail_rifi',
     # The remaining paths are kept for audit/reproduction only. Session runs
     # showed catastrophic drift or failed to improve on the PET/APG+LC baselines.
     'vgg_apglc_cbme_late_countreg',
@@ -1841,6 +1917,7 @@ EXPERIMENTAL_MODEL_RECIPES = {
     'vgg_apglc_localzip',
     'vgg_apglc_ebczip',
     'vgg_apglc_qnrf_zip_tail',
+    'vgg_apglc_qnrf_tail_rifi',
     'vgg_pet_kmo_apg_qnrf',
     'vgg_pet_window_apg_qnrf',
     'vgg_pet_window_mhf_apg_qnrf',
@@ -3672,6 +3749,63 @@ class IndexedSubset(torch.utils.data.Dataset):
         return getattr(self.dataset, name)
 
 
+class DistributedReplacementSampler(torch.utils.data.Sampler):
+    """Distributed replacement sampler with optional per-sample weights.
+
+    This keeps QNRF/NWPU high-count sampling recipes active under DDP. The
+    default DistributedSampler cannot express replacement sampling or weighted
+    sampling, and silently falling back to it changes the effective recipe.
+    """
+
+    def __init__(self, dataset, num_samples, weights=None, seed=0):
+        self.dataset = dataset
+        self.num_replicas = utils.get_world_size()
+        self.rank = utils.get_rank()
+        self.seed = int(seed)
+        self.epoch = 0
+        total_requested = max(1, int(num_samples))
+        self.num_samples = int(math.ceil(total_requested / self.num_replicas))
+        self.total_size = self.num_samples * self.num_replicas
+        if weights is None:
+            self.weights = None
+        else:
+            weights = torch.as_tensor(weights, dtype=torch.float64)
+            if weights.numel() != len(dataset):
+                raise ValueError(
+                    f'weights length {weights.numel()} does not match dataset '
+                    f'length {len(dataset)}'
+                )
+            if not torch.isfinite(weights).all() or (weights < 0).any():
+                raise ValueError('distributed sampler weights must be finite and non-negative')
+            if float(weights.sum()) <= 0.0:
+                raise ValueError('distributed sampler weights must have positive sum')
+            self.weights = weights
+
+    def __iter__(self):
+        generator = torch.Generator()
+        generator.manual_seed(self.seed + self.epoch)
+        if self.weights is None:
+            indices = torch.randint(
+                len(self.dataset),
+                (self.total_size,),
+                generator=generator,
+            ).tolist()
+        else:
+            indices = torch.multinomial(
+                self.weights,
+                self.total_size,
+                replacement=True,
+                generator=generator,
+            ).tolist()
+        return iter(indices[self.rank:self.total_size:self.num_replicas])
+
+    def __len__(self):
+        return self.num_samples
+
+    def set_epoch(self, epoch):
+        self.epoch = int(epoch)
+
+
 def resolve_validation_protocol(args):
     protocol = str(getattr(args, 'validation_protocol', 'auto'))
     nwpu_names = ('NWPU', 'NWPU_Crowd', 'NWPU-Crowd')
@@ -3866,18 +4000,54 @@ def main(args):
         dataset_val = build_dataset(image_set='val', args=args)
 
     if args.distributed:
-        sampler_train = DistributedSampler(dataset_train, seed=args.seed)
         sampler_val = DistributedSampler(dataset_val, shuffle=False)
-        if float(getattr(args, 'train_count_weight_power', 0.0)) > 0 and utils.is_main_process():
-            print('WARNING: --train_count_weight_power is ignored with DistributedSampler')
-        if (
-            (
-                float(getattr(args, 'train_sample_multiplier', 0.0)) not in (0.0, 1.0)
-                or bool(getattr(args, 'drop_abnormal_dense_loss_sample', False))
+        sample_multiplier = float(getattr(args, 'train_sample_multiplier', 0.0))
+        if sample_multiplier <= 0.0:
+            sample_multiplier = (
+                1.0 + 1.0 / max(1, int(args.batch_size))
+                if bool(getattr(args, 'drop_abnormal_dense_loss_sample', False))
+                else 1.0
             )
-            and utils.is_main_process()
-        ):
-            print('WARNING: --train_sample_multiplier is ignored with DistributedSampler')
+        sample_multiplier = max(1.0, sample_multiplier)
+        num_train_samples = max(1, int(math.ceil(len(dataset_train) * sample_multiplier)))
+        count_weight_power = float(getattr(args, 'train_count_weight_power', 0.0))
+        distributed_weights = None
+        if count_weight_power > 0:
+            if hasattr(dataset_train, 'get_sample_counts'):
+                counts = torch.as_tensor(dataset_train.get_sample_counts(), dtype=torch.float64)
+                distributed_weights = torch.pow(counts + 1.0, count_weight_power)
+                max_weight = float(getattr(args, 'train_count_weight_max', 0.0))
+                if max_weight > 0:
+                    distributed_weights = distributed_weights.clamp(max=max_weight)
+                distributed_weights = distributed_weights / distributed_weights.mean().clamp_min(1e-12)
+            elif utils.is_main_process():
+                print('WARNING: --train_count_weight_power requested but dataset has no get_sample_counts')
+        if distributed_weights is not None or sample_multiplier > 1.0:
+            sampler_train = DistributedReplacementSampler(
+                dataset_train,
+                num_samples=num_train_samples,
+                weights=distributed_weights,
+                seed=args.seed,
+            )
+            if utils.is_main_process():
+                if distributed_weights is not None:
+                    print(
+                        'distributed count-weighted sampler:',
+                        f'power={count_weight_power}',
+                        f'max_weight={float(getattr(args, "train_count_weight_max", 0.0))}',
+                        f'total_samples={sampler_train.total_size}',
+                        f'per_rank_samples={len(sampler_train)}',
+                        f'weight_range=[{float(distributed_weights.min()):.3f},{float(distributed_weights.max()):.3f}]',
+                    )
+                else:
+                    print(
+                        'distributed replacement sampler:',
+                        f'multiplier={sample_multiplier:.4f}',
+                        f'total_samples={sampler_train.total_size}',
+                        f'per_rank_samples={len(sampler_train)}',
+                    )
+        else:
+            sampler_train = DistributedSampler(dataset_train, seed=args.seed)
     else:
         sample_multiplier = float(getattr(args, 'train_sample_multiplier', 0.0))
         if sample_multiplier <= 0.0:
