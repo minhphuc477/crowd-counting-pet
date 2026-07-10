@@ -758,8 +758,13 @@ def evaluate(
             outputs, predict_cnt = _predict_count(model, trigger_samples, targets, epoch=epoch)
             output_samples = trigger_samples
             use_tiled_eval = True
+            trigger_h, trigger_w = _valid_hw(trigger_samples)
+            full_area = max(float(img_h * img_w), 1.0)
+            trigger_sample_area = max(float(trigger_h * trigger_w), 1.0)
+            projected_trigger_count = float(predict_cnt) * full_area / trigger_sample_area
             outputs.setdefault('eval_count_debug', {})['tile_trigger_count'] = float(predict_cnt)
-            use_tiled_eval = use_tiled_eval and float(predict_cnt) >= trigger_count
+            outputs['eval_count_debug']['tile_trigger_projected_count'] = projected_trigger_count
+            use_tiled_eval = use_tiled_eval and projected_trigger_count >= trigger_count
             if trigger_area > 0:
                 use_tiled_eval = use_tiled_eval and int(img_h * img_w) >= trigger_area
             if not use_tiled_eval and 'eval_count_debug' in outputs:
