@@ -746,6 +746,14 @@ def evaluate(
         outputs = None
         predict_cnt = None
         output_samples = samples
+        eval_count_debug = {
+            'tile_candidate_by_size': float(tile_candidate_by_size),
+            'tile_candidate': float(tile_candidate),
+            'tile_trigger_skipped': 0.0,
+            'tile_used': 0.0,
+            'tile_count': 0.0,
+            'tile_final': 0.0,
+        }
         trigger_count = float(eval_tile_trigger_count or 0.0)
         trigger_area = int(eval_tile_trigger_area or 0)
         needs_trigger_count_pass = tile_candidate and trigger_count > 0.0
@@ -762,13 +770,15 @@ def evaluate(
             full_area = max(float(img_h * img_w), 1.0)
             trigger_sample_area = max(float(trigger_h * trigger_w), 1.0)
             projected_trigger_count = float(predict_cnt) * full_area / trigger_sample_area
-            outputs.setdefault('eval_count_debug', {})['tile_trigger_count'] = float(predict_cnt)
-            outputs['eval_count_debug']['tile_trigger_projected_count'] = projected_trigger_count
+            eval_count_debug['tile_trigger_count'] = float(predict_cnt)
+            eval_count_debug['tile_trigger_projected_count'] = projected_trigger_count
             count_triggered = projected_trigger_count >= trigger_count
             area_triggered = trigger_area > 0 and int(img_h * img_w) >= trigger_area
             use_tiled_eval = use_tiled_eval and (count_triggered or area_triggered)
-            if not use_tiled_eval and 'eval_count_debug' in outputs:
-                outputs['eval_count_debug']['tile_trigger_skipped'] = 1.0
+            eval_count_debug['tile_trigger_count_gate'] = float(count_triggered)
+            eval_count_debug['tile_trigger_area_gate'] = float(area_triggered)
+            if not use_tiled_eval:
+                eval_count_debug['tile_trigger_skipped'] = 1.0
         else:
             use_tiled_eval = tile_candidate
             if use_tiled_eval and trigger_area > 0:
@@ -777,7 +787,7 @@ def evaluate(
                 trigger_samples = _resize_nested_long_side(samples, int(eval_tile_size))
                 outputs, predict_cnt = _predict_count(model, trigger_samples, targets, epoch=epoch)
                 output_samples = trigger_samples
-                outputs.setdefault('eval_count_debug', {})['tile_trigger_skipped'] = 1.0
+                eval_count_debug['tile_trigger_skipped'] = 1.0
 
         if use_tiled_eval:
             outputs, predict_cnt = _predict_count_tiled(
@@ -790,10 +800,12 @@ def evaluate(
                 tile_nms_radius=eval_tile_nms_radius,
             )
             output_samples = samples
-            outputs.setdefault('eval_count_debug', {})['tile_used'] = 1.0
+            eval_count_debug.update(outputs.get('eval_count_debug', {}))
+            eval_count_debug['tile_used'] = 1.0
         elif outputs is None or predict_cnt is None:
             outputs, predict_cnt = _predict_count(model, samples, targets, epoch=epoch)
             output_samples = samples
+        outputs['eval_count_debug'] = eval_count_debug
         # outputs_scores: per-query person probability, shape [N_queries]
         # test_forward() already applies score thresholding and returns only
         # surviving (person) queries in pred_logits, so len(outputs_scores) is
