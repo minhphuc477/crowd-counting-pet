@@ -12,6 +12,7 @@ import os
 
 import numpy as np
 import torch
+import torch.multiprocessing as torch_mp
 from torch.utils.data import DataLoader, DistributedSampler
 
 import util.misc as utils
@@ -19,6 +20,11 @@ from datasets import build_dataset
 from engine import evaluate, evaluate_crowd_no_overlap, format_localization_metrics, train_one_epoch
 from models import build_model
 from models.backbones import get_supported_timm_backbones, is_timm_backbone
+
+try:
+    torch_mp.set_sharing_strategy('file_system')
+except RuntimeError:
+    pass
 
 
 BASE_TRAINING_DEFAULTS = {
@@ -1581,7 +1587,7 @@ MODEL_RECIPES['vgg_apglc_nwpu_tail'] = {
     'eval_tile_size': 1536,
     'eval_tile_overlap': 128,
     'eval_tile_nms_radius': 8.0,
-    'eval_tile_max_tiles': 16,
+    'eval_tile_max_tiles': 64,
     'eval_tile_trigger_count': 1500.0,
     'eval_tile_trigger_area': 0,
 }
