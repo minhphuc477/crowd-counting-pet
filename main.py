@@ -1589,7 +1589,7 @@ MODEL_RECIPES['vgg_apglc_nwpu_tail'] = {
     'eval_tile_nms_radius': 8.0,
     'eval_tile_max_tiles': 64,
     'eval_tile_trigger_count': 1500.0,
-    'eval_tile_trigger_area': 0,
+    'eval_tile_trigger_area': 8000000,
 }
 
 # NWPU stage-2 count-head adaptation.

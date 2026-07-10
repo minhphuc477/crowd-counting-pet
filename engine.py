@@ -764,9 +764,9 @@ def evaluate(
             projected_trigger_count = float(predict_cnt) * full_area / trigger_sample_area
             outputs.setdefault('eval_count_debug', {})['tile_trigger_count'] = float(predict_cnt)
             outputs['eval_count_debug']['tile_trigger_projected_count'] = projected_trigger_count
-            use_tiled_eval = use_tiled_eval and projected_trigger_count >= trigger_count
-            if trigger_area > 0:
-                use_tiled_eval = use_tiled_eval and int(img_h * img_w) >= trigger_area
+            count_triggered = projected_trigger_count >= trigger_count
+            area_triggered = trigger_area > 0 and int(img_h * img_w) >= trigger_area
+            use_tiled_eval = use_tiled_eval and (count_triggered or area_triggered)
             if not use_tiled_eval and 'eval_count_debug' in outputs:
                 outputs['eval_count_debug']['tile_trigger_skipped'] = 1.0
         else:
