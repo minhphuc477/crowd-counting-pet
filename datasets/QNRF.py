@@ -197,9 +197,11 @@ def resize_long_side(img, points, max_size):
     img = img.resize((new_width, new_height), Image.BILINEAR)
     if points.shape[0] > 0:
         points = points.copy()
-        # Match PET's released QNRF preprocessing: annotations are divided by
-        # the same long-side resize factor used before integer image rounding.
-        points /= factor
+        # PIL receives integer output dimensions, so use the realized scale on
+        # each axis.  Reusing the nominal long-side factor misaligns points on
+        # the axis whose dimension was rounded.
+        points[:, 0] *= new_height / float(height)
+        points[:, 1] *= new_width / float(width)
     return img, points
 
 

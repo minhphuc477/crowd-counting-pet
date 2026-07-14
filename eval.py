@@ -93,6 +93,13 @@ ARCHITECTURE_OVERRIDE_KEYS = {
     'zip_count_feature_grad_scale',
     'eval_count_blend_alpha',
     'eval_count_tail_threshold',
+    'scale_point_loss_coef',
+    'scale_point_sigma',
+    'scale_point_sigma_min',
+    'scale_point_sigma_max',
+    'scale_point_fallback',
+    'scale_point_fallback_k',
+    'scale_point_fallback_factor',
 }
 
 
@@ -183,6 +190,13 @@ def get_args_parser():
     # - loss coefficients
     parser.add_argument('--ce_loss_coef', default=1.0, type=float)       # classification loss coefficient
     parser.add_argument('--point_loss_coef', default=5.0, type=float)    # regression loss coefficient
+    parser.add_argument('--scale_point_loss_coef', default=0.0, type=float)
+    parser.add_argument('--scale_point_sigma', default='small', choices=('small', 'large', 'geomean'))
+    parser.add_argument('--scale_point_sigma_min', default=2.0, type=float)
+    parser.add_argument('--scale_point_sigma_max', default=128.0, type=float)
+    parser.add_argument('--scale_point_fallback', default='none', choices=('none', 'knn'))
+    parser.add_argument('--scale_point_fallback_k', default=3, type=int)
+    parser.add_argument('--scale_point_fallback_factor', default=0.3, type=float)
     parser.add_argument('--pq_sparse_coef', default=1.0, type=float)
     parser.add_argument('--pq_dense_coef', default=1.0, type=float)
     parser.add_argument('--pq_dense_start_epoch', default=0, type=int)

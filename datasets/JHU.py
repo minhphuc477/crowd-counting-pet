@@ -74,9 +74,19 @@ class JHUCrowd(Dataset):
         self.min_crop_points = max(0, int(min_crop_points))
         self.eval_max_size = int(eval_max_size)
         self.no_random_scale = bool(no_random_scale)
+        self._sample_counts = None
 
     def __len__(self):
         return len(self.samples)
+
+    def get_sample_counts(self):
+        if self._sample_counts is None:
+            self._sample_counts = np.asarray(
+                [load_jhu_annotation(annotation_path)[0].shape[0]
+                 for _, annotation_path in self.samples],
+                dtype=np.float64,
+            )
+        return self._sample_counts.copy()
 
     @staticmethod
     def compute_density(points):

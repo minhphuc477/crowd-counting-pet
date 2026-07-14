@@ -189,9 +189,24 @@ class UCFCC50(Dataset):
         self.min_crop_points = max(0, int(min_crop_points))
         self.eval_max_size = int(eval_max_size)
         self.no_random_scale = bool(no_random_scale)
+        self._sample_counts = None
 
     def __len__(self):
         return self.nSamples
+
+    def get_sample_counts(self):
+        if self._sample_counts is None:
+            counts = []
+            for image_path in self.img_list:
+                image = load_rgb_image(image_path)
+                width, height = image.size
+                points = load_points(
+                    self.gt_list[image_path],
+                    image_size=(height, width),
+                )
+                counts.append(points.shape[0])
+            self._sample_counts = np.asarray(counts, dtype=np.float64)
+        return self._sample_counts.copy()
 
     @staticmethod
     def compute_density(points):

@@ -1467,6 +1467,84 @@ MODEL_RECIPES['vgg_apglc_qnrf_tail'] = {
     'eval_soft_split_gate': 'none',
 }
 
+# Transferable APG+LC + residual IFI detector core.
+#
+# Keep dataset-tail sampling and tiled evaluation out of this dictionary: they
+# are data/protocol choices, not model architecture.  Annotation-provided head
+# scales remain authoritative; point-only datasets use the same 3-NN geometry
+# convention as established geometry-adaptive crowd supervision.
+TRANSFERABLE_SCALE_RIFI_OVERRIDES = {
+    'query_feature_interpolation': 'implicit',
+    'query_ifi_sharing': 'shared',
+    'query_ifi_feature_source': 'fpn4x8x',
+    'query_ifi_residual': True,
+    'query_ifi_residual_init': 1e-3,
+    'ifi_interpolation': 'implicit',
+    'ifi_feature_source': 'branch',
+    'ifi_pos_dim': 32,
+    'ifi_mlp_hidden_dim': 256,
+    'ifi_activation': 'gelu',
+    'ifi_loss_coef': 0.02,
+    'ifi_head_source': 'routed',
+    'ifi_point_coef': 0.2,
+    'ifi_pos_k': 2,
+    'ifi_pos_radius': 2.0,
+    'ifi_random_sampling': True,
+    'ifi_neg_k': 2,
+    'ifi_neg_radius': 8.0,
+    'ifi_neg_min_dist': 2.0,
+    'ifi_start_epoch': 0,
+    'ifi_end_epoch': 700,
+    'set_cost_context': 0.10,
+    'set_cost_query': 0.03,
+    'matcher_context_k': 4,
+    'matcher_context_min_scale': 4.0,
+    'scale_point_loss_coef': 0.05,
+    'scale_point_sigma': 'small',
+    'scale_point_sigma_min': 2.0,
+    'scale_point_sigma_max': 128.0,
+    'scale_point_fallback': 'knn',
+    'scale_point_fallback_k': 3,
+    'scale_point_fallback_factor': 0.3,
+}
+
+MODEL_RECIPES['vgg_apglc_scale_rifi'] = {
+    **MODEL_RECIPES['vgg_apglc'],
+    **TRANSFERABLE_SCALE_RIFI_OVERRIDES,
+}
+
+MODEL_RECIPES['vgg_apglc_qnrf_tail_scale_rifi'] = {
+    **MODEL_RECIPES['vgg_apglc_qnrf_tail'],
+    **TRANSFERABLE_SCALE_RIFI_OVERRIDES,
+}
+
+# JHU has box-derived scale labels and a long-tailed count distribution.  Its
+# scale labels override the kNN fallback; the larger crop option and mild
+# count weighting are dataset policy only.
+MODEL_RECIPES['vgg_apglc_jhu_tail_scale_rifi'] = {
+    **MODEL_RECIPES['vgg_apglc_scale_rifi'],
+    'patch_size_choices': '256,384',
+    'crop_attempts': 8,
+    'min_crop_points': 1,
+    'drop_abnormal_dense_loss_sample': True,
+    'train_count_weight_power': 0.3,
+    'train_count_weight_max': 4.0,
+    'eval_max_size': 2048,
+    'localization_protocol': 'target_sigma',
+}
+
+# UCF-CC-50 is too small for tail-weighted sampling.  Keep the transferable
+# detector intact and leave model selection to the leakage-safe five-fold
+# driver rather than introducing a dataset-level count prior.
+MODEL_RECIPES['vgg_apglc_ucfcc50_scale_rifi'] = {
+    **MODEL_RECIPES['vgg_apglc_scale_rifi'],
+    'patch_size_choices': '256,384',
+    'crop_attempts': 8,
+    'min_crop_points': 1,
+    'eval_max_size': 2048,
+    'localization_protocol': 'adaptive_nn',
+}
+
 # QNRF tail protocol + residual IFI.
 #
 # This is the IFI branch that fits the fixed QNRF result: keep the tail-aware
@@ -1832,35 +1910,7 @@ MODEL_RECIPES['vgg_apglc_branch_ifi_nwpu'] = {
 # box-derived sigma_l/s localization metric.
 MODEL_RECIPES['vgg_apglc_nwpu_tail_rifi'] = {
     **MODEL_RECIPES['vgg_apglc_nwpu_tail'],
-    'query_feature_interpolation': 'implicit',
-    'query_ifi_sharing': 'shared',
-    'query_ifi_feature_source': 'fpn4x8x',
-    'query_ifi_residual': True,
-    'query_ifi_residual_init': 1e-3,
-    'ifi_interpolation': 'implicit',
-    'ifi_feature_source': 'branch',
-    'ifi_pos_dim': 32,
-    'ifi_mlp_hidden_dim': 256,
-    'ifi_activation': 'gelu',
-    'ifi_loss_coef': 0.02,
-    'ifi_head_source': 'routed',
-    'ifi_point_coef': 0.2,
-    'ifi_pos_k': 2,
-    'ifi_pos_radius': 2.0,
-    'ifi_random_sampling': True,
-    'ifi_neg_k': 2,
-    'ifi_neg_radius': 8.0,
-    'ifi_neg_min_dist': 2.0,
-    'ifi_start_epoch': 0,
-    'ifi_end_epoch': 700,
-    'set_cost_context': 0.10,
-    'set_cost_query': 0.03,
-    'matcher_context_k': 4,
-    'matcher_context_min_scale': 4.0,
-    'scale_point_loss_coef': 0.05,
-    'scale_point_sigma': 'small',
-    'scale_point_sigma_min': 2.0,
-    'scale_point_sigma_max': 128.0,
+    **TRANSFERABLE_SCALE_RIFI_OVERRIDES,
 }
 
 MODEL_RECIPES['vgg_apglc_branch_ifi_counthead_stage2_nwpu'] = {
@@ -1905,6 +1955,10 @@ EXPERIMENTAL_MODEL_RECIPES = {
     'vgg_apglc_density_routed_ifi',
     'vgg_apglc_density_routed_ifi_nwpu',
     'vgg_apglc_nwpu_tail_rifi',
+    'vgg_apglc_scale_rifi',
+    'vgg_apglc_qnrf_tail_scale_rifi',
+    'vgg_apglc_jhu_tail_scale_rifi',
+    'vgg_apglc_ucfcc50_scale_rifi',
     # The remaining paths are kept for audit/reproduction only. Session runs
     # showed catastrophic drift or failed to improve on the PET/APG+LC baselines.
     'vgg_apglc_cbme_late_countreg',
@@ -2304,13 +2358,19 @@ def get_args_parser():
     parser.add_argument('--ce_loss_coef', default=1.0, type=float)
     parser.add_argument('--point_loss_coef', default=5.0, type=float)
     parser.add_argument('--scale_point_loss_coef', default=0.0, type=float,
-                        help='matched point loss normalized by per-head NWPU sigma; 0 disables it')
+                        help='matched point loss normalized by annotated or inferred head scale; 0 disables it')
     parser.add_argument('--scale_point_sigma', default='small', choices=('small', 'large', 'geomean'),
                         help='head scale used by --scale_point_loss_coef')
     parser.add_argument('--scale_point_sigma_min', default=2.0, type=float,
                         help='minimum pixel scale used by scale-normalized point loss')
     parser.add_argument('--scale_point_sigma_max', default=128.0, type=float,
                         help='maximum pixel scale used by scale-normalized point loss')
+    parser.add_argument('--scale_point_fallback', default='none', choices=('none', 'knn'),
+                        help='scale source when annotations do not provide sigma')
+    parser.add_argument('--scale_point_fallback_k', default=3, type=int,
+                        help='nearest annotated points used by the kNN scale fallback')
+    parser.add_argument('--scale_point_fallback_factor', default=0.3, type=float,
+                        help='factor applied to mean kNN spacing to estimate head scale')
     parser.add_argument('--quality_loss_coef', default=0.0, type=float,
                         help='quality-aware score calibration loss weight; 0 disables it')
     parser.add_argument('--quality_loss_sigma', default=16.0, type=float,
@@ -3247,6 +3307,8 @@ def merge_checkpoint_args(args, checkpoint):
             'quality_loss_bg_weight',
             'scale_point_loss_coef', 'scale_point_sigma',
             'scale_point_sigma_min', 'scale_point_sigma_max',
+            'scale_point_fallback', 'scale_point_fallback_k',
+            'scale_point_fallback_factor',
             'pq_sparse_coef', 'pq_dense_coef',
             'pq_dense_start_epoch', 'pq_dense_warmup_epochs',
             'branch_target_routing',

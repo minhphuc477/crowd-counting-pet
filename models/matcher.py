@@ -55,6 +55,43 @@ def get_query_supervision_mask(outputs, target, batch_index=0):
     return result
 
 
+def estimate_target_context_scale(
+    target_points,
+    k=4,
+    min_scale=4.0,
+    max_pairwise_elements=4_000_000,
+):
+    """Estimate a per-point pixel scale from neighboring annotations.
+
+    The returned scale is the mean distance to the ``k`` nearest distinct
+    targets.  It is shared by matching and scale-aware regression so both
+    objectives use the same crowd-geometry convention.
+    """
+    target_count = target_points.shape[0]
+    min_scale = float(min_scale)
+    if target_count <= 1 or int(k) <= 0:
+        return target_points.new_full((target_count,), min_scale)
+
+    nearest_k = min(int(k), target_count - 1)
+    points = target_points.float()
+    chunk_size = max(
+        1,
+        min(target_count, int(max_pairwise_elements) // target_count),
+    )
+    scale_parts = []
+    for start in range(0, target_count, chunk_size):
+        end = min(start + chunk_size, target_count)
+        distances = torch.cdist(points[start:end], points, p=2)
+        local_rows = torch.arange(end - start, device=distances.device)
+        global_rows = torch.arange(start, end, device=distances.device)
+        distances[local_rows, global_rows] = float('inf')
+        scale_parts.append(
+            distances.topk(nearest_k, dim=1, largest=False).values.mean(dim=1)
+        )
+    scale = torch.cat(scale_parts, dim=0)
+    return scale.clamp_min(min_scale).to(dtype=target_points.dtype)
+
+
 class HungarianMatcher(nn.Module):
     """
     This class computes an assignment between the targets and the predictions of the network
@@ -94,16 +131,11 @@ class HungarianMatcher(nn.Module):
         ), "all costs can't be 0"
 
     def _target_context_scale(self, target_points):
-        target_count = target_points.shape[0]
-        if target_count <= 1 or self.context_k <= 0:
-            return target_points.new_full((target_count,), self.context_min_scale)
-
-        distances = torch.cdist(target_points, target_points, p=2)
-        inf = torch.tensor(float('inf'), device=distances.device, dtype=distances.dtype)
-        distances.fill_diagonal_(inf)
-        k = min(self.context_k, target_count - 1)
-        scale = distances.topk(k, dim=1, largest=False).values.mean(dim=1)
-        return scale.clamp_min(self.context_min_scale)
+        return estimate_target_context_scale(
+            target_points,
+            k=self.context_k,
+            min_scale=self.context_min_scale,
+        )
 
     @torch.no_grad()
     def forward(self, outputs, targets, **kwargs):

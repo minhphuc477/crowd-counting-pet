@@ -10,7 +10,11 @@ from torch import nn
 from util.misc import (NestedTensor, nested_tensor_from_tensor_list,
                        get_world_size, is_dist_avail_and_initialized)
 
-from .matcher import build_matcher, get_query_supervision_mask
+from .matcher import (
+    build_matcher,
+    estimate_target_context_scale,
+    get_query_supervision_mask,
+)
 from .backbones import *
 from .transformer import *
 from .position_encoding import build_position_encoding
@@ -4921,6 +4925,18 @@ class SetCriterion(nn.Module):
             self.scale_point_sigma_min,
             float(getattr(args, 'scale_point_sigma_max', 128.0)),
         )
+        self.scale_point_fallback = getattr(args, 'scale_point_fallback', 'none')
+        if self.scale_point_fallback not in ('none', 'knn'):
+            raise ValueError('scale_point_fallback must be one of "none" or "knn"')
+        self.scale_point_fallback_k = max(
+            1,
+            int(getattr(args, 'scale_point_fallback_k', 3)),
+        )
+        self.scale_point_fallback_factor = float(
+            getattr(args, 'scale_point_fallback_factor', 0.3)
+        )
+        if self.scale_point_fallback_factor <= 0:
+            raise ValueError('scale_point_fallback_factor must be positive')
         empty_weight = torch.ones(self.num_classes + 1)
         empty_weight[0] = self.eos_coef    # coefficient for non-object background points
         self.register_buffer('empty_weight', empty_weight)
@@ -5169,15 +5185,45 @@ class SetCriterion(nn.Module):
         
         return losses
 
+    def _target_point_scale(self, target, dtype, device):
+        points = target['points'].to(device=device, dtype=dtype)
+        sigma = target.get('sigma')
+        if sigma is not None and sigma.shape[0] == points.shape[0]:
+            sigma = sigma.to(device=device, dtype=dtype)
+            if sigma.ndim == 1:
+                scale = sigma
+            elif self.scale_point_sigma == 'small':
+                scale = sigma[:, 0]
+            elif self.scale_point_sigma == 'large':
+                scale = sigma[:, min(1, sigma.shape[1] - 1)]
+            else:
+                small = sigma[:, 0].clamp_min(self.scale_point_sigma_min)
+                large = sigma[:, min(1, sigma.shape[1] - 1)].clamp_min(
+                    self.scale_point_sigma_min
+                )
+                scale = torch.sqrt(small * large)
+            return scale.clamp(self.scale_point_sigma_min, self.scale_point_sigma_max)
+
+        if self.scale_point_fallback == 'knn':
+            spacing = estimate_target_context_scale(
+                points,
+                k=self.scale_point_fallback_k,
+                min_scale=self.scale_point_sigma_min / self.scale_point_fallback_factor,
+            )
+            return (spacing * self.scale_point_fallback_factor).clamp(
+                self.scale_point_sigma_min,
+                self.scale_point_sigma_max,
+            )
+        return None
+
     def loss_scale_points(self, outputs, targets, indices, num_points, **kwargs):
-        """Normalize matched pixel error by each annotated head scale."""
+        """Normalize matched pixel error by annotated or inferred head scale."""
         img_h, img_w = outputs['img_shape']
         pred_parts = []
         target_parts = []
         sigma_parts = []
         for batch_idx, (target, (src_idx, target_idx)) in enumerate(zip(targets, indices)):
-            sigma = target.get('sigma')
-            if sigma is None or sigma.shape[0] != target['points'].shape[0] or src_idx.numel() == 0:
+            if src_idx.numel() == 0:
                 continue
             src_idx = src_idx.to(outputs['pred_points'].device)
             target_idx_target = target_idx.to(target['points'].device)
@@ -5188,22 +5234,13 @@ class SetCriterion(nn.Module):
                 device=pred.device,
                 dtype=pred.dtype,
             )
-            matched_sigma = sigma[target_idx_target].to(device=pred.device, dtype=pred.dtype)
-            if matched_sigma.ndim == 1:
-                scale = matched_sigma
-            elif self.scale_point_sigma == 'small':
-                scale = matched_sigma[:, 0]
-            elif self.scale_point_sigma == 'large':
-                scale = matched_sigma[:, min(1, matched_sigma.shape[1] - 1)]
-            else:
-                small = matched_sigma[:, 0].clamp_min(self.scale_point_sigma_min)
-                large = matched_sigma[:, min(1, matched_sigma.shape[1] - 1)].clamp_min(
-                    self.scale_point_sigma_min
-                )
-                scale = torch.sqrt(small * large)
+            target_scale = self._target_point_scale(target, pred.dtype, pred.device)
+            if target_scale is None:
+                continue
+            scale = target_scale[target_idx.to(target_scale.device)]
             pred_parts.append(pred)
             target_parts.append(target_points)
-            sigma_parts.append(scale.clamp(self.scale_point_sigma_min, self.scale_point_sigma_max))
+            sigma_parts.append(scale)
 
         if not pred_parts:
             return {'loss_scale_points': outputs['pred_points'].sum() * 0.0}
