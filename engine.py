@@ -196,6 +196,7 @@ def _predict_count(model, samples, targets, epoch=0):
     return outputs, float(len(outputs_scores))
 
 
+@utils.preserve_rng_state
 @torch.no_grad()
 def export_point_refinements(
     model,
@@ -618,6 +619,7 @@ def _predict_count_tiled(
     return outputs, pred_count
 
 
+@utils.preserve_rng_state
 @torch.no_grad()
 def evaluate_crowd_no_overlap(
     model,
@@ -658,6 +660,7 @@ def evaluate_crowd_no_overlap(
 
 
 # evaluation
+@utils.preserve_rng_state
 @torch.no_grad()
 def evaluate(
     model,

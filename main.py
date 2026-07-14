@@ -4042,8 +4042,11 @@ def main(args):
     # fix the seed for reproducibility
     seed = args.seed + utils.get_rank()
     set_reproducibility(seed, deterministic=getattr(args, 'deterministic', True))
-    data_loader_generator = torch.Generator()
-    data_loader_generator.manual_seed(seed)
+    train_data_loader_generator = torch.Generator()
+    train_data_loader_generator.manual_seed(seed)
+    validation_seed = seed + 1_000_003
+    validation_data_loader_generator = torch.Generator()
+    validation_data_loader_generator.manual_seed(validation_seed)
 
     # build model
     model, criterion = build_model(args)
@@ -4202,7 +4205,7 @@ def main(args):
                 weights,
                 num_samples=num_train_samples,
                 replacement=True,
-                generator=data_loader_generator,
+                generator=train_data_loader_generator,
             )
             if utils.is_main_process():
                 print(
@@ -4217,7 +4220,7 @@ def main(args):
                 dataset_train,
                 replacement=True,
                 num_samples=num_train_samples,
-                generator=data_loader_generator,
+                generator=train_data_loader_generator,
             )
             if utils.is_main_process():
                 print(
@@ -4226,7 +4229,10 @@ def main(args):
                     f'samples={num_train_samples}',
                 )
         else:
-            sampler_train = torch.utils.data.RandomSampler(dataset_train, generator=data_loader_generator)
+            sampler_train = torch.utils.data.RandomSampler(
+                dataset_train,
+                generator=train_data_loader_generator,
+            )
         sampler_val = torch.utils.data.SequentialSampler(dataset_val)
 
     batch_sampler_train = torch.utils.data.BatchSampler(
@@ -4234,10 +4240,11 @@ def main(args):
 
     data_loader_train = DataLoader(dataset_train, batch_sampler=batch_sampler_train,
                                 collate_fn=utils.collate_fn, num_workers=args.num_workers,
-                                worker_init_fn=seed_worker, generator=data_loader_generator)
+                                worker_init_fn=seed_worker, generator=train_data_loader_generator)
     data_loader_val = DataLoader(dataset_val, 1, sampler=sampler_val,
                                 drop_last=False, collate_fn=utils.collate_fn, num_workers=args.num_workers,
-                                worker_init_fn=seed_worker, generator=data_loader_generator)
+                                worker_init_fn=seed_worker, generator=validation_data_loader_generator)
+    checkpoint_rng_states = None
     if utils.is_main_process():
         accum_iter = max(1, int(getattr(args, 'accum_iter', 1)))
         print(
@@ -4362,6 +4369,26 @@ def main(args):
             best_localization_eval_metrics = dict(
                 checkpoint.get('best_localization_eval_metrics', best_localization_eval_metrics)
             )
+            saved_rng_states = checkpoint.get('rng_states_by_rank')
+            rank = utils.get_rank()
+            if isinstance(saved_rng_states, (list, tuple)) and rank < len(saved_rng_states):
+                saved_rng_state = saved_rng_states[rank]
+            elif utils.get_world_size() == 1 or rank == 0:
+                saved_rng_state = checkpoint.get('rng_state')
+            else:
+                saved_rng_state = None
+            rng_restored = utils.restore_rng_state(
+                saved_rng_state,
+                generators={
+                    'train_loader': train_data_loader_generator,
+                    'validation_loader': validation_data_loader_generator,
+                },
+            )
+            if utils.is_main_process() and not rng_restored:
+                print(
+                    'WARNING: checkpoint has no RNG state; resume is valid but '
+                    'cannot reproduce the uninterrupted sample sequence exactly'
+                )
 
     # Migrate complete evaluation metadata from runs created before metric
     # records were embedded in checkpoint payloads.
@@ -4402,6 +4429,16 @@ def main(args):
             best_loc_epoch = int(best_localization_eval_metrics.get('epoch', best_loc_epoch))
 
     def checkpoint_payload(epoch, model_state=None, include_raw_model=False):
+        rng_states = checkpoint_rng_states
+        if not rng_states:
+            rng_states = [
+                utils.capture_rng_state(
+                    generators={
+                        'train_loader': train_data_loader_generator,
+                        'validation_loader': validation_data_loader_generator,
+                    }
+                )
+            ]
         payload = {
             'model': model_without_ddp.state_dict() if model_state is None else model_state,
             'optimizer': optimizer.state_dict(),
@@ -4424,6 +4461,10 @@ def main(args):
             'best_mse_eval_metrics': dict(best_mse_eval_metrics),
             'best_localization_eval_metrics': dict(best_localization_eval_metrics),
             'checkpoint_eval_metrics': dict(latest_eval_metrics),
+            # Keep the rank-zero alias for backward compatibility with tools
+            # that inspect single-process checkpoints.
+            'rng_state': rng_states[0],
+            'rng_states_by_rank': rng_states,
         }
         if model_ema is not None:
             payload['model_ema'] = model_ema.state_dict()
@@ -4463,6 +4504,7 @@ def main(args):
         enrich_checkpoint_metadata(metric_path, metric_metadata)
 
     if getattr(args, 'eval_before_train', False):
+        validation_data_loader_generator.manual_seed(validation_seed)
         t1 = time.time()
         pretrain_eval_epoch = (
             int(checkpoint.get('epoch', args.start_epoch))
@@ -4589,6 +4631,14 @@ def main(args):
         if pretrain_loc_improved:
             best_localization_eval_metrics = dict(pretrain_eval_record)
 
+        checkpoint_rng_states = utils.all_gather(
+            utils.capture_rng_state(
+                generators={
+                    'train_loader': train_data_loader_generator,
+                    'validation_loader': validation_data_loader_generator,
+                }
+            )
+        )
         if utils.is_main_process():
             (output_dir / 'latest_eval_results.json').write_text(
                 json.dumps(pretrain_eval_record, indent=2) + "\n",
@@ -4686,6 +4736,14 @@ def main(args):
         lr_scheduler.step()
 
         # save checkpoint
+        checkpoint_rng_states = utils.all_gather(
+            utils.capture_rng_state(
+                generators={
+                    'train_loader': train_data_loader_generator,
+                    'validation_loader': validation_data_loader_generator,
+                }
+            )
+        )
         checkpoint_paths = [output_dir / 'checkpoint.pth']
         for checkpoint_path in checkpoint_paths:
             utils.save_on_master(checkpoint_payload(epoch), checkpoint_path)
@@ -4711,6 +4769,7 @@ def main(args):
             else scheduled_eval
         )
         if should_evaluate:
+            validation_data_loader_generator.manual_seed(validation_seed)
             t1 = time.time()
             eval_model, eval_model_name = select_eval_model(model, model_without_ddp, model_ema, args)
             if args.eval_protocol == 'crowd_no_overlap':

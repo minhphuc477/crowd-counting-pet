@@ -4,13 +4,17 @@ Misc functions, including distributed helpers.
 Mostly copy-paste from torchvision references.
 """
 import os
+import functools
+import random
 import subprocess
+import tempfile
 import time
 from collections import defaultdict, deque
 import datetime
 import pickle
 from typing import Optional, List
 
+import numpy as np
 import torch
 import torch.distributed as dist
 from torch import Tensor
@@ -387,8 +391,86 @@ def is_main_process():
 
 
 def save_on_master(*args, **kwargs):
-    if is_main_process():
+    """Atomically save a torch object on rank zero when given a path.
+
+    ``torch.save`` truncates an existing checkpoint before the archive is
+    complete. A full disk or interrupted write can therefore destroy the last
+    resumable checkpoint. Write beside the destination and replace it only
+    after serialization succeeds.
+    """
+    if not is_main_process():
+        return
+    if len(args) < 2 or not isinstance(args[1], (str, os.PathLike)):
         torch.save(*args, **kwargs)
+        return
+
+    obj, destination, *extra_args = args
+    destination = os.path.abspath(os.fspath(destination))
+    parent = os.path.dirname(destination) or os.curdir
+    os.makedirs(parent, exist_ok=True)
+    handle = tempfile.NamedTemporaryFile(
+        mode='wb',
+        prefix=f'.{os.path.basename(destination)}.',
+        suffix='.tmp',
+        dir=parent,
+        delete=False,
+    )
+    temporary = handle.name
+    handle.close()
+    try:
+        torch.save(obj, temporary, *extra_args, **kwargs)
+        os.replace(temporary, destination)
+    finally:
+        try:
+            os.unlink(temporary)
+        except FileNotFoundError:
+            pass
+
+
+def capture_rng_state(generators=None):
+    """Capture process RNGs and optional named ``torch.Generator`` objects."""
+    state = {
+        'python': random.getstate(),
+        'numpy': np.random.get_state(),
+        'torch': torch.get_rng_state(),
+        'generators': {
+            str(name): generator.get_state()
+            for name, generator in (generators or {}).items()
+        },
+    }
+    if torch.cuda.is_available() and torch.cuda.is_initialized():
+        state['cuda'] = torch.cuda.get_rng_state_all()
+    return state
+
+
+def restore_rng_state(state, generators=None):
+    """Restore a state produced by :func:`capture_rng_state`."""
+    if not state:
+        return False
+    random.setstate(state['python'])
+    np.random.set_state(state['numpy'])
+    torch.set_rng_state(state['torch'])
+    cuda_state = state.get('cuda')
+    if cuda_state is not None and torch.cuda.is_available():
+        torch.cuda.set_rng_state_all(cuda_state)
+    saved_generators = state.get('generators', {})
+    for name, generator in (generators or {}).items():
+        generator_state = saved_generators.get(str(name))
+        if generator_state is not None:
+            generator.set_state(generator_state)
+    return True
+
+
+def preserve_rng_state(function):
+    """Prevent evaluation or diagnostics from changing training RNG streams."""
+    @functools.wraps(function)
+    def wrapped(*args, **kwargs):
+        state = capture_rng_state()
+        try:
+            return function(*args, **kwargs)
+        finally:
+            restore_rng_state(state)
+    return wrapped
 
 
 def upgrade_legacy_pet_state_dict(state_dict):
