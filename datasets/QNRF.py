@@ -1,3 +1,5 @@
+import hashlib
+import json
 import os
 import random
 
@@ -13,6 +15,14 @@ from .SHA import IMAGE_EXTENSIONS, random_crop_with_retries, safe_random_scale
 from .SHA import _parse_patch_size_choices
 
 
+def _file_sha256(path):
+    digest = hashlib.sha256()
+    with open(path, 'rb') as handle:
+        for block in iter(lambda: handle.read(1024 * 1024), b''):
+            digest.update(block)
+    return digest.hexdigest()
+
+
 class QNRF(Dataset):
     def __init__(
         self,
@@ -26,6 +36,7 @@ class QNRF(Dataset):
         min_crop_points=0,
         eval_max_size=1536,
         no_random_scale=False,
+        annotation_override_dir='',
     ):
         self.root_path = data_root
         if source_split is None:
@@ -43,14 +54,39 @@ class QNRF(Dataset):
         ]
 
         self.gt_list = {}
+        self.original_gt_list = {}
         missing_gt = []
+        override_manifest = None
+        use_overrides = bool(annotation_override_dir and train and source_split == 'train')
+        if use_overrides:
+            manifest_path = os.path.join(annotation_override_dir, 'annotation_override_manifest.json')
+            if not os.path.isfile(manifest_path):
+                raise FileNotFoundError(
+                    'QNRF annotation overrides require annotation_override_manifest.json: '
+                    f'{manifest_path}'
+                )
+            with open(manifest_path, 'r', encoding='utf-8') as handle:
+                override_manifest = json.load(handle)
+            if override_manifest.get('dataset') != 'QNRF':
+                raise ValueError('QNRF annotation override manifest has the wrong dataset')
+            if not bool(override_manifest.get('count_preserved', False)):
+                raise ValueError('QNRF annotation override manifest is not count preserving')
         for img_name in img_names:
             img_path = os.path.join(self.split_dir, img_name)
-            gt_path = find_annotation_path(img_path)
-            if gt_path is None:
-                gt_path = os.path.join(self.split_dir, f'{os.path.splitext(img_name)[0]}_ann.mat')
-                missing_gt.append(gt_path)
+            original_gt_path = find_annotation_path(img_path)
+            if original_gt_path is None:
+                original_gt_path = os.path.join(self.split_dir, f'{os.path.splitext(img_name)[0]}_ann.mat')
+                missing_gt.append(original_gt_path)
+            gt_path = original_gt_path
+            if use_overrides:
+                gt_path = os.path.join(
+                    annotation_override_dir,
+                    f'{os.path.splitext(img_name)[0]}_ann.mat',
+                )
+                if not os.path.isfile(gt_path):
+                    missing_gt.append(gt_path)
             self.gt_list[img_path] = gt_path
+            self.original_gt_list[img_path] = original_gt_path
 
         self.img_list = sorted(self.gt_list.keys())
         self.nSamples = len(self.img_list)
@@ -64,6 +100,43 @@ class QNRF(Dataset):
                 f'Missing {len(missing_gt)} QNRF annotation file(s) for {self.split_name}. '
                 f'First missing file: {missing_gt[0]}'
             )
+        if use_overrides:
+            manifest_image_rows = [
+                sample.get('image')
+                for sample in override_manifest.get('samples', ())
+                if isinstance(sample, dict)
+            ]
+            manifest_images = set(manifest_image_rows)
+            if len(manifest_image_rows) != len(manifest_images):
+                raise ValueError('QNRF annotation override manifest contains duplicate images')
+            if manifest_images != set(img_names):
+                raise ValueError('QNRF annotation override manifest image set does not match Train')
+            rows_by_image = {
+                sample['image']: sample
+                for sample in override_manifest.get('samples', ())
+                if isinstance(sample, dict) and sample.get('image') in manifest_images
+            }
+            for img_path in self.img_list:
+                image_name = os.path.basename(img_path)
+                original_count = load_raw_points_xy(self.original_gt_list[img_path]).shape[0]
+                override_count = load_raw_points_xy(self.gt_list[img_path]).shape[0]
+                if original_count != override_count:
+                    raise ValueError(
+                        'QNRF annotation override changed the benchmark count for '
+                        f'{os.path.basename(img_path)}: original={original_count}, '
+                        f'override={override_count}'
+                    )
+                if override_manifest.get('method') == 'shifted_annotation_restoration':
+                    expected_hash = rows_by_image[image_name].get('output_sha256')
+                    if not expected_hash:
+                        raise ValueError(
+                            f'QNRF restoration manifest has no output hash for {image_name}'
+                        )
+                    actual_hash = _file_sha256(self.gt_list[img_path])
+                    if actual_hash != expected_hash:
+                        raise ValueError(
+                            f'QNRF restored annotation hash mismatch for {image_name}'
+                        )
 
         self.transform = transform
         self.train = train
@@ -91,7 +164,7 @@ class QNRF(Dataset):
     def get_sample_counts(self):
         if self.sample_counts is None:
             self.sample_counts = [
-                int(load_raw_points_xy(self.gt_list[img_path]).shape[0])
+                int(load_raw_points_xy(self.original_gt_list[img_path]).shape[0])
                 for img_path in self.img_list
             ]
         return self.sample_counts
@@ -332,6 +405,7 @@ def build(image_set, args):
             min_crop_points=getattr(args, 'min_crop_points', 0),
             eval_max_size=eval_max_size,
             no_random_scale=getattr(args, 'no_random_scale', False),
+            annotation_override_dir=getattr(args, 'annotation_override_dir', ''),
         )
     if image_set == 'train_eval':
         return QNRF(
