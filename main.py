@@ -1467,13 +1467,10 @@ MODEL_RECIPES['vgg_apglc_qnrf_tail'] = {
     'eval_soft_split_gate': 'none',
 }
 
-# Transferable APG+LC + residual IFI detector core.
-#
-# Keep dataset-tail sampling and tiled evaluation out of this dictionary: they
-# are data/protocol choices, not model architecture.  Annotation-provided head
-# scales remain authoritative; point-only datasets use the same 3-NN geometry
-# convention as established geometry-adaptive crowd supervision.
-TRANSFERABLE_SCALE_RIFI_OVERRIDES = {
+# Transferable APG+LC + residual IFI representation.  This block deliberately
+# excludes scale-aware matching/regression so it can serve as the controlled
+# intermediate ablation between APG+LC and the complete Scale-RIFI model.
+TRANSFERABLE_RIFI_OVERRIDES = {
     'query_feature_interpolation': 'implicit',
     'query_ifi_sharing': 'shared',
     'query_ifi_feature_source': 'fpn4x8x',
@@ -1495,6 +1492,15 @@ TRANSFERABLE_SCALE_RIFI_OVERRIDES = {
     'ifi_neg_min_dist': 2.0,
     'ifi_start_epoch': 0,
     'ifi_end_epoch': 700,
+}
+
+# Add scale-aware assignment and point regression to the same residual IFI
+# representation.  Keep dataset-tail sampling and tiled evaluation out of
+# this dictionary: they are data/protocol choices, not model architecture.
+# Annotation-provided head scales remain authoritative; point-only datasets
+# use the same 3-NN geometry convention as geometry-adaptive crowd training.
+TRANSFERABLE_SCALE_RIFI_OVERRIDES = {
+    **TRANSFERABLE_RIFI_OVERRIDES,
     'set_cost_context': 0.10,
     'set_cost_query': 0.03,
     'matcher_context_k': 4,
@@ -1508,9 +1514,26 @@ TRANSFERABLE_SCALE_RIFI_OVERRIDES = {
     'scale_point_fallback_factor': 0.3,
 }
 
+MODEL_RECIPES['vgg_apglc_rifi'] = {
+    **MODEL_RECIPES['vgg_apglc'],
+    **TRANSFERABLE_RIFI_OVERRIDES,
+}
+
 MODEL_RECIPES['vgg_apglc_scale_rifi'] = {
     **MODEL_RECIPES['vgg_apglc'],
     **TRANSFERABLE_SCALE_RIFI_OVERRIDES,
+}
+
+# Optional thesis stage-2 ablation.  Keep the exact Scale-RIFI detector from
+# stage 1, but disable its already-converged auxiliary IFI/scale losses while
+# a small count loss adapts the PET prediction heads.  Evaluation still uses
+# PET point scores, so any MAE change must come through the detector rather
+# than replacing its count with a scalar oracle.
+MODEL_RECIPES['vgg_apglc_scale_rifi_counthead_stage2'] = {
+    **MODEL_RECIPES['vgg_apglc_counthead_stage2_adapt'],
+    **TRANSFERABLE_SCALE_RIFI_OVERRIDES,
+    'ifi_loss_coef': 0.0,
+    'scale_point_loss_coef': 0.0,
 }
 
 MODEL_RECIPES['vgg_apglc_qnrf_tail_scale_rifi'] = {
@@ -1966,7 +1989,9 @@ EXPERIMENTAL_MODEL_RECIPES = {
     'vgg_apglc_density_routed_ifi',
     'vgg_apglc_density_routed_ifi_nwpu',
     'vgg_apglc_nwpu_tail_rifi',
+    'vgg_apglc_rifi',
     'vgg_apglc_scale_rifi',
+    'vgg_apglc_scale_rifi_counthead_stage2',
     'vgg_apglc_qnrf_tail_scale_rifi',
     'vgg_apglc_qnrf_sae_scale_rifi',
     'vgg_apglc_jhu_tail_scale_rifi',
@@ -3046,6 +3071,13 @@ def sanitize_unstable_training_args(args):
     count_coef = float(getattr(args, 'count_head_loss_coef', 0.0))
     count_start = int(getattr(args, 'count_head_start_epoch', 0))
     fresh_train = not bool(getattr(args, 'resume', ''))
+    if recipe_name == 'vgg_apglc_scale_rifi_counthead_stage2' and fresh_train:
+        raise ValueError(
+            'model_recipe=vgg_apglc_scale_rifi_counthead_stage2 requires a '
+            'trained vgg_apglc_scale_rifi checkpoint via --resume and '
+            '--resume_model_only. Starting it from scratch would delay the '
+            'count loss beyond its 120-epoch adaptation schedule.'
+        )
     if recipe_name == 'vgg_apglc_density_counthead_ft_legacy' and fresh_train:
         raise ValueError(
             'model_recipe=vgg_apglc_density_counthead_ft_legacy is a recovery fine-tune recipe and requires '

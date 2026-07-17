@@ -30,7 +30,7 @@ def _recipe_args(recipe):
     if recipe in main.EXPERIMENTAL_MODEL_RECIPES:
         argv.append('--allow_experimental_model_recipe')
     if 'counthead_stage2' in recipe:
-        argv.append('--allow_count_head_fresh_train')
+        argv.extend(('--resume', 'synthetic_stage1.pth', '--resume_model_only'))
     args = main.get_args_parser().parse_args(argv)
     args._explicit_args = main.get_explicit_arg_names(argv)
     main.apply_model_recipe(args)
@@ -161,6 +161,85 @@ class IFIContractTest(unittest.TestCase):
             rtol=0.0,
             atol=0.0,
         )
+
+    def test_scale_rifi_has_a_single_controlled_scale_aware_delta(self):
+        rifi = _recipe_args('vgg_apglc_rifi')
+        scale_rifi = _recipe_args('vgg_apglc_scale_rifi')
+
+        architecture_keys = (
+            'query_feature_interpolation',
+            'query_ifi_sharing',
+            'query_ifi_feature_source',
+            'query_ifi_residual',
+            'query_ifi_residual_init',
+            'ifi_interpolation',
+            'ifi_feature_source',
+            'ifi_loss_coef',
+            'ifi_head_source',
+            'ifi_point_coef',
+            'ifi_pos_k',
+            'ifi_neg_k',
+            'ifi_start_epoch',
+            'ifi_end_epoch',
+        )
+        for key in architecture_keys:
+            self.assertEqual(getattr(rifi, key), getattr(scale_rifi, key), key)
+
+        self.assertEqual(rifi.set_cost_context, 0.0)
+        self.assertEqual(rifi.set_cost_query, 0.0)
+        self.assertEqual(rifi.scale_point_loss_coef, 0.0)
+        self.assertGreater(scale_rifi.set_cost_context, 0.0)
+        self.assertGreater(scale_rifi.set_cost_query, 0.0)
+        self.assertGreater(scale_rifi.scale_point_loss_coef, 0.0)
+
+    def test_scale_rifi_count_head_stage_preserves_stage_one_architecture(self):
+        stage1 = _recipe_args('vgg_apglc_scale_rifi')
+        stage2 = _recipe_args('vgg_apglc_scale_rifi_counthead_stage2')
+        architecture_keys = (
+            'query_feature_interpolation',
+            'query_ifi_sharing',
+            'query_ifi_feature_source',
+            'query_ifi_residual',
+            'query_ifi_residual_init',
+            'ifi_interpolation',
+            'ifi_feature_source',
+            'ifi_pos_dim',
+            'ifi_mlp_hidden_dim',
+            'ifi_activation',
+            'ifi_head_source',
+            'set_cost_context',
+            'set_cost_query',
+            'matcher_context_k',
+            'matcher_context_min_scale',
+            'scale_point_sigma',
+            'scale_point_sigma_min',
+            'scale_point_sigma_max',
+            'scale_point_fallback',
+            'scale_point_fallback_k',
+            'scale_point_fallback_factor',
+        )
+        for key in architecture_keys:
+            self.assertEqual(getattr(stage1, key), getattr(stage2, key), key)
+        self.assertEqual(stage2.ifi_loss_coef, 0.0)
+        self.assertEqual(stage2.scale_point_loss_coef, 0.0)
+        self.assertGreater(stage2.count_head_loss_coef, 0.0)
+        self.assertEqual(stage2.eval_count_source, 'pet')
+        self.assertEqual(stage2.eval_count_mode, 'threshold')
+
+    def test_scale_rifi_count_head_stage_rejects_fresh_training(self):
+        argv = [
+            '--model_recipe', 'vgg_apglc_scale_rifi_counthead_stage2',
+            '--allow_experimental_model_recipe',
+            '--dataset_file', 'SHB',
+            '--data_path', 'unused',
+            '--device', 'cpu',
+            '--no_pretrained_backbone',
+        ]
+        args = main.get_args_parser().parse_args(argv)
+        args._explicit_args = main.get_explicit_arg_names(argv)
+        main.apply_model_recipe(args)
+        with self.assertRaisesRegex(ValueError, 'requires a trained vgg_apglc_scale_rifi checkpoint'):
+            main.sanitize_unstable_training_args(args)
 
     def test_density_routed_ifi_separates_sparse_and_dense_guidance(self):
         torch.manual_seed(0)
