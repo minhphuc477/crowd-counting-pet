@@ -135,6 +135,27 @@ def get_args():
         help="Optional dataset path passed to main.py/eval.py",
     )
     parser.add_argument(
+        "--model_recipe",
+        default=None,
+        type=str,
+        help="REQUIRED for PET recipes (e.g. vgg_apglc). Forwarded to main.py; "
+             "if omitted, training silently falls back to model_recipe='none' (no APG/LC).",
+    )
+    parser.add_argument(
+        "--train_holdout_fraction",
+        default=0.1,
+        type=float,
+        help="Fraction of training split reserved for checkpoint selection under train_holdout.",
+    )
+    parser.add_argument(
+        "--train_holdout_seed",
+        default=None,
+        type=int,
+        help="Seed for the train/holdout split. If None, main.py/eval.py default it to "
+             "args.seed (each seed gets a different holdout split). Set a fixed value to "
+             "make checkpoint selection comparable across seeds (matches a reference run).",
+    )
+    parser.add_argument(
         "--output_dir",
         type=str,
         default="results",
@@ -207,11 +228,26 @@ def run_training(
         "--seed", str(seed),
         "--output_dir", str(seed_output_dir),
     ]
+    if getattr(args, "model_recipe", None):
+        cmd.extend(["--model_recipe", args.model_recipe])
+    else:
+        # Fail loudly instead of silently training model_recipe='none'.
+        print(
+            "ERROR: --model_recipe is required for PET recipes (e.g. vgg_apglc). "
+            "Without it, main.py defaults to model_recipe='none' (no APG/LC)."
+        )
+        return False, seed_output_dir
+    cmd.extend([
+        "--train_holdout_fraction", str(getattr(args, "train_holdout_fraction", 0.1)),
+    ])
+    holdout_seed = getattr(args, "train_holdout_seed", None)
+    if holdout_seed is not None:
+        cmd.extend(["--train_holdout_seed", str(holdout_seed)])
     if args.data_path:
         cmd.extend(["--data_path", args.data_path])
     if latest_checkpoint.exists() and not args.no_resume:
         cmd.extend(["--resume", str(latest_checkpoint)])
-    
+
     # Parse and add extra arguments
     if args.extra_args:
         extra_args_list = shlex.split(args.extra_args)
@@ -240,6 +276,16 @@ def run_training(
 
 
 def run_eval(backbone, seed, args):
+    """Evaluate the best checkpoint on the SAME split used for checkpoint
+    selection (train_holdout) so the reported number is comparable across
+    seeds. eval.py has no --model_recipe flag: the architecture recipe is read
+    from the saved checkpoint, so we only forward split/seed/resume args.
+
+    NOTE: the aggregated MAE reported by collect_results() is read from
+    run_log.txt (the train_holdout validation MAE written by main.py), which is
+    the number used for checkpoint selection. This eval step is a cross-check on
+    the official val split and is recorded separately in eval_results.json.
+    """
     seed_output_dir = Path(args.output_dir) / backbone / f"seed_{seed}"
     actual_output_dir = Path("outputs") / args.dataset_file / seed_output_dir
     checkpoint = actual_output_dir / "best_checkpoint.pth"
@@ -249,21 +295,28 @@ def run_eval(backbone, seed, args):
         print(f"  Eval skipped for {backbone} seed {seed}: no checkpoint found")
         return None
 
-    eval_log = actual_output_dir / "eval_log.txt"
+    # Evaluate on the same train_holdout split used during training so the
+    # threshold/precision/seed context matches. The train_holdout_seed defaults
+    # to args.seed in eval.py, matching main.py's default behavior.
     cmd = [
         sys.executable,
         "eval.py",
-        "--backbone", backbone,
         "--dataset_file", args.dataset_file,
         "--resume", str(checkpoint),
+        "--eval_image_set", "train_holdout",
+        "--train_holdout_fraction", str(getattr(args, "train_holdout_fraction", 0.1)),
+        "--train_holdout_seed", str(getattr(args, "train_holdout_seed", seed)),
     ]
     if args.data_path:
         cmd.extend(["--data_path", args.data_path])
+    if args.extra_args:
+        cmd.extend(shlex.split(args.extra_args))
 
     print(f"  Eval command: {' '.join(cmd)}")
     if args.dry_run:
         return None
 
+    eval_log = actual_output_dir / "eval_log.txt"
     with eval_log.open("w", encoding="utf-8", errors="replace") as log:
         result = subprocess.run(
             cmd,
@@ -280,8 +333,6 @@ def run_eval(backbone, seed, args):
     eval_result_path = actual_output_dir / "eval_results.json"
     if eval_result_path.exists():
         eval_result = json.loads(eval_result_path.read_text(encoding="utf-8"))
-        eval_result["checkpoint"] = str(checkpoint)
-        eval_result["eval_log"] = str(eval_log)
     else:
         text = eval_log.read_text(encoding="utf-8", errors="replace")
         match = re.search(r"epoch:\s*(\d+).*?mae:\s*([0-9.]+).*?mse:\s*([0-9.]+)", text, re.S)
@@ -292,46 +343,71 @@ def run_eval(backbone, seed, args):
             "epoch": int(match.group(1)),
             "eval_mae": float(match.group(2)),
             "eval_mse": float(match.group(3)),
-            "checkpoint": str(checkpoint),
-            "eval_log": str(eval_log),
         }
+    eval_result["checkpoint"] = str(checkpoint)
+    eval_result["eval_log"] = str(eval_log)
     eval_result_path.write_text(json.dumps(eval_result, indent=2) + "\n", encoding="utf-8")
     loc_text = format_loc_metrics(eval_result)
     print(f"  Eval MAE = {eval_result['eval_mae']:.4f}, MSE = {eval_result['eval_mse']:.4f}{loc_text}")
     return eval_result
 
 
+def _read_holdout_mae(actual_output_dir):
+    """Return the train_holdout validation MAE for the best checkpoint.
+
+    Prefers best_eval_results.json (the metrics for best_checkpoint.pth). Falls
+    back to the last 'test_mae' record written to run_log.txt by main.py.
+    Returns (mae, source) or (None, None).
+    """
+    best_json = actual_output_dir / "best_eval_results.json"
+    if best_json.exists():
+        try:
+            payload = json.loads(best_json.read_text(encoding="utf-8"))
+            mae = payload.get("test_mae", payload.get("best_test_mae"))
+            if mae is not None:
+                return float(mae), "best_eval_results.json"
+        except (OSError, json.JSONDecodeError):
+            pass
+
+    stats_file = actual_output_dir / "run_log.txt"
+    if stats_file.exists():
+        try:
+            text = stats_file.read_text(encoding="utf-8", errors="replace")
+            candidates = re.findall(r'\{[^{}]*"test_mae"[^{}]*\}', text)
+            for candidate in reversed(candidates):
+                try:
+                    stats = json.loads(candidate)
+                except json.JSONDecodeError:
+                    continue
+                if "test_mae" in stats:
+                    return float(stats["test_mae"]), "run_log.txt"
+        except OSError as e:
+            print(f"  Could not read stats ({e})")
+    return None, None
+
+
 def collect_results(backbone, seeds, output_dir, dataset_file):
-    """Collect MAE metrics from all seed runs."""
-    
+    """Collect train_holdout validation MAE across seed runs."""
     results = {}
     mae_values = []
-    
+
     for seed in seeds:
         seed_output_dir = Path(output_dir) / backbone / f"seed_{seed}"
         actual_output_dir = Path("outputs") / dataset_file / seed_output_dir
-        
-        # Look for log file with metrics
-        stats_file = actual_output_dir / "run_log.txt"
-        if stats_file.exists():
-            try:
-                text = stats_file.read_text(encoding="utf-8", errors="replace")
-                json_candidates = re.findall(r'\{[^{}]*"test_mae"[^{}]*\}', text)
-                for candidate in reversed(json_candidates):
-                    stats = json.loads(candidate)
-                    mae = stats['test_mae']
-                    results[seed] = mae
-                    mae_values.append(mae)
-                    print(f"  Seed {seed}: MAE = {mae:.2f}")
-                    break
-            except (OSError, json.JSONDecodeError) as e:
-                print(f"  Seed {seed}: Could not read stats ({e})")
-    
+        mae, source = _read_holdout_mae(actual_output_dir)
+        if mae is None:
+            print(f"  Seed {seed}: No MAE found (run may not have completed)")
+            continue
+        results[seed] = mae
+        mae_values.append(mae)
+        print(f"  Seed {seed}: MAE = {mae:.2f}  [{source}]")
+
     if mae_values:
+        arr = np.array(mae_values, dtype=float)
         print(f"\nSummary for {backbone}:")
-        print(f"  Mean MAE:   {np.mean(mae_values):.2f} ± {np.std(mae_values):.2f}")
-        print(f"  Min MAE:    {np.min(mae_values):.2f}")
-        print(f"  Max MAE:    {np.max(mae_values):.2f}")
+        print(f"  Mean MAE:   {arr.mean():.2f} ± {arr.std():.2f}")
+        print(f"  Min MAE:    {arr.min():.2f}")
+        print(f"  Max MAE:    {arr.max():.2f}")
         print(f"  Seeds with results: {list(results.keys())}")
         return results
     else:
@@ -354,15 +430,17 @@ def save_experiment_log(backbone, seeds, output_dir, results):
         "results": results,
         "num_seeds": len(seeds),
         "num_completed": len(results),
+        "train_holdout_seed": getattr(args, "train_holdout_seed", None),
+        "train_holdout_fraction": getattr(args, "train_holdout_fraction", 0.1),
     }
-    
+
     if results:
-        mae_values = list(results.values())
+        mae_values = np.array(list(results.values()), dtype=float)
         log_data["metrics"] = {
-            "mean_mae": float(np.mean(mae_values)),
-            "std_mae": float(np.std(mae_values)),
-            "min_mae": float(np.min(mae_values)),
-            "max_mae": float(np.max(mae_values)),
+            "mean_mae": float(mae_values.mean()),
+            "std_mae": float(mae_values.std()),
+            "min_mae": float(mae_values.min()),
+            "max_mae": float(mae_values.max()),
         }
     
     with open(log_file, "w", encoding="utf-8") as f:
