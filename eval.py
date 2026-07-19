@@ -902,6 +902,12 @@ def main(args):
         results_file.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
         print(f'eval results saved to: {results_file}')
 
+    # Tear down the distributed process group so torchrun does not emit the
+    # "destroy_process_group() was not called" shutdown warning.
+    if getattr(args, 'distributed', False) and torch.distributed.is_available() \
+            and torch.distributed.is_initialized():
+        torch.distributed.destroy_process_group()
+
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser('PET evaluation script', parents=[get_args_parser()])
