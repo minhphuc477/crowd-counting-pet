@@ -540,6 +540,13 @@ def merge_checkpoint_args(args, checkpoint):
         explicit_only_runtime_keys.update(key for key in ARCHITECTURE_OVERRIDE_KEYS if key in explicit_args)
     for key in always_runtime_keys:
         setattr(merged, key, getattr(args, key))
+    # Launch configuration belongs to the current evaluator, never to the
+    # training process that produced a checkpoint.  Restoring
+    # `distributed=True` here without initializing a process group makes a
+    # normal single-process evaluation attempt to construct DDP.
+    for key in ('distributed', 'rank', 'world_size', 'gpu', 'dist_backend', 'dist_url'):
+        if hasattr(args, key):
+            setattr(merged, key, getattr(args, key))
     for key in explicit_only_runtime_keys:
         if key in explicit_args:
             setattr(merged, key, getattr(args, key))
