@@ -16,6 +16,7 @@ import torch.multiprocessing as torch_mp
 from torch.utils.data import DataLoader, DistributedSampler
 
 import util.misc as utils
+from util.splits import build_train_holdout_indices
 from datasets import build_dataset
 from engine import evaluate, evaluate_crowd_no_overlap, format_localization_metrics, train_one_epoch
 from models import build_model
@@ -2872,6 +2873,9 @@ def get_args_parser():
                         help='fraction of the training split reserved for checkpoint selection under train_holdout validation')
     parser.add_argument('--train_holdout_seed', default=42, type=int,
                         help='seed for deterministic train_holdout partitioning')
+    parser.add_argument('--train_holdout_strategy', default='random',
+                        choices=('random', 'count_stratified'),
+                        help='checkpoint-selection split strategy; count_stratified preserves the count distribution')
     parser.add_argument('--partial_annotation_ratio', default=1.0, type=float,
                         help='Shanghai train-only fixed annotated-region ratio in (0,1]; 1 keeps full supervision')
     parser.add_argument('--partial_annotation_seed', default=0, type=int,
@@ -3346,6 +3350,7 @@ def merge_checkpoint_args(args, checkpoint):
         'model_recipe', 'allow_experimental_model_recipe', 'auto_backbone_recipe',
         'eval_protocol', 'eval_max_size', 'nwpu_sigma_mode',
         'validation_protocol', 'train_holdout_fraction', 'train_holdout_seed',
+        'train_holdout_strategy',
         'allow_benchmark_test_selection',
         'allow_output_overwrite',
         'patch_size', 'patch_size_choices', 'crop_attempts', 'min_crop_points',
@@ -4038,22 +4043,6 @@ def resolve_validation_protocol(args):
     return protocol
 
 
-def build_train_holdout_indices(num_samples, holdout_fraction, seed):
-    if num_samples < 2:
-        raise ValueError('train-holdout validation requires at least 2 training samples')
-    holdout_fraction = float(holdout_fraction)
-    if not (0.0 < holdout_fraction < 1.0):
-        raise ValueError('--train_holdout_fraction must be in (0, 1)')
-    num_val = int(round(num_samples * holdout_fraction))
-    num_val = max(1, min(num_samples - 1, num_val))
-    generator = torch.Generator()
-    generator.manual_seed(int(seed))
-    permutation = torch.randperm(num_samples, generator=generator).tolist()
-    val_indices = sorted(permutation[:num_val])
-    train_indices = sorted(permutation[num_val:])
-    return train_indices, val_indices
-
-
 def main(args):
     utils.init_distributed_mode(args)
     if args.list_backbones:
@@ -4169,6 +4158,13 @@ def main(args):
             len(dataset_train_eval),
             getattr(args, 'train_holdout_fraction', 0.1),
             getattr(args, 'train_holdout_seed', args.seed),
+            strategy=getattr(args, 'train_holdout_strategy', 'random'),
+            sample_counts=(
+                dataset_train_eval.get_sample_counts()
+                if getattr(args, 'train_holdout_strategy', 'random') == 'count_stratified'
+                and hasattr(dataset_train_eval, 'get_sample_counts')
+                else None
+            ),
         )
         dataset_train = IndexedSubset(dataset_train, train_indices)
         dataset_val = IndexedSubset(dataset_train_eval, val_indices)

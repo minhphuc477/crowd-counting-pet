@@ -75,6 +75,7 @@ class SHA(Dataset):
                 f'Missing {len(missing_gt)} ShanghaiTech annotation file(s) for {prefix}. '
                 f'First missing file: {missing_gt[0]}'
             )
+        self._sample_counts = None
 
         self.transform = transform
         self.train = train
@@ -111,6 +112,14 @@ class SHA(Dataset):
 
     def __len__(self):
         return self.nSamples
+
+    def get_sample_counts(self):
+        if self._sample_counts is None:
+            self._sample_counts = [
+                int(load_points(self.gt_list[img_path]).shape[0])
+                for img_path in self.img_list
+            ]
+        return list(self._sample_counts)
 
     def __getitem__(self, index):
         assert index < len(self), 'index range error'

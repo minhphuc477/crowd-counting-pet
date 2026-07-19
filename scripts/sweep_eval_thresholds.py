@@ -105,6 +105,11 @@ def resolve_runtime_args(args: argparse.Namespace) -> argparse.Namespace:
         args.train_holdout_seed = int(
             42 if checkpoint_seed is None else checkpoint_seed
         )
+    if args.train_holdout_strategy is None:
+        args.train_holdout_strategy = (
+            _checkpoint_arg(checkpoint_args, "train_holdout_strategy")
+            or "random"
+        )
     if not args.output_dir:
         args.output_dir = str(checkpoint_path.resolve().parent / "threshold_sweep")
     benchmark_only = {
@@ -192,6 +197,8 @@ def run_eval(
         str(args.train_holdout_fraction),
         "--train_holdout_seed",
         str(args.train_holdout_seed),
+        "--train_holdout_strategy",
+        args.train_holdout_strategy,
         "--nwpu_eval_split",
         args.nwpu_eval_split,
         "--jhu_eval_split",
@@ -470,6 +477,12 @@ def get_args() -> argparse.Namespace:
                         help="holdout fraction; defaults to the checkpoint value")
     parser.add_argument("--train_holdout_seed", default=None, type=int,
                         help="holdout seed; defaults to the checkpoint value")
+    parser.add_argument(
+        "--train_holdout_strategy",
+        default=None,
+        choices=("random", "count_stratified"),
+        help="holdout strategy; defaults to the checkpoint value",
+    )
     parser.add_argument("--allow_benchmark_test_sweep", action="store_true",
                         help="legacy-only override for threshold tuning on a benchmark test split")
     parser.add_argument("--nwpu_eval_split", default="val", choices=("val", "test", "train"))

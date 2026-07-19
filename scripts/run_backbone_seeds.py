@@ -156,6 +156,12 @@ def get_args():
              "make checkpoint selection comparable across seeds (matches a reference run).",
     )
     parser.add_argument(
+        "--train_holdout_strategy",
+        default="random",
+        choices=("random", "count_stratified"),
+        help="Split strategy forwarded unchanged to main.py and eval.py.",
+    )
+    parser.add_argument(
         "--output_dir",
         type=str,
         default="results",
@@ -239,6 +245,7 @@ def run_training(
         return False, seed_output_dir
     cmd.extend([
         "--train_holdout_fraction", str(getattr(args, "train_holdout_fraction", 0.1)),
+        "--train_holdout_strategy", getattr(args, "train_holdout_strategy", "random"),
     ])
     holdout_seed = getattr(args, "train_holdout_seed", None)
     if holdout_seed is not None:
@@ -306,6 +313,7 @@ def run_eval(backbone, seed, args):
         "--eval_image_set", "train_holdout",
         "--train_holdout_fraction", str(getattr(args, "train_holdout_fraction", 0.1)),
         "--train_holdout_seed", str(getattr(args, "train_holdout_seed", seed)),
+        "--train_holdout_strategy", getattr(args, "train_holdout_strategy", "random"),
     ]
     if args.data_path:
         cmd.extend(["--data_path", args.data_path])
@@ -432,6 +440,7 @@ def save_experiment_log(backbone, seeds, output_dir, results):
         "num_completed": len(results),
         "train_holdout_seed": getattr(args, "train_holdout_seed", None),
         "train_holdout_fraction": getattr(args, "train_holdout_fraction", 0.1),
+        "train_holdout_strategy": getattr(args, "train_holdout_strategy", "random"),
     }
 
     if results:

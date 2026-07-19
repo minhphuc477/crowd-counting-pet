@@ -13,6 +13,7 @@ from torch.utils.data import DataLoader, DistributedSampler
 import datasets
 from datasets import build_dataset
 import util.misc as utils
+from util.splits import build_train_holdout_indices
 from engine import (
     evaluate,
     evaluate_crowd_no_overlap,
@@ -440,6 +441,9 @@ def get_args_parser():
                         help='fraction of training split used by --eval_image_set train_holdout')
     parser.add_argument('--train_holdout_seed', default=42, type=int,
                         help='seed used by --eval_image_set train_holdout')
+    parser.add_argument('--train_holdout_strategy', default='random',
+                        choices=('random', 'count_stratified'),
+                        help='must match the checkpoint-selection split strategy')
     parser.add_argument('--eval_tile_size', default=0, type=int,
                         help='positive value enables tiled full-resolution eval for images larger than this size')
     parser.add_argument('--eval_tile_overlap', default=0, type=int,
@@ -528,6 +532,7 @@ def merge_checkpoint_args(args, checkpoint):
         'localization_protocol', 'localization_large_scale', 'localization_small_scale',
         'eval_protocol', 'resume_allow_arch_change',
         'train_holdout_fraction', 'train_holdout_seed',
+        'train_holdout_strategy',
         'ucfcc50_fold', 'ucfcc50_fold_seed', 'ucfcc50_fold_manifest',
     }
     explicit_args = set(getattr(args, '_explicit_args', set()))
@@ -661,20 +666,6 @@ class IndexedSubset(torch.utils.data.Dataset):
         return getattr(self.dataset, name)
 
 
-def build_train_holdout_indices(num_samples, holdout_fraction, seed):
-    if num_samples < 2:
-        raise ValueError('train-holdout evaluation requires at least 2 training samples')
-    holdout_fraction = float(holdout_fraction)
-    if not (0.0 < holdout_fraction < 1.0):
-        raise ValueError('--train_holdout_fraction must be in (0, 1)')
-    num_val = int(round(num_samples * holdout_fraction))
-    num_val = max(1, min(num_samples - 1, num_val))
-    generator = torch.Generator()
-    generator.manual_seed(int(seed))
-    permutation = torch.randperm(num_samples, generator=generator).tolist()
-    return sorted(permutation[num_val:]), sorted(permutation[:num_val])
-
-
 def build_eval_dataset(args):
     eval_image_set = getattr(args, 'eval_image_set', 'val')
     if eval_image_set == 'train_holdout':
@@ -683,6 +674,13 @@ def build_eval_dataset(args):
             len(dataset),
             getattr(args, 'train_holdout_fraction', 0.1),
             getattr(args, 'train_holdout_seed', args.seed),
+            strategy=getattr(args, 'train_holdout_strategy', 'random'),
+            sample_counts=(
+                dataset.get_sample_counts()
+                if getattr(args, 'train_holdout_strategy', 'random') == 'count_stratified'
+                and hasattr(dataset, 'get_sample_counts')
+                else None
+            ),
         )
         return IndexedSubset(dataset, val_indices), eval_image_set
     return build_dataset(image_set=eval_image_set, args=args), eval_image_set
