@@ -47,6 +47,23 @@ def test_named_generator_state_resumes_exactly():
     )
 
 
+def test_deterministic_attention_backend_disables_fast_sdpa(monkeypatch):
+    calls = []
+
+    monkeypatch.setattr(torch.cuda, 'is_available', lambda: True)
+    monkeypatch.setattr(torch.backends.cuda, 'enable_flash_sdp', lambda enabled: calls.append(('flash', enabled)), raising=False)
+    monkeypatch.setattr(torch.backends.cuda, 'enable_mem_efficient_sdp', lambda enabled: calls.append(('mem_efficient', enabled)), raising=False)
+    monkeypatch.setattr(torch.backends.cuda, 'enable_math_sdp', lambda enabled: calls.append(('math', enabled)), raising=False)
+    monkeypatch.setattr(torch.backends.cuda, 'enable_cudnn_sdp', lambda enabled: calls.append(('cudnn', enabled)), raising=False)
+
+    utils.set_deterministic_attention_backend(True)
+
+    assert ('flash', False) in calls
+    assert ('mem_efficient', False) in calls
+    assert ('math', True) in calls
+    assert ('cudnn', False) in calls
+
+
 def test_atomic_checkpoint_failure_preserves_previous_file(tmp_path, monkeypatch):
     destination = tmp_path / 'checkpoint.pth'
     original = b'previous-valid-checkpoint'

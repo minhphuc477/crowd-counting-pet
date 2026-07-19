@@ -3865,6 +3865,7 @@ def set_reproducibility(seed, deterministic=True):
     # training running if an op has no deterministic kernel.
     os.environ.setdefault('CUBLAS_WORKSPACE_CONFIG', ':4096:8')
     if deterministic:
+        utils.set_deterministic_attention_backend(True)
         torch.backends.cudnn.deterministic = True
         torch.backends.cudnn.benchmark = False
         try:

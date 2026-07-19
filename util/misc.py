@@ -473,6 +473,21 @@ def preserve_rng_state(function):
     return wrapped
 
 
+def set_deterministic_attention_backend(enabled=True):
+    """Force PyTorch attention onto deterministic SDPA kernels when possible."""
+    if not enabled or not torch.cuda.is_available():
+        return
+    if hasattr(torch.backends, 'cuda'):
+        if hasattr(torch.backends.cuda, 'enable_flash_sdp'):
+            torch.backends.cuda.enable_flash_sdp(False)
+        if hasattr(torch.backends.cuda, 'enable_mem_efficient_sdp'):
+            torch.backends.cuda.enable_mem_efficient_sdp(False)
+        if hasattr(torch.backends.cuda, 'enable_math_sdp'):
+            torch.backends.cuda.enable_math_sdp(True)
+        if hasattr(torch.backends.cuda, 'enable_cudnn_sdp'):
+            torch.backends.cuda.enable_cudnn_sdp(False)
+
+
 def upgrade_legacy_pet_state_dict(state_dict):
     """Map official PET checkpoint names to their current equivalents."""
     replacements = {

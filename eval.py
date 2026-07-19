@@ -644,6 +644,7 @@ def set_reproducibility(seed, deterministic=True):
     os.environ['PYTHONHASHSEED'] = str(seed)
     os.environ.setdefault('CUBLAS_WORKSPACE_CONFIG', ':4096:8')
     if deterministic:
+        utils.set_deterministic_attention_backend(True)
         torch.backends.cudnn.deterministic = True
         torch.backends.cudnn.benchmark = False
         try:
