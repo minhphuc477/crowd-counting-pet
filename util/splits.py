@@ -1,8 +1,25 @@
 """Deterministic dataset splits used for checkpoint selection."""
 
+import hashlib
+import json
 import math
+from pathlib import Path
 
 import torch
+
+
+def _canonical_json(payload):
+    return json.dumps(payload, sort_keys=True, separators=(',', ':'), ensure_ascii=True)
+
+
+def _manifest_hash(manifest):
+    stable_manifest = {
+        key: value
+        for key, value in manifest.items()
+        if key not in {'data_path', 'manifest_hash'}
+    }
+    canonical = _canonical_json(stable_manifest).encode('utf-8')
+    return hashlib.sha256(canonical).hexdigest()
 
 
 def build_train_holdout_indices(
@@ -65,3 +82,42 @@ def build_train_holdout_indices(
     validation_set = set(validation)
     train = [index for index in range(num_samples) if index not in validation_set]
     return train, validation
+
+
+def build_train_holdout_manifest(
+    num_samples,
+    holdout_fraction,
+    seed,
+    *,
+    strategy='random',
+    sample_counts=None,
+    num_strata=5,
+    dataset_file='',
+    data_path='',
+):
+    train_indices, holdout_indices = build_train_holdout_indices(
+        num_samples,
+        holdout_fraction,
+        seed,
+        strategy=strategy,
+        sample_counts=sample_counts,
+        num_strata=num_strata,
+    )
+    manifest = {
+        'split_kind': 'train_holdout',
+        'dataset_file': str(dataset_file or ''),
+        'data_path': str(Path(data_path).resolve()) if data_path else '',
+        'num_samples': int(num_samples),
+        'holdout_fraction': float(holdout_fraction),
+        'holdout_seed': int(seed),
+        'holdout_strategy': str(strategy),
+        'num_strata': int(num_strata),
+        'train_indices': train_indices,
+        'holdout_indices': holdout_indices,
+    }
+    if sample_counts is not None:
+        manifest['sample_count_hash'] = hashlib.sha256(
+            _canonical_json([float(value) for value in sample_counts]).encode('utf-8')
+        ).hexdigest()
+    manifest['manifest_hash'] = _manifest_hash(manifest)
+    return train_indices, holdout_indices, manifest

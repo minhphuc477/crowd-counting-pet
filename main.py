@@ -16,7 +16,7 @@ import torch.multiprocessing as torch_mp
 from torch.utils.data import DataLoader, DistributedSampler
 
 import util.misc as utils
-from util.splits import build_train_holdout_indices
+from util.splits import build_train_holdout_manifest
 from datasets import build_dataset
 from engine import evaluate, evaluate_crowd_no_overlap, format_localization_metrics, train_one_epoch
 from models import build_model
@@ -4152,9 +4152,10 @@ def main(args):
     validation_protocol = resolve_validation_protocol(args)
     validate_annotation_override_contract(args, validation_protocol)
     dataset_train = build_dataset(image_set='train', args=args)
+    split_manifest = None
     if validation_protocol == 'train_holdout':
         dataset_train_eval = build_dataset(image_set='train_eval', args=args)
-        train_indices, val_indices = build_train_holdout_indices(
+        train_indices, val_indices, split_manifest = build_train_holdout_manifest(
             len(dataset_train_eval),
             getattr(args, 'train_holdout_fraction', 0.1),
             getattr(args, 'train_holdout_seed', args.seed),
@@ -4165,9 +4166,15 @@ def main(args):
                 and hasattr(dataset_train_eval, 'get_sample_counts')
                 else None
             ),
+            dataset_file=getattr(args, 'dataset_file', ''),
+            data_path=getattr(args, 'data_path', ''),
         )
         dataset_train = IndexedSubset(dataset_train, train_indices)
         dataset_val = IndexedSubset(dataset_train_eval, val_indices)
+        if checkpoint is not None:
+            saved_manifest = checkpoint.get('split_manifest')
+            if saved_manifest is not None and saved_manifest != split_manifest:
+                raise ValueError('resume checkpoint uses a different train_holdout split manifest')
     else:
         dataset_val = build_dataset(image_set='val', args=args)
 
@@ -4317,6 +4324,11 @@ def main(args):
     run_log_name = output_dir / 'run_log.txt'
     if utils.is_main_process():
         os.makedirs(output_dir, exist_ok=True)
+        if split_manifest is not None:
+            (output_dir / 'split_manifest.json').write_text(
+                json.dumps(split_manifest, indent=2) + "\n",
+                encoding='utf-8',
+            )
         if checkpoint is not None:
             ensure_mae_checkpoint_alias(output_dir)
         print(f'outputs will be saved to: {output_dir.resolve()}')
@@ -4498,6 +4510,7 @@ def main(args):
             'best_mse_eval_metrics': dict(best_mse_eval_metrics),
             'best_localization_eval_metrics': dict(best_localization_eval_metrics),
             'checkpoint_eval_metrics': dict(latest_eval_metrics),
+            'split_manifest': split_manifest,
             # Keep the rank-zero alias for backward compatibility with tools
             # that inspect single-process checkpoints.
             'rng_state': rng_states[0],

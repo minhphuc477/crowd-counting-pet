@@ -1,4 +1,5 @@
 import argparse
+import hashlib
 import json
 import random
 import sys
@@ -13,7 +14,7 @@ from torch.utils.data import DataLoader, DistributedSampler
 import datasets
 from datasets import build_dataset
 import util.misc as utils
-from util.splits import build_train_holdout_indices
+from util.splits import build_train_holdout_manifest
 from engine import (
     evaluate,
     evaluate_crowd_no_overlap,
@@ -670,7 +671,7 @@ def build_eval_dataset(args):
     eval_image_set = getattr(args, 'eval_image_set', 'val')
     if eval_image_set == 'train_holdout':
         dataset = build_dataset(image_set='train_eval', args=args)
-        _, val_indices = build_train_holdout_indices(
+        _, val_indices, split_manifest = build_train_holdout_manifest(
             len(dataset),
             getattr(args, 'train_holdout_fraction', 0.1),
             getattr(args, 'train_holdout_seed', args.seed),
@@ -681,9 +682,11 @@ def build_eval_dataset(args):
                 and hasattr(dataset, 'get_sample_counts')
                 else None
             ),
+            dataset_file=getattr(args, 'dataset_file', ''),
+            data_path=getattr(args, 'data_path', ''),
         )
-        return IndexedSubset(dataset, val_indices), eval_image_set
-    return build_dataset(image_set=eval_image_set, args=args), eval_image_set
+        return IndexedSubset(dataset, val_indices), eval_image_set, split_manifest
+    return build_dataset(image_set=eval_image_set, args=args), eval_image_set, None
 
 
 def main(args):
@@ -734,7 +737,7 @@ def main(args):
     print('params:', n_parameters/1e6)
 
     # build dataset
-    dataset_val, eval_image_set = build_eval_dataset(args)
+    dataset_val, eval_image_set, split_manifest = build_eval_dataset(args)
     if utils.is_main_process():
         print(f'eval image set: {eval_image_set}, samples={len(dataset_val)}')
 
@@ -836,6 +839,9 @@ def main(args):
     line = f'\nepoch: {cur_epoch}, mae: {mae}, mse: {mse}{loc_text}'
     print(line)
     if utils.is_main_process():
+        checkpoint_split_manifest = checkpoint.get('split_manifest') if checkpoint is not None else None
+        if checkpoint_split_manifest is not None and split_manifest is not None and checkpoint_split_manifest != split_manifest:
+            raise ValueError('evaluation checkpoint uses a different train_holdout split manifest')
         if args.results_file:
             results_file = Path(args.results_file)
         elif args.resume and not args.resume.startswith('https'):
@@ -853,6 +859,13 @@ def main(args):
             'eval_model': eval_model_key,
             'dataset_file': args.dataset_file,
             'eval_image_set': eval_image_set,
+            'split_strategy': (
+                split_manifest.get('holdout_strategy') if isinstance(split_manifest, dict) else None
+            ),
+            'split_manifest_hash': (
+                split_manifest.get('manifest_hash') if isinstance(split_manifest, dict) else None
+            ),
+            'split_manifest': split_manifest,
             'train_holdout_fraction': (
                 float(getattr(args, 'train_holdout_fraction', 0.1))
                 if eval_image_set == 'train_holdout'
@@ -903,6 +916,10 @@ def main(args):
             'loc_protocol_large': test_stats.get('loc_protocol_large', ''),
             'loc_protocol_small': test_stats.get('loc_protocol_small', ''),
         }
+        if getattr(args, 'ucfcc50_fold_manifest', ''):
+            manifest_path = Path(args.ucfcc50_fold_manifest)
+            if manifest_path.is_file():
+                payload['ucfcc50_fold_manifest_hash'] = hashlib.sha256(manifest_path.read_bytes()).hexdigest()
         payload.update(scalar_eval_metrics(test_stats, skip={'mae', 'mse', 'pred_cnt', 'gt_cnt'}))
         results_file.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
         print(f'eval results saved to: {results_file}')
