@@ -765,22 +765,25 @@ def evaluate(
             # the trigger decision from a bounded resized pass. Running the
             # trigger on full NWPU frames can OOM, while resizing the dataset
             # before this point prevents tiling from ever activating.
+            #
+            # NOTE: _resize_nested_long_side produces a whole-image downscale,
+            # NOT a tile crop. predict_cnt therefore already represents the
+            # total count for the entire scene. Do NOT multiply by the area
+            # ratio: that would inflate a whole-image estimate by ~7x and
+            # trigger tiling on ordinary mid-density images.
             trigger_samples = _resize_nested_long_side(samples, int(eval_tile_size))
             outputs, predict_cnt = _predict_count(model, trigger_samples, targets, epoch=epoch)
-            output_samples = trigger_samples
-            use_tiled_eval = True
-            trigger_h, trigger_w = _valid_hw(trigger_samples)
-            full_area = max(float(img_h * img_w), 1.0)
-            trigger_sample_area = max(float(trigger_h * trigger_w), 1.0)
-            projected_trigger_count = float(predict_cnt) * full_area / trigger_sample_area
+            projected_trigger_count = float(predict_cnt)
             eval_count_debug['tile_trigger_count'] = float(predict_cnt)
             eval_count_debug['tile_trigger_projected_count'] = projected_trigger_count
             count_triggered = projected_trigger_count >= trigger_count
             area_triggered = trigger_area > 0 and int(img_h * img_w) >= trigger_area
-            use_tiled_eval = use_tiled_eval and (count_triggered or area_triggered)
+            use_tiled_eval = count_triggered or area_triggered
             eval_count_debug['tile_trigger_count_gate'] = float(count_triggered)
             eval_count_debug['tile_trigger_area_gate'] = float(area_triggered)
             if not use_tiled_eval:
+                # Tiling not warranted: use the resized-pass outputs.
+                output_samples = trigger_samples
                 eval_count_debug['tile_trigger_skipped'] = 1.0
         else:
             use_tiled_eval = tile_candidate
@@ -814,7 +817,11 @@ def evaluate(
         # surviving (person) queries in pred_logits, so len(outputs_scores) is
         # the predicted count — matching the original PET evaluation protocol.
         outputs_points = outputs['pred_points'][0]
-        if tta_flip or any(abs(scale - 1.0) > 1e-6 for scale in tta_scales):
+        # TTA (test-time augmentation) is only meaningful for a plain full-image
+        # pass. When tiling is active its multi-pass count is already a better
+        # estimate, and averaging in additional plain-image counts would discard
+        # the tiling result and regress accuracy on dense/high-res scenes.
+        if not use_tiled_eval and (tta_flip or any(abs(scale - 1.0) > 1e-6 for scale in tta_scales)):
             tta_counts = []
             for scale in tta_scales:
                 scaled_samples = _resize_nested_tensor(samples, scale)

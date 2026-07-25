@@ -60,12 +60,14 @@ class SweepProtocolTests(unittest.TestCase):
             "ucfcc50_fold_manifest": "",
             "train_holdout_fraction": None,
             "train_holdout_seed": None,
+            "train_holdout_strategy": None,
             "output_dir": "",
             "eval_image_set": "train_holdout",
             "allow_benchmark_test_sweep": False,
         }
         values.update(overrides)
         return argparse.Namespace(**values)
+
 
     def test_sweep_inherits_exact_holdout_contract(self):
         with tempfile.TemporaryDirectory() as tmp:
