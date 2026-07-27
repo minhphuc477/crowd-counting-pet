@@ -1,0 +1,19 @@
+{
+  "epoch": 730,
+  "test_mae": 52.005494505494504,
+  "test_mse": 85.61423189690312,
+  "best_epoch": 730,
+  "best_test_mae": 52.005494505494504,
+  "best_test_mse": 85.61423189690312,
+  "lowest_mse": 83.94758961517479,
+  "best_mse_mae": 52.54945054945055,
+  "best_mse_epoch": 795,
+  "best_loc_f1_large": 0.7870426222775517,
+  "best_loc_f1_small": 0.6093535428725438,
+  "best_loc_mae": 53.967032967032964,
+  "best_loc_mse": 87.3386738853067,
+  "best_loc_epoch": 1350,
+  "validation_protocol": "benchmark_test",
+  "final": true,
+  "eval_model": "raw"
+}
