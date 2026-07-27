@@ -589,7 +589,19 @@ def _predict_count_tiled(
     tile_size=1536,
     tile_overlap=0,
     tile_nms_radius=0.0,
+    tile_tta_flip=False,
 ):
+    """Tiled inference with optional per-tile horizontal-flip TTA.
+
+    TTA strategy (when tile_tta_flip=True):
+      For each tile, run a second forward pass on the horizontally-flipped
+      version of that tile. Mirror the predicted x-coordinates back to the
+      original orientation, then merge all points from original + flipped
+      passes before global NMS.  This doubles the number of forward passes
+      on tiled images but gives stable predictions at tile boundaries and
+      improves recall on symmetric crowd scenes without touching the
+      non-tiled path.
+    """
     img_h, img_w = _valid_hw(samples)
     tile_size = max(1, int(tile_size))
     tile_overlap = max(0, int(tile_overlap))
@@ -601,29 +613,55 @@ def _predict_count_tiled(
         for x0 in _tile_starts(img_w, tile_size, tile_overlap):
             x1 = min(x0 + tile_size, img_w)
             tile_samples = _make_tile_nested(samples, y0, y1, x0, x1)
+            tile_model_h, tile_model_w = tile_samples.tensors.shape[-2:]
+
+            # --- original tile pass ---
             outputs, _count = _predict_count(model, tile_samples, targets, epoch=epoch)
             points = outputs['pred_points'][0].detach()
-            if points.numel() == 0:
-                continue
-            # PET normalizes coordinates by the padded tensor passed through
-            # the model, not by the unpadded crop extent.
-            tile_model_h, tile_model_w = tile_samples.tensors.shape[-2:]
-            points_abs = points.to(dtype=torch.float32) * points.new_tensor([
-                float(tile_model_h),
-                float(tile_model_w),
-            ])
-            points_abs[:, 0] += float(y0)
-            points_abs[:, 1] += float(x0)
-            pred_points_abs_parts.append(points_abs)
-            if 'pred_logits' in outputs and outputs['pred_logits'].numel() > 0:
-                scores = torch.softmax(outputs['pred_logits'][0].detach(), dim=-1)[:, 1]
-            else:
-                scores = torch.ones(points_abs.shape[0], dtype=torch.float32, device=points_abs.device)
-            score_parts.append(scores)
+            if points.numel() > 0:
+                # PET normalizes coordinates by the padded tensor passed through
+                # the model, not by the unpadded crop extent.
+                points_abs = points.to(dtype=torch.float32) * points.new_tensor([
+                    float(tile_model_h),
+                    float(tile_model_w),
+                ])
+                points_abs[:, 0] += float(y0)
+                points_abs[:, 1] += float(x0)
+                pred_points_abs_parts.append(points_abs)
+                if 'pred_logits' in outputs and outputs['pred_logits'].numel() > 0:
+                    scores = torch.softmax(outputs['pred_logits'][0].detach(), dim=-1)[:, 1]
+                else:
+                    scores = torch.ones(points_abs.shape[0], dtype=torch.float32, device=points_abs.device)
+                score_parts.append(scores)
+
+            # --- per-tile horizontal-flip TTA pass ---
+            if tile_tta_flip:
+                flipped_tile = NestedTensor(
+                    torch.flip(tile_samples.tensors, dims=[3]),
+                    torch.flip(tile_samples.mask, dims=[2]),
+                )
+                out_flip, _ = _predict_count(model, flipped_tile, targets, epoch=epoch)
+                pts_flip = out_flip['pred_points'][0].detach()
+                if pts_flip.numel() > 0:
+                    pts_flip_abs = pts_flip.to(dtype=torch.float32) * pts_flip.new_tensor([
+                        float(tile_model_h),
+                        float(tile_model_w),
+                    ])
+                    # Mirror x-coordinate back: x_orig = tile_model_w - 1 - x_flip
+                    pts_flip_abs[:, 1] = float(tile_model_w) - 1.0 - pts_flip_abs[:, 1]
+                    pts_flip_abs[:, 0] += float(y0)
+                    pts_flip_abs[:, 1] += float(x0)
+                    pred_points_abs_parts.append(pts_flip_abs)
+                    if 'pred_logits' in out_flip and out_flip['pred_logits'].numel() > 0:
+                        sc_flip = torch.softmax(out_flip['pred_logits'][0].detach(), dim=-1)[:, 1]
+                    else:
+                        sc_flip = torch.ones(pts_flip_abs.shape[0], dtype=torch.float32, device=pts_flip_abs.device)
+                    score_parts.append(sc_flip)
 
     if pred_points_abs_parts:
         pred_points_abs = torch.cat(pred_points_abs_parts, dim=0)
         scores = torch.cat(score_parts, dim=0) if score_parts else None
+        # NMS deduplicates both tile-boundary double-counts and TTA duplicates
         pred_points_abs = _nms_points_abs(pred_points_abs, scores=scores, radius=tile_nms_radius)
         model_h, model_w = samples.tensors.shape[-2:]
         pred_points_norm = pred_points_abs / pred_points_abs.new_tensor([
@@ -658,6 +696,7 @@ def evaluate_crowd_no_overlap(
     vis_dir=None,
     tta_flip=False,
     tta_scales=None,
+    tile_tta_flip=False,
     localization_metrics=True,
     localization_large_threshold=8.0,
     localization_small_threshold=4.0,
@@ -679,6 +718,7 @@ def evaluate_crowd_no_overlap(
         vis_dir=vis_dir,
         tta_flip=tta_flip,
         tta_scales=tta_scales,
+        tile_tta_flip=tile_tta_flip,
         localization_metrics=localization_metrics,
         localization_large_threshold=localization_large_threshold,
         localization_small_threshold=localization_small_threshold,
@@ -699,6 +739,7 @@ def evaluate(
     vis_dir=None,
     tta_flip=False,
     tta_scales=None,
+    tile_tta_flip=False,
     localization_metrics=True,
     localization_large_threshold=8.0,
     localization_small_threshold=4.0,
@@ -833,6 +874,7 @@ def evaluate(
                 tile_size=eval_tile_size,
                 tile_overlap=eval_tile_overlap,
                 tile_nms_radius=eval_tile_nms_radius,
+                tile_tta_flip=tile_tta_flip,
             )
             output_samples = samples
             eval_count_debug.update(outputs.get('eval_count_debug', {}))

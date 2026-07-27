@@ -4182,7 +4182,17 @@ def main(args):
             print(f'AMP enabled: CUDA autocast dtype={amp_dtype_name}{scaler_state}')
     if args.lr_scheduler == 'step':
         lr_drop = args.epochs if args.lr_drop <= 0 else args.lr_drop
-        lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, lr_drop, gamma=args.lr_gamma)
+        warmup_epochs = min(max(0, int(getattr(args, 'warmup_epochs', 0))), max(args.epochs - 1, 0))
+        if warmup_epochs > 0:
+            lr_gamma = float(getattr(args, 'lr_gamma', 0.1))
+            def warmup_step_factor(epoch_idx):
+                if epoch_idx < warmup_epochs:
+                    return max(1e-3, float(epoch_idx + 1) / float(warmup_epochs))
+                num_drops = epoch_idx // lr_drop
+                return float(lr_gamma ** num_drops)
+            lr_scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=warmup_step_factor)
+        else:
+            lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, lr_drop, gamma=args.lr_gamma)
     else:
         warmup_epochs = min(max(0, int(args.warmup_epochs)), max(args.epochs - 1, 0))
         hold_epochs = int(args.hold_epochs)
