@@ -1,0 +1,250 @@
+{
+  "convnext_base": {
+    "count": 1,
+    "mean_mae": 56.25824175824176,
+    "std_mae": 0.0,
+    "min_mae": 56.25824175824176,
+    "max_mae": 56.25824175824176,
+    "results": [
+      {
+        "dir": "results/convnext_base/final_train",
+        "mae": 56.25824175824176,
+        "checkpoint": "outputs/SHA/results/convnext_base/final_train/best_checkpoint.pth"
+      }
+    ]
+  },
+  "convnext_tiny": {
+    "count": 1,
+    "mean_mae": 54.862637362637365,
+    "std_mae": 0.0,
+    "min_mae": 54.862637362637365,
+    "max_mae": 54.862637362637365,
+    "results": [
+      {
+        "dir": "results/convnext_tiny/final_train",
+        "mae": 54.862637362637365,
+        "checkpoint": "outputs/SHA/results/convnext_tiny/final_train/best_checkpoint.pth"
+      }
+    ]
+  },
+  "convnextv2_base": {
+    "count": 3,
+    "mean_mae": 93.14285714285712,
+    "std_mae": 49.65766415232322,
+    "min_mae": 57.66483516483517,
+    "max_mae": 163.36813186813185,
+    "results": [
+      {
+        "dir": "convnextv2_base_seed_42",
+        "mae": 163.36813186813185,
+        "checkpoint": "outputs/SHA/convnextv2_base_seed_42/best_checkpoint.pth"
+      },
+      {
+        "dir": "convnextv2_base_seed_7",
+        "mae": 58.395604395604394,
+        "checkpoint": "outputs/SHA/convnextv2_base_seed_7/best_checkpoint.pth"
+      },
+      {
+        "dir": "results/convnextv2_base/final_train",
+        "mae": 57.66483516483517,
+        "checkpoint": "outputs/SHA/results/convnextv2_base/final_train/best_checkpoint.pth"
+      }
+    ]
+  },
+  "convnextv2_tiny": {
+    "count": 1,
+    "mean_mae": 55.043956043956044,
+    "std_mae": 0.0,
+    "min_mae": 55.043956043956044,
+    "max_mae": 55.043956043956044,
+    "results": [
+      {
+        "dir": "results/convnextv2_tiny/final_train",
+        "mae": 55.043956043956044,
+        "checkpoint": "outputs/SHA/results/convnextv2_tiny/final_train/best_checkpoint.pth"
+      }
+    ]
+  },
+  "efficientnet_b0": {
+    "count": 1,
+    "mean_mae": 65.74175824175825,
+    "std_mae": 0.0,
+    "min_mae": 65.74175824175825,
+    "max_mae": 65.74175824175825,
+    "results": [
+      {
+        "dir": "results/efficientnet_b0/final_train",
+        "mae": 65.74175824175825,
+        "checkpoint": "outputs/SHA/results/efficientnet_b0/final_train/best_checkpoint.pth"
+      }
+    ]
+  },
+  "efficientnet_b1": {
+    "count": 1,
+    "mean_mae": 65.43956043956044,
+    "std_mae": 0.0,
+    "min_mae": 65.43956043956044,
+    "max_mae": 65.43956043956044,
+    "results": [
+      {
+        "dir": "results/efficientnet_b1/final_train",
+        "mae": 65.43956043956044,
+        "checkpoint": "outputs/SHA/results/efficientnet_b1/final_train/best_checkpoint.pth"
+      }
+    ]
+  },
+  "efficientnetv2_small": {
+    "count": 1,
+    "mean_mae": 75.04395604395604,
+    "std_mae": 0.0,
+    "min_mae": 75.04395604395604,
+    "max_mae": 75.04395604395604,
+    "results": [
+      {
+        "dir": "results/efficientnetv2_small/final_train",
+        "mae": 75.04395604395604,
+        "checkpoint": "outputs/SHA/results/efficientnetv2_small/final_train/best_checkpoint.pth"
+      }
+    ]
+  },
+  "efficientnetv2_tiny": {
+    "count": 1,
+    "mean_mae": 72.23626373626374,
+    "std_mae": 0.0,
+    "min_mae": 72.23626373626374,
+    "max_mae": 72.23626373626374,
+    "results": [
+      {
+        "dir": "results/efficientnetv2_tiny/final_train",
+        "mae": 72.23626373626374,
+        "checkpoint": "outputs/SHA/results/efficientnetv2_tiny/final_train/best_checkpoint.pth"
+      }
+    ]
+  },
+  "efficientvit_small": {
+    "count": 1,
+    "mean_mae": 82.17032967032966,
+    "std_mae": 0.0,
+    "min_mae": 82.17032967032966,
+    "max_mae": 82.17032967032966,
+    "results": [
+      {
+        "dir": "results/efficientvit_small/final_train",
+        "mae": 82.17032967032966,
+        "checkpoint": "outputs/SHA/results/efficientvit_small/final_train/best_checkpoint.pth"
+      }
+    ]
+  },
+  "efficientvit_tiny": {
+    "count": 1,
+    "mean_mae": 74.31868131868131,
+    "std_mae": 0.0,
+    "min_mae": 74.31868131868131,
+    "max_mae": 74.31868131868131,
+    "results": [
+      {
+        "dir": "results/efficientvit_tiny/final_train",
+        "mae": 74.31868131868131,
+        "checkpoint": "outputs/SHA/results/efficientvit_tiny/final_train/best_checkpoint.pth"
+      }
+    ]
+  },
+  "fastvit_small": {
+    "count": 1,
+    "mean_mae": 73.75824175824175,
+    "std_mae": 0.0,
+    "min_mae": 73.75824175824175,
+    "max_mae": 73.75824175824175,
+    "results": [
+      {
+        "dir": "results/fastvit_small/final_train",
+        "mae": 73.75824175824175,
+        "checkpoint": "outputs/SHA/results/fastvit_small/final_train/best_checkpoint.pth"
+      }
+    ]
+  },
+  "fastvit_tiny": {
+    "count": 1,
+    "mean_mae": 72.53296703296704,
+    "std_mae": 0.0,
+    "min_mae": 72.53296703296704,
+    "max_mae": 72.53296703296704,
+    "results": [
+      {
+        "dir": "results/fastvit_tiny/final_train",
+        "mae": 72.53296703296704,
+        "checkpoint": "outputs/SHA/results/fastvit_tiny/final_train/best_checkpoint.pth"
+      }
+    ]
+  },
+  "maxvit_rmlp_tiny": {
+    "count": 1,
+    "mean_mae": 60.70879120879121,
+    "std_mae": 0.0,
+    "min_mae": 60.70879120879121,
+    "max_mae": 60.70879120879121,
+    "results": [
+      {
+        "dir": "results/maxvit_rmlp_tiny/final_train",
+        "mae": 60.70879120879121,
+        "checkpoint": "outputs/SHA/results/maxvit_rmlp_tiny/final_train/best_checkpoint.pth"
+      }
+    ]
+  },
+  "maxvit_small": {
+    "count": 1,
+    "mean_mae": 107.8956043956044,
+    "std_mae": 0.0,
+    "min_mae": 107.8956043956044,
+    "max_mae": 107.8956043956044,
+    "results": [
+      {
+        "dir": "results/maxvit_small/final_train",
+        "mae": 107.8956043956044,
+        "checkpoint": "outputs/SHA/results/maxvit_small/final_train/best_checkpoint.pth"
+      }
+    ]
+  },
+  "maxvit_tiny": {
+    "count": 1,
+    "mean_mae": 75.3021978021978,
+    "std_mae": 0.0,
+    "min_mae": 75.3021978021978,
+    "max_mae": 75.3021978021978,
+    "results": [
+      {
+        "dir": "results/maxvit_tiny/final_train",
+        "mae": 75.3021978021978,
+        "checkpoint": "outputs/SHA/results/maxvit_tiny/final_train/best_checkpoint.pth"
+      }
+    ]
+  },
+  "resnet18": {
+    "count": 1,
+    "mean_mae": 80.57142857142857,
+    "std_mae": 0.0,
+    "min_mae": 80.57142857142857,
+    "max_mae": 80.57142857142857,
+    "results": [
+      {
+        "dir": "results/resnet18/final_train",
+        "mae": 80.57142857142857,
+        "checkpoint": "outputs/SHA/results/resnet18/final_train/best_checkpoint.pth"
+      }
+    ]
+  },
+  "resnet50": {
+    "count": 1,
+    "mean_mae": 68.18131868131869,
+    "std_mae": 0.0,
+    "min_mae": 68.18131868131869,
+    "max_mae": 68.18131868131869,
+    "results": [
+      {
+        "dir": "results/resnet50/final_train",
+        "mae": 68.18131868131869,
+        "checkpoint": "outputs/SHA/results/resnet50/final_train/best_checkpoint.pth"
+      }
+    ]
+  }
+}

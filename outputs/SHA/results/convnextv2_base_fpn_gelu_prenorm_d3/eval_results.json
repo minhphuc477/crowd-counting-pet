@@ -1,0 +1,18 @@
+{
+  "ok": true,
+  "backbone": "convnextv2_base",
+  "dir": "convnextv2_base_fpn_gelu_prenorm_d3",
+  "checkpoint": "outputs/SHA/convnextv2_base_fpn_gelu_prenorm_d3/best_checkpoint.pth",
+  "checkpoint_name": "best_checkpoint.pth",
+  "eval_epoch": 365,
+  "eval_mae": 57.87362637362637,
+  "eval_mse": 97.849767107934,
+  "returncode": 0,
+  "error": null,
+  "log_path": "outputs/SHA/results/convnextv2_base_fpn_gelu_prenorm_d3/eval_log.txt",
+  "evaluated_at": "2026-05-31T23:23:35",
+  "train_best_mae": 57.87362637362637,
+  "train_best_mse": 97.849767107934,
+  "best_epoch": 365,
+  "checkpoint_epoch": 365
+}

@@ -1,0 +1,7 @@
+{
+  "epoch": 540,
+  "eval_mae": 87.77472527472527,
+  "eval_mse": 139.38091139585242,
+  "checkpoint": "outputs/SHA/results/efficientvit_tiny/seed_7/best_checkpoint.pth",
+  "eval_log": "outputs/SHA/results/efficientvit_tiny/seed_7/eval_log.txt"
+}

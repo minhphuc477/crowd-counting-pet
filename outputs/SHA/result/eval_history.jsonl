@@ -1,0 +1,4 @@
+{"epoch": 5, "test_mae": 190.22527472527472, "test_mse": 280.240938330722, "best_epoch": 5, "best_test_mae": 190.22527472527472, "best_test_mse": 280.240938330722, "improved": true, "eval_time": 8.525293111801147}
+{"epoch": 10, "test_mae": 87.29120879120879, "test_mse": 130.94712044046005, "best_epoch": 10, "best_test_mae": 87.29120879120879, "best_test_mse": 130.94712044046005, "improved": true, "eval_time": 8.512593030929565}
+{"epoch": 15, "test_mae": 92.44505494505495, "test_mse": 147.8993755048522, "best_epoch": 10, "best_test_mae": 87.29120879120879, "best_test_mse": 130.94712044046005, "improved": false, "eval_time": 8.971047163009644}
+{"epoch": 20, "test_mae": 82.74175824175825, "test_mse": 129.46914011361255, "best_epoch": 20, "best_test_mae": 82.74175824175825, "best_test_mse": 129.46914011361255, "improved": true, "eval_time": 9.014601230621338}

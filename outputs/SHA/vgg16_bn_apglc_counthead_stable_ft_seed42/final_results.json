@@ -1,0 +1,12 @@
+{
+  "epoch": 2,
+  "test_mae": 1884.2417582417581,
+  "test_mse": 2249.2061444473647,
+  "best_epoch": 2,
+  "best_test_mae": 1884.2417582417581,
+  "best_test_mse": 2249.2061444473647,
+  "final": true,
+  "eval_model": "raw",
+  "aborted": true,
+  "abort_reason": "bad-count guard triggered: over-count pred_cnt=2317.5495 gt_cnt=433.3077 ratio=5.349 mae=1884.2418 (limits: ratio>=2.000, mae>=200.0000)"
+}

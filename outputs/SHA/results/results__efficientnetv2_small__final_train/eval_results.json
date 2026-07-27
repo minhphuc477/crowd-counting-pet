@@ -1,0 +1,18 @@
+{
+  "ok": true,
+  "backbone": "efficientnetv2_small",
+  "dir": "results/efficientnetv2_small/final_train",
+  "checkpoint": "outputs/SHA/results/efficientnetv2_small/final_train/best_checkpoint.pth",
+  "checkpoint_name": "best_checkpoint.pth",
+  "eval_epoch": 535,
+  "eval_mae": 75.04395604395604,
+  "eval_mse": 115.98190461361719,
+  "returncode": 0,
+  "error": null,
+  "log_path": "outputs/SHA/results/results__efficientnetv2_small__final_train/eval_log.txt",
+  "evaluated_at": "2026-05-22T20:42:51",
+  "train_best_mae": 75.04395604395604,
+  "train_best_mse": 115.98190461361719,
+  "best_epoch": 535,
+  "checkpoint_epoch": 535
+}

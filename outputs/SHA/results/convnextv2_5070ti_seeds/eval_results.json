@@ -1,0 +1,14 @@
+{
+  "ok": true,
+  "backbone": "convnextv2_base",
+  "dir": "convnextv2_5070ti_seeds",
+  "checkpoint": "outputs/SHA/convnextv2_5070ti_seeds/checkpoint.pth",
+  "checkpoint_name": "checkpoint.pth",
+  "eval_epoch": 5,
+  "eval_mae": 380.1098901098901,
+  "eval_mse": 474.8434675567504,
+  "returncode": 0,
+  "error": null,
+  "log_path": "outputs/SHA/results/convnextv2_5070ti_seeds/eval_log.txt",
+  "evaluated_at": "2026-05-22T20:28:57"
+}

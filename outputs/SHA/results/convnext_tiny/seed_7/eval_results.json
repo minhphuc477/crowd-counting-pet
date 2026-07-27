@@ -1,0 +1,7 @@
+{
+  "epoch": 155,
+  "eval_mae": 55.16483516483517,
+  "eval_mse": 88.49380682371985,
+  "checkpoint": "outputs/SHA/results/convnext_tiny/seed_7/best_checkpoint.pth",
+  "eval_log": "outputs/SHA/results/convnext_tiny/seed_7/eval_log.txt"
+}

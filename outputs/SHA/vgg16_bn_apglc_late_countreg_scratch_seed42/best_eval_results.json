@@ -1,0 +1,21 @@
+{
+  "epoch": 115,
+  "test_mae": 344.27472527472526,
+  "test_mse": 413.9354278888659,
+  "pred_cnt": 765.032967032967,
+  "gt_cnt": 433.3076923076923,
+  "best_epoch": 115,
+  "best_test_mae": 344.27472527472526,
+  "best_test_mse": 413.9354278888659,
+  "improved": true,
+  "eval_time": 8.880403518676758,
+  "eval_model": "raw",
+  "eval_count_mode": "threshold",
+  "eval_count_head_min_score": 0.5,
+  "eval_score_calibration": "none",
+  "eval_score_calibration_strength": 1.0,
+  "eval_score_calibration_start_epoch": 0,
+  "eval_score_calibration_min_bias": -8.0,
+  "eval_score_calibration_max_bias": 8.0,
+  "eval_filter_invalid_points": true
+}

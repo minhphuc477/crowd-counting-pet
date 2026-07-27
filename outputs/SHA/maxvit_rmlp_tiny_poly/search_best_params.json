@@ -1,0 +1,13 @@
+{
+  "backbone": "maxvit_rmlp_tiny_rw_256",
+  "batch_size": 2,
+  "lr": 5.954553793888986e-05,
+  "lr_backbone": 2.1576967455896853e-05,
+  "weight_decay": 3.972110727381911e-06,
+  "clip_max_norm": 0.1,
+  "accum_iter": 1,
+  "use_amp": false,
+  "best_mae": 112.51099395751953,
+  "best_epoch": 7,
+  "best_threshold": 0.5
+}

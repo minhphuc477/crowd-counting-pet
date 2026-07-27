@@ -1,0 +1,179 @@
+{
+  "summary_by_backbone": {
+    "convnextv2_base": {
+      "best_mae": 53.587913513183594,
+      "worst_mae": 376.912109375,
+      "avg_mae": 118.44368656389005,
+      "num_runs": 8,
+      "all_maes": [
+        53.587913513183594,
+        56.41758346557617,
+        58.54945054945055,
+        67.11538696289062,
+        106.51099395751953,
+        113.63187408447266,
+        114.82418060302734,
+        376.912109375
+      ]
+    },
+    "convnextv2_nano": {
+      "best_mae": 89.33516693115234,
+      "worst_mae": 89.33516693115234,
+      "avg_mae": 89.33516693115234,
+      "num_runs": 1,
+      "all_maes": [
+        89.33516693115234
+      ]
+    },
+    "maxvit_rmlp_tiny_rw_256": {
+      "best_mae": 59.57692337036133,
+      "worst_mae": 60.07143020629883,
+      "avg_mae": 59.82417678833008,
+      "num_runs": 2,
+      "all_maes": [
+        59.57692337036133,
+        60.07143020629883
+      ]
+    },
+    "swinv2_base_window8_256": {
+      "best_mae": 66.31867980957031,
+      "worst_mae": 66.31867980957031,
+      "avg_mae": 66.31867980957031,
+      "num_runs": 1,
+      "all_maes": [
+        66.31867980957031
+      ]
+    },
+    "swinv2_tiny_window8_256": {
+      "best_mae": 101.64286041259766,
+      "worst_mae": 101.64286041259766,
+      "avg_mae": 101.64286041259766,
+      "num_runs": 1,
+      "all_maes": [
+        101.64286041259766
+      ]
+    }
+  },
+  "all_runs": [
+    {
+      "run_name": "ablate_base",
+      "backbone": "convnextv2_base",
+      "best_mae": 53.587913513183594,
+      "best_epoch": 250,
+      "best_threshold": 0.5,
+      "log_path": "outputs/SHA/ablate_base/run_log.txt"
+    },
+    {
+      "run_name": "query_only_long",
+      "backbone": "convnextv2_base",
+      "best_mae": 56.41758346557617,
+      "best_epoch": 217,
+      "best_threshold": 0.5,
+      "log_path": "outputs/SHA/query_only_long/run_log.txt"
+    },
+    {
+      "run_name": "pet_model_expert",
+      "backbone": "convnextv2_base",
+      "best_mae": 58.54945054945055,
+      "best_epoch": 795,
+      "best_threshold": null,
+      "log_path": "outputs/SHA/pet_model_expert/run_log.txt"
+    },
+    {
+      "run_name": "ablate_query",
+      "backbone": "convnextv2_base",
+      "best_mae": 67.11538696289062,
+      "best_epoch": 22,
+      "best_threshold": 0.5,
+      "log_path": "outputs/SHA/ablate_query/run_log.txt"
+    },
+    {
+      "run_name": "ablate_both",
+      "backbone": "convnextv2_base",
+      "best_mae": 106.51099395751953,
+      "best_epoch": 82,
+      "best_threshold": 0.5,
+      "log_path": "outputs/SHA/ablate_both/run_log.txt"
+    },
+    {
+      "run_name": "ablate_shift_masked",
+      "backbone": "convnextv2_base",
+      "best_mae": 113.63187408447266,
+      "best_epoch": 74,
+      "best_threshold": 0.5,
+      "log_path": "outputs/SHA/ablate_shift_masked/run_log.txt"
+    },
+    {
+      "run_name": "ablate_shift",
+      "backbone": "convnextv2_base",
+      "best_mae": 114.82418060302734,
+      "best_epoch": 16,
+      "best_threshold": 0.5,
+      "log_path": "outputs/SHA/ablate_shift/run_log.txt"
+    },
+    {
+      "run_name": "pet_model_1",
+      "backbone": "convnextv2_base",
+      "best_mae": 376.912109375,
+      "best_epoch": 1,
+      "best_threshold": 0.725,
+      "log_path": "outputs/SHA/pet_model_1/run_log.txt"
+    },
+    {
+      "run_name": "pet_model",
+      "backbone": "convnextv2_nano",
+      "best_mae": 89.33516693115234,
+      "best_epoch": 100,
+      "best_threshold": 0.5,
+      "log_path": "outputs/SHA/pet_model/run_log.txt"
+    },
+    {
+      "run_name": "maxvit_rmlp_tiny_rw_256_base",
+      "backbone": "maxvit_rmlp_tiny_rw_256",
+      "best_mae": 59.57692337036133,
+      "best_epoch": 320,
+      "best_threshold": 0.5,
+      "log_path": "outputs/SHA/maxvit_rmlp_tiny_rw_256_base/run_log.txt"
+    },
+    {
+      "run_name": "maxvit_rmlp_tiny_poly",
+      "backbone": "maxvit_rmlp_tiny_rw_256",
+      "best_mae": 60.07143020629883,
+      "best_epoch": 124,
+      "best_threshold": 0.5,
+      "log_path": "outputs/SHA/maxvit_rmlp_tiny_poly/run_log.txt"
+    },
+    {
+      "run_name": "maxvit_tiny_poly",
+      "backbone": "maxvit_tiny_pm_256",
+      "best_mae": null,
+      "best_epoch": null,
+      "best_threshold": null,
+      "log_path": "outputs/SHA/maxvit_tiny_poly/run_log.txt"
+    },
+    {
+      "run_name": "swinv2_base_window8_256_base",
+      "backbone": "swinv2_base_window8_256",
+      "best_mae": 66.31867980957031,
+      "best_epoch": 960,
+      "best_threshold": 0.5,
+      "log_path": "outputs/SHA/swinv2_base_window8_256_base/run_log.txt"
+    },
+    {
+      "run_name": "pet_mae40",
+      "backbone": "swinv2_tiny_window8_256",
+      "best_mae": 101.64286041259766,
+      "best_epoch": 345,
+      "best_threshold": 0.325,
+      "log_path": "outputs/SHA/pet_mae40/run_log.txt"
+    }
+  ],
+  "best_run": {
+    "run_name": "ablate_base",
+    "backbone": "convnextv2_base",
+    "best_mae": 53.587913513183594,
+    "best_epoch": 250,
+    "best_threshold": 0.5,
+    "log_path": "outputs/SHA/ablate_base/run_log.txt"
+  }
+}

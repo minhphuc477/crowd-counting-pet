@@ -1,0 +1,13 @@
+{
+  "epoch": 1380,
+  "test_mae": 65.71428571428571,
+  "test_mse": 109.62979662341944,
+  "pred_cnt": 460.8021978021978,
+  "gt_cnt": 433.9010989010989,
+  "best_epoch": 1070,
+  "best_test_mae": 61.51648351648352,
+  "best_test_mse": 98.97929631443688,
+  "improved": false,
+  "eval_time": 8.717704772949219,
+  "eval_model": "ema"
+}
