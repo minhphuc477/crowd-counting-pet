@@ -1525,6 +1525,28 @@ MODEL_RECIPES['vgg_apglc_scale_rifi'] = {
     **TRANSFERABLE_SCALE_RIFI_OVERRIDES,
 }
 
+# PET-EBC Router: an independent architectural branch that replaces the
+# learned scalar quadtree splitter with a blockwise zero/non-zero/count-bin
+# router.  It does not replace PET point predictions with block counts.
+# ``split_loss_variant=none`` prevents a second, incompatible legacy splitter
+# objective from supervising the replacement router; its route BCE uses the
+# same per-cell dense teacher directly.
+MODEL_RECIPES['vgg_apglc_ebc_router_scale_rifi'] = {
+    **MODEL_RECIPES['vgg_apglc_scale_rifi'],
+    'quadtree_router': 'ebc',
+    'ebc_router_loss_coef': 0.05,
+    'ebc_router_ce_coef': 1.0,
+    'ebc_router_count_coef': 0.05,
+    'ebc_router_route_coef': 1.0,
+    'ebc_router_bin_centers': (
+        '1,2,3,4,5,6,7,8,10,12,16,20,24,32,48,64,96,128,192,256,384,512,768,1024'
+    ),
+    'ebc_router_zero_prior': 0.9,
+    'ebc_router_hidden_dim': 128,
+    'ebc_router_activation': 'gelu',
+    'split_loss_variant': 'none',
+}
+
 # Optional thesis stage-2 ablation.  Keep the exact Scale-RIFI detector from
 # stage 1, but disable its already-converged auxiliary IFI/scale losses while
 # a small count loss adapts the PET prediction heads.  Evaluation still uses
@@ -1992,6 +2014,7 @@ EXPERIMENTAL_MODEL_RECIPES = {
     'vgg_apglc_nwpu_tail_rifi',
     'vgg_apglc_rifi',
     'vgg_apglc_scale_rifi',
+    'vgg_apglc_ebc_router_scale_rifi',
     'vgg_apglc_scale_rifi_counthead_stage2',
     'vgg_apglc_qnrf_tail_scale_rifi',
     'vgg_apglc_qnrf_sae_scale_rifi',
@@ -2163,6 +2186,15 @@ ARCHITECTURE_OVERRIDE_KEYS = {
     'zip_count_end_epoch',
     'zip_count_warmup_epochs',
     'zip_count_feature_grad_scale',
+    'quadtree_router',
+    'ebc_router_loss_coef',
+    'ebc_router_ce_coef',
+    'ebc_router_count_coef',
+    'ebc_router_route_coef',
+    'ebc_router_bin_centers',
+    'ebc_router_zero_prior',
+    'ebc_router_hidden_dim',
+    'ebc_router_activation',
     'eval_count_blend_alpha',
     'vgg_fpn_main_lr',
 }
@@ -2371,6 +2403,26 @@ def get_args_parser():
                         help='linearly ramp ZIP count loss for this many epochs')
     parser.add_argument('--zip_count_feature_grad_scale', default=1.0, type=float,
                         help='scale gradients from ZIP count loss into PET encoder; 0 trains only the ZIP head')
+    parser.add_argument('--quadtree_router', default='pet', choices=('pet', 'ebc'),
+                        help='PET keeps the original splitter; ebc uses the experimental blockwise EBC router')
+    parser.add_argument('--ebc_router_loss_coef', default=0.0, type=float,
+                        help='overall EBC quadtree-router supervision weight; 0 keeps routing unsupervised')
+    parser.add_argument('--ebc_router_ce_coef', default=1.0, type=float,
+                        help='positive count-bin CE multiplier inside EBC router supervision')
+    parser.add_argument('--ebc_router_count_coef', default=0.1, type=float,
+                        help='local log-count consistency multiplier inside EBC router supervision')
+    parser.add_argument('--ebc_router_route_coef', default=1.0, type=float,
+                        help='dense-cell route BCE multiplier inside EBC router supervision')
+    parser.add_argument('--ebc_router_bin_centers',
+                        default='1,2,3,4,5,6,7,8,10,12,16,20,24,32,48,64,96,128,192,256,384,512,768,1024',
+                        type=str,
+                        help='strictly increasing positive integer count centers for EBC quadtree cells')
+    parser.add_argument('--ebc_router_zero_prior', default=0.9, type=float,
+                        help='initial structural-zero probability for the EBC quadtree router')
+    parser.add_argument('--ebc_router_hidden_dim', default=128, type=int,
+                        help='hidden channels used by the EBC quadtree router')
+    parser.add_argument('--ebc_router_activation', default='gelu', choices=('relu', 'gelu'),
+                        help='activation used by the EBC quadtree router')
     parser.add_argument('--splitter_head', default='pool', choices=('pool', 'conv'),
                         help='quadtree splitter head; pool matches official PET, conv adds local context')
     parser.add_argument('--splitter_hidden_dim', default=128, type=int,
@@ -3438,6 +3490,9 @@ def merge_checkpoint_args(args, checkpoint):
             'zip_count_start_epoch', 'zip_count_end_epoch', 'zip_count_warmup_epochs',
             'zip_count_feature_grad_scale', 'eval_count_source', 'eval_count_blend_alpha',
             'eval_count_tail_threshold',
+            'quadtree_router', 'ebc_router_loss_coef', 'ebc_router_ce_coef',
+            'ebc_router_count_coef', 'ebc_router_route_coef', 'ebc_router_bin_centers',
+            'ebc_router_zero_prior', 'ebc_router_hidden_dim', 'ebc_router_activation',
             'foreground_loss_coef', 'foreground_sigma',
             'foreground_neg_shrink', 'foreground_init_prior',
             'eval_foreground_gate', 'eval_foreground_gate_mode', 'eval_foreground_gate_strength',
@@ -3714,6 +3769,8 @@ def model_only_allowed_missing_prefixes(args):
     )
     if needs_zip_count_head:
         prefixes.append('zip_count_head.')
+    if getattr(args, 'quadtree_router', 'pet') == 'ebc':
+        prefixes.append('ebc_router.')
     if float(getattr(args, 'measure_loss_coef', 0.0)) > 0:
         prefixes.append('measure_head.')
     needs_foreground_head = (

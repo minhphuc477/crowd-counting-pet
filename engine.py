@@ -535,21 +535,50 @@ def _make_tile_nested(samples, y0, y1, x0, x1):
 
 
 def _nms_points_abs(points, scores=None, radius=0.0):
-    if radius <= 0 or points.shape[0] <= 1:
+    """Greedy score-sorted NMS on 2-D absolute point coordinates.
+
+    Suppresses any point within *radius* pixels of a higher-scored point.
+    Uses a vectorised cdist pass to pre-compute the full pairwise distance
+    matrix, then iterates in score order using the pre-built adjacency mask —
+    avoiding a Python-level distance computation per step.
+
+    For large N the [N, N] float32 matrix can exceed GPU VRAM.  When N² *4 B
+    would exceed *cdist_cpu_fallback_bytes* (default 256 MB) the computation
+    is performed on CPU and the resulting bool mask is moved back to the
+    points device.
+    """
+    _CDIST_CPU_FALLBACK_BYTES = 256 * 1024 * 1024  # 256 MB
+
+    n = points.shape[0]
+    if radius <= 0 or n <= 1:
         return points
     if scores is None:
-        scores = torch.arange(points.shape[0], device=points.device, dtype=torch.float32)
+        # Treat index order as implicit score (earlier = higher priority).
+        scores = torch.arange(n, device=points.device, dtype=torch.float32)
+
+    # Pre-compute all pairwise squared-distances in one batched call.
+    # Shape: [N, N]. Falls back to CPU for very large point sets to avoid OOM.
+    pts_f = points.float()
+    if n * n * 4 > _CDIST_CPU_FALLBACK_BYTES:
+        pts_cpu = pts_f.cpu()
+        dist_sq = torch.cdist(pts_cpu, pts_cpu, p=2).pow(2)
+        within_radius = (dist_sq <= float(radius) ** 2).to(device=points.device)
+    else:
+        dist_sq = torch.cdist(pts_f, pts_f, p=2).pow(2)          # [N, N]
+        within_radius = dist_sq <= float(radius) ** 2             # [N, N] bool
+
     order = torch.argsort(scores, descending=True)
-    keep = []
-    suppressed = torch.zeros(points.shape[0], dtype=torch.bool, device=points.device)
-    radius_sq = float(radius) * float(radius)
+    suppressed = torch.zeros(n, dtype=torch.bool, device=points.device)
+    keep_mask = torch.zeros(n, dtype=torch.bool, device=points.device)
     for idx in order.tolist():
         if suppressed[idx]:
             continue
-        keep.append(idx)
-        dist_sq = ((points - points[idx]) ** 2).sum(dim=1)
-        suppressed |= dist_sq <= radius_sq
-    return points[torch.as_tensor(keep, dtype=torch.long, device=points.device)]
+        keep_mask[idx] = True
+        # Suppress all neighbours within radius (including self) so we don't
+        # revisit them. The self-entry (dist_sq==0) is always within radius.
+        suppressed |= within_radius[idx]
+    return points[keep_mask]
+
 
 
 def _predict_count_tiled(
@@ -822,19 +851,36 @@ def evaluate(
         # estimate, and averaging in additional plain-image counts would discard
         # the tiling result and regress accuracy on dense/high-res scenes.
         if not use_tiled_eval and (tta_flip or any(abs(scale - 1.0) > 1e-6 for scale in tta_scales)):
+            # Collect per-augmentation count estimates and average them.
+            # Operate on output_samples (bounded resolution, e.g. long_side <= 1024)
+            # instead of raw dataset samples (which can be 6000x4000) to prevent
+            # massive VRAM allocation during full-image TTA forward passes.
             tta_counts = []
             for scale in tta_scales:
-                scaled_samples = _resize_nested_tensor(samples, scale)
-                _, scaled_count = _predict_count(model, scaled_samples, targets, epoch=epoch)
-                tta_counts.append(scaled_count)
-                if tta_flip:
-                    flipped_samples = NestedTensor(
-                        torch.flip(scaled_samples.tensors, dims=[3]),
-                        torch.flip(scaled_samples.mask, dims=[2]),
-                    )
-                    _, flipped_count = _predict_count(model, flipped_samples, targets, epoch=epoch)
-                    tta_counts.append(flipped_count)
+                if abs(scale - 1.0) < 1e-6:
+                    # Already inferred at scale=1.0 above; reuse that count.
+                    tta_counts.append(float(predict_cnt))
+                    if tta_flip:
+                        flipped_samples = NestedTensor(
+                            torch.flip(output_samples.tensors, dims=[3]),
+                            torch.flip(output_samples.mask, dims=[2]),
+                        )
+                        _, flipped_count = _predict_count(model, flipped_samples, targets, epoch=epoch)
+                        tta_counts.append(flipped_count)
+                else:
+                    scaled_samples = _resize_nested_tensor(output_samples, scale)
+                    _, scaled_count = _predict_count(model, scaled_samples, targets, epoch=epoch)
+                    tta_counts.append(scaled_count)
+                    if tta_flip:
+                        flipped_samples = NestedTensor(
+                            torch.flip(scaled_samples.tensors, dims=[3]),
+                            torch.flip(scaled_samples.mask, dims=[2]),
+                        )
+                        _, flipped_count = _predict_count(model, flipped_samples, targets, epoch=epoch)
+                        tta_counts.append(flipped_count)
             predict_cnt = float(sum(tta_counts) / len(tta_counts))
+            eval_count_debug['tta_n_views'] = float(len(tta_counts))
+            eval_count_debug['tta_predict_cnt'] = predict_cnt
         gt_cnt = targets[0]['points'].shape[0]
 
         pred_points_abs = _pred_points_to_image_pixels(

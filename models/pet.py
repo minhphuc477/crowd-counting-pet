@@ -18,6 +18,7 @@ from .matcher import (
 from .backbones import *
 from .transformer import *
 from .position_encoding import build_position_encoding
+from .ebc_router import EBCQuadtreeRouter
 
 
 def _parse_size_pair(value, default, name):
@@ -1396,17 +1397,46 @@ class PET(nn.Module):
             'use_detail': self.zip_count_feature_source == 'fpn4x8x',
         }
 
-        # quadtree splitter
+        # Quadtree routing.  The EBC router is an independent experimental
+        # module; the original splitter remains the default for all legacy
+        # recipes and checkpoints.
         context_patch = _parse_size_pair(getattr(args, 'context_patch_size', ''), (128, 64), 'context_patch_size')
         context_w, context_h = context_patch[0]//int(self.encode_feats[:-1]), context_patch[1]//int(self.encode_feats[:-1])
-        self.quadtree_splitter = QuadtreeSplitter(
-            hidden_dim,
-            context_h,
-            context_w,
-            head=getattr(args, 'splitter_head', 'pool'),
-            mid_dim=getattr(args, 'splitter_hidden_dim', 128),
-            activation=getattr(args, 'splitter_activation', 'gelu'),
-        )
+        self.quadtree_router = getattr(args, 'quadtree_router', 'pet')
+        if self.quadtree_router not in ('pet', 'ebc'):
+            raise ValueError('quadtree_router must be one of "pet" or "ebc"')
+        self.ebc_router_loss_coef = max(0.0, float(getattr(args, 'ebc_router_loss_coef', 0.0)))
+        self.ebc_router_ce_coef = max(0.0, float(getattr(args, 'ebc_router_ce_coef', 1.0)))
+        self.ebc_router_count_coef = max(0.0, float(getattr(args, 'ebc_router_count_coef', 0.1)))
+        self.ebc_router_route_coef = max(0.0, float(getattr(args, 'ebc_router_route_coef', 1.0)))
+        self.ebc_router = None
+        if self.quadtree_router == 'ebc':
+            self.ebc_router = EBCQuadtreeRouter(
+                hidden_dim=hidden_dim,
+                context_h=context_h,
+                context_w=context_w,
+                count_bin_centers=_parse_float_list(
+                    getattr(args, 'ebc_router_bin_centers', '1,2,3,4,5,6,7,8,9,10,12,14,16,20,24,32'),
+                    (1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 12.0, 14.0, 16.0, 20.0, 24.0, 32.0),
+                    'ebc_router_bin_centers',
+                ),
+                zero_prior=getattr(args, 'ebc_router_zero_prior', 0.9),
+                mid_dim=getattr(args, 'ebc_router_hidden_dim', 128),
+                activation=getattr(args, 'ebc_router_activation', 'gelu'),
+                route_count_threshold=getattr(args, 'split_count_threshold', 2),
+            )
+            self.quadtree_splitter = None
+        else:
+            self.quadtree_splitter = QuadtreeSplitter(
+                hidden_dim,
+                context_h,
+                context_w,
+                head=getattr(args, 'splitter_head', 'pool'),
+                mid_dim=getattr(args, 'splitter_hidden_dim', 128),
+                activation=getattr(args, 'splitter_activation', 'gelu'),
+            )
+        if self.quadtree_router == 'pet' and self.ebc_router_loss_coef > 0:
+            raise ValueError('ebc_router_loss_coef requires --quadtree_router ebc')
 
         # point-query quadtree
         args.sparse_stride, args.dense_stride = 8, 4    # point-query stride
@@ -2117,6 +2147,68 @@ class PET(nn.Module):
             'loss_zip_count': loss_count,
         }
 
+    def compute_ebc_router_losses(self, outputs, targets, samples):
+        """Supervise EBC routing without using it as an evaluation count head.
+
+        The three count terms teach the local structural-zero and positive-bin
+        distribution.  The separate route term is the exact dense-cell teacher
+        used by PET's quadtree partition: a cell is dense once its annotated
+        count reaches ``split_count_threshold``.  PET's point-query outputs
+        remain the only source of predicted person locations and image count.
+        """
+        router_output = outputs.get('ebc_router')
+        if router_output is None:
+            zero = outputs['split_map_raw'].sum() * 0.0
+            return {
+                'loss_ebc_router_zero': zero,
+                'loss_ebc_router_ce': zero,
+                'loss_ebc_router_count': zero,
+                'loss_ebc_router_route': zero,
+            }
+
+        counts, valid = self.build_local_block_targets(router_output, targets, samples)
+        zero_target = (counts <= 0).to(dtype=router_output['zero_logits'].dtype)
+        route_target = (counts >= self.split_count_threshold).to(
+            dtype=router_output['route_prob'].dtype,
+        )
+        loss_zero = self.balanced_binary_loss(
+            router_output['zero_logits'].sigmoid(),
+            zero_target,
+            valid_mask=valid,
+        )
+        loss_route = self.balanced_binary_loss(
+            router_output['route_prob'].squeeze(1),
+            route_target,
+            pos_weight=self.split_pos_weight,
+            neg_weight=self.negative_loss_coef,
+            valid_mask=valid,
+        )
+
+        positive = valid & (counts > 0)
+        bin_logits = router_output['bin_logits'].float()
+        if positive.any():
+            centers = self.ebc_router.count_bin_centers.to(
+                device=counts.device,
+                dtype=counts.dtype,
+            )
+            bin_target = (counts[positive].unsqueeze(1) - centers.unsqueeze(0)).abs().argmin(dim=1)
+            positive_logits = bin_logits.permute(0, 2, 3, 1)[positive]
+            loss_ce = F.cross_entropy(positive_logits, bin_target)
+        else:
+            loss_ce = bin_logits.sum() * 0.0
+
+        predicted_count = (
+            router_output['expected_count'].float() * valid
+        ).flatten(1).sum(dim=1)
+        target_count = (counts * valid).flatten(1).sum(dim=1)
+        loss_count = F.smooth_l1_loss(torch.log1p(predicted_count), torch.log1p(target_count))
+        return {
+            'loss_ebc_router_zero': loss_zero,
+            'loss_ebc_router_ce': loss_ce,
+            'loss_ebc_router_count': loss_count,
+            'loss_ebc_router_route': loss_route,
+        }
+
     def compute_local_ordinal_loss(self, embeddings, counts, valid):
         features = embeddings.permute(0, 2, 3, 1)[valid].float()
         local_counts = counts[valid]
@@ -2258,6 +2350,18 @@ class PET(nn.Module):
             loss_dict.update(zip_losses)
             weight_dict.update(zip_weights)
             losses += sum(zip_losses[name] * zip_weights[name] for name in zip_losses)
+
+        if self.ebc_router is not None and self.ebc_router_loss_coef > 0:
+            ebc_losses = self.compute_ebc_router_losses(outputs, targets, samples)
+            ebc_weights = {
+                'loss_ebc_router_zero': self.ebc_router_loss_coef,
+                'loss_ebc_router_ce': self.ebc_router_loss_coef * self.ebc_router_ce_coef,
+                'loss_ebc_router_count': self.ebc_router_loss_coef * self.ebc_router_count_coef,
+                'loss_ebc_router_route': self.ebc_router_loss_coef * self.ebc_router_route_coef,
+            }
+            loss_dict.update(ebc_losses)
+            weight_dict.update(ebc_weights)
+            losses += sum(ebc_losses[name] * ebc_weights[name] for name in ebc_losses)
 
         # quadtree splitter loss
         den = torch.stack([target['density'].reshape(()) for target in targets]).to(outputs['split_map_raw'].device)
@@ -4511,7 +4615,13 @@ class PET(nn.Module):
         bs, _, src_h, src_w = src.shape
         sp_h, sp_w = src_h, src_w
         ds_h, ds_w = int(src_h * 2), int(src_w * 2)
-        split_map = self.quadtree_splitter(encode_src)
+        ebc_router_output = None
+        if self.ebc_router is not None:
+            ebc_router_output = self.ebc_router(encode_src)
+            split_map = ebc_router_output['route_prob'].to(dtype=encode_src.dtype)
+            self._check_finite('ebc_router.route_prob', split_map)
+        else:
+            split_map = self.quadtree_splitter(encode_src)
         split_map_raw_sparse = F.interpolate(split_map, (sp_h, sp_w)).reshape(bs, -1)
         split_map_raw_dense = F.interpolate(split_map, (ds_h, ds_w)).reshape(bs, -1)
         split_map_dense = split_map_raw_dense
@@ -4597,6 +4707,8 @@ class PET(nn.Module):
         outputs['split_mask_dense'] = split_mask_dense
         outputs['split_threshold'] = split_threshold.detach()
         outputs['query_prune_threshold'] = split_map.new_tensor(self.query_prune_threshold).detach()
+        if ebc_router_output is not None and 'train' in kwargs:
+            outputs['ebc_router'] = ebc_router_output
         if local_density_output is not None and 'train' in kwargs:
             outputs['local_density'] = local_density_output
         if self.count_head is not None:

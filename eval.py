@@ -65,6 +65,15 @@ ARCHITECTURE_OVERRIDE_KEYS = {
     'splitter_head',
     'splitter_hidden_dim',
     'splitter_activation',
+    'quadtree_router',
+    'ebc_router_loss_coef',
+    'ebc_router_ce_coef',
+    'ebc_router_count_coef',
+    'ebc_router_route_coef',
+    'ebc_router_bin_centers',
+    'ebc_router_zero_prior',
+    'ebc_router_hidden_dim',
+    'ebc_router_activation',
     'sparse_stride',
     'dense_stride',
     'fusion_mhf_mode',
@@ -344,6 +353,17 @@ def get_args_parser():
     parser.add_argument('--zip_count_end_epoch', default=-1, type=int)
     parser.add_argument('--zip_count_warmup_epochs', default=0, type=int)
     parser.add_argument('--zip_count_feature_grad_scale', default=1.0, type=float)
+    parser.add_argument('--quadtree_router', default='pet', choices=('pet', 'ebc'))
+    parser.add_argument('--ebc_router_loss_coef', default=0.0, type=float)
+    parser.add_argument('--ebc_router_ce_coef', default=1.0, type=float)
+    parser.add_argument('--ebc_router_count_coef', default=0.1, type=float)
+    parser.add_argument('--ebc_router_route_coef', default=1.0, type=float)
+    parser.add_argument('--ebc_router_bin_centers',
+                        default='1,2,3,4,5,6,7,8,10,12,16,20,24,32,48,64,96,128,192,256,384,512,768,1024',
+                        type=str)
+    parser.add_argument('--ebc_router_zero_prior', default=0.9, type=float)
+    parser.add_argument('--ebc_router_hidden_dim', default=128, type=int)
+    parser.add_argument('--ebc_router_activation', default='gelu', choices=('relu', 'gelu'))
     parser.add_argument('--eos_coef', default=0.5, type=float,
                         help="Relative classification weight of the no-object class")   # cross-entropy weights
     parser.add_argument('--pet_loss_variant', default='paper', choices=('paper', 'balanced'))
@@ -710,20 +730,32 @@ def main(args):
         args = merge_checkpoint_args(args, checkpoint)
         args.no_pretrained_backbone = should_skip_pretrained_backbone(args, checkpoint)
     args = apply_eval_overrides(args)
-    if (
-        getattr(args, 'per_image_predictions_file', '')
-        or getattr(args, 'refinement_predictions_file', '')
-    ) and (
-        bool(getattr(args, 'tta_flip', False))
-        or any(
-            abs(scale - 1.0) > 1e-6
-            for scale in parse_tta_scales(getattr(args, 'tta_scales', '1.0'))
-        )
-    ):
+    _tta_active = bool(getattr(args, 'tta_flip', False)) or any(
+        abs(scale - 1.0) > 1e-6
+        for scale in parse_tta_scales(getattr(args, 'tta_scales', '1.0'))
+    )
+    if getattr(args, 'refinement_predictions_file', '') and _tta_active:
         raise ValueError(
-            'point-coordinate export does not support count-only TTA; use '
-            '--tta_scales 1.0 without --tta_flip'
+            'refinement-predictions export is point-based and cannot be combined '
+            'with count-only TTA; omit --tta_flip / --tta_scales or omit '
+            '--refinement_predictions_file'
         )
+    if getattr(args, 'per_image_predictions_file', '') and _tta_active:
+        # TTA averages the scalar count across augmented views but cannot
+        # meaningfully average point coordinates.  The exported JSON will
+        # contain pred_cnt = TTA-averaged count (more accurate) and
+        # pred_points_yx from the primary (scale-1.0) forward pass.
+        # Consumers that only use pred_cnt (e.g. export_nwpu_test.py) are
+        # unaffected.  Consumers that rely on pred_points_yx should be aware
+        # of this mismatch.
+        import warnings
+        warnings.warn(
+            'TTA is active with --per_image_predictions_file: pred_cnt in the '
+            'output JSON will be the TTA-averaged count, but pred_points_yx '
+            'will come from the primary (scale=1.0) forward pass only.',
+            stacklevel=2,
+        )
+
     print(args)
 
     # build model
