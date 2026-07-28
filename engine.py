@@ -636,10 +636,28 @@ def _predict_count_tiled(
 
             # --- per-tile horizontal-flip TTA pass ---
             if tile_tta_flip:
-                flipped_tile = NestedTensor(
-                    torch.flip(tile_samples.tensors, dims=[3]),
-                    torch.flip(tile_samples.mask, dims=[2]),
-                )
+                # _make_tile_nested pads on the RIGHT and BOTTOM only.
+                # Flipping the mask would move padding to the left — wrong.
+                # Correct fix: flip only the image content; rebuild an identical
+                # mask (padding still on right/bottom, same valid region size).
+                tile_tensor = tile_samples.tensors  # [1, C, pad_h, pad_w]
+                tile_mask = tile_samples.mask        # [1, pad_h, pad_w], True=padding
+                # Flip image horizontally (dim=3 = width)
+                flipped_tensor = torch.flip(tile_tensor, dims=[3])
+                # The valid pixel region is [:tile_h, :tile_w]; after a horizontal
+                # flip of the padded tensor the valid pixels are now at
+                # [:tile_h, pad_w-tile_w:pad_w] (right side).  To keep the same
+                # top-left layout expected by the model, move valid pixels back:
+                tile_h_actual = y1 - y0
+                tile_w_actual = x1 - x0
+                pad_h_val = tile_tensor.shape[2]
+                pad_w_val = tile_tensor.shape[3]
+                # Build a clean padded tensor with flipped content at top-left
+                clean_flip = tile_tensor.new_zeros(tile_tensor.shape)
+                clean_flip[:, :, :tile_h_actual, :tile_w_actual] = \
+                    flipped_tensor[:, :, pad_h_val - tile_h_actual:, pad_w_val - tile_w_actual:]
+                # Mask is identical to the original (valid region same shape/position)
+                flipped_tile = NestedTensor(clean_flip, tile_mask)
                 out_flip, _ = _predict_count(model, flipped_tile, targets, epoch=epoch)
                 pts_flip = out_flip['pred_points'][0].detach()
                 if pts_flip.numel() > 0:
@@ -647,8 +665,10 @@ def _predict_count_tiled(
                         float(tile_model_h),
                         float(tile_model_w),
                     ])
-                    # Mirror x-coordinate back: x_orig = tile_model_w - 1 - x_flip
-                    pts_flip_abs[:, 1] = float(tile_model_w) - 1.0 - pts_flip_abs[:, 1]
+                    # pts_flip_abs[:, 1] is x in the flipped-then-packed space.
+                    # The valid tile occupies columns [0, tile_w_actual).
+                    # Mirror back: x_orig = (tile_w_actual - 1) - x_flip
+                    pts_flip_abs[:, 1] = float(tile_w_actual) - 1.0 - pts_flip_abs[:, 1]
                     pts_flip_abs[:, 0] += float(y0)
                     pts_flip_abs[:, 1] += float(x0)
                     pred_points_abs_parts.append(pts_flip_abs)
