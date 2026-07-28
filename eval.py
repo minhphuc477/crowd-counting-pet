@@ -492,6 +492,8 @@ def get_args_parser():
                         help='checkpoint state to evaluate; auto prefers model_ema when present')
     parser.add_argument('--tta_flip', action='store_true',
                         help='average original and horizontal-flip predicted counts at evaluation time')
+    parser.add_argument('--tile_tta_flip', action='store_true',
+                        help='per-tile horizontal-flip TTA during tiled eval; doubles tile forward passes')
     parser.add_argument('--tta_scales', default='1.0',
                         help='comma-separated eval scales; dimensions are rounded to PET-compatible 256 multiples')
     parser.add_argument('--eval_protocol', default='pet', choices=('pet', 'crowd_no_overlap'),
@@ -537,7 +539,7 @@ def merge_checkpoint_args(args, checkpoint):
         'eval_tile_min_gt', 'eval_tile_max_tiles', 'eval_tile_trigger_count', 'eval_tile_trigger_area',
         'override_score_threshold', 'override_split_threshold', 'override_split_threshold_quantile',
         'override_query_prune_threshold',
-        'tta_flip', 'tta_scales',
+        'tta_flip', 'tile_tta_flip', 'tta_scales',
         'eval_nms_radius', 'eval_branch_gate', 'eval_soft_split_gate',
         'eval_foreground_gate', 'eval_foreground_gate_mode', 'eval_foreground_gate_strength',
         'eval_count_mode', 'eval_count_source', 'eval_count_blend_alpha',
@@ -834,6 +836,7 @@ def main(args):
             vis_dir=vis_dir,
             tta_flip=args.tta_flip,
             tta_scales=tta_scales,
+            tile_tta_flip=getattr(args, 'tile_tta_flip', False),
             localization_metrics=not args.no_localization_metrics,
             localization_large_threshold=args.localization_large_threshold,
             localization_small_threshold=args.localization_small_threshold,
@@ -851,6 +854,7 @@ def main(args):
             vis_dir=vis_dir,
             tta_flip=args.tta_flip,
             tta_scales=tta_scales,
+            tile_tta_flip=getattr(args, 'tile_tta_flip', False),
             localization_metrics=not args.no_localization_metrics,
             localization_large_threshold=args.localization_large_threshold,
             localization_small_threshold=args.localization_small_threshold,
