@@ -636,41 +636,44 @@ def _predict_count_tiled(
 
             # --- per-tile horizontal-flip TTA pass ---
             if tile_tta_flip:
-                # _make_tile_nested pads on the RIGHT and BOTTOM only.
-                # Flipping the mask would move padding to the left — wrong.
-                # Correct fix: flip only the image content; rebuild an identical
-                # mask (padding still on right/bottom, same valid region size).
-                tile_tensor = tile_samples.tensors  # [1, C, pad_h, pad_w]
-                tile_mask = tile_samples.mask        # [1, pad_h, pad_w], True=padding
-                # Flip image horizontally (dim=3 = width)
-                flipped_tensor = torch.flip(tile_tensor, dims=[3])
-                # The valid pixel region is [:tile_h, :tile_w]; after a horizontal
-                # flip of the padded tensor the valid pixels are now at
-                # [:tile_h, pad_w-tile_w:pad_w] (right side).  To keep the same
-                # top-left layout expected by the model, move valid pixels back:
+                # Strategy: pre-flip the valid image pixels into a full-size
+                # zero tensor (same layout as samples.tensors), then call
+                # _make_tile_nested at the mirror column range.
+                # This avoids all padding/mask confusion entirely.
+                #
+                # After horizontal flip, the tile that was at columns [x0, x1)
+                # in the original maps to columns [img_w-x1, img_w-x0) in the
+                # flipped image.  Both tiles have the same width (x1-x0) so
+                # _make_tile_nested produces the same pad shape → tile_model_w.
                 tile_h_actual = y1 - y0
                 tile_w_actual = x1 - x0
-                pad_h_val = tile_tensor.shape[2]
-                pad_w_val = tile_tensor.shape[3]
-                # Build a clean padded tensor with flipped content at top-left
-                clean_flip = tile_tensor.new_zeros(tile_tensor.shape)
-                clean_flip[:, :, :tile_h_actual, :tile_w_actual] = \
-                    flipped_tensor[:, :, pad_h_val - tile_h_actual:, pad_w_val - tile_w_actual:]
-                # Mask is identical to the original (valid region same shape/position)
-                flipped_tile = NestedTensor(clean_flip, tile_mask)
-                out_flip, _ = _predict_count(model, flipped_tile, targets, epoch=epoch)
+                flip_x0 = img_w - x1
+                flip_x1 = img_w - x0
+                # Build a tensor where valid pixels are flipped and placed at
+                # top-left (same convention as the original samples.tensors).
+                valid_flipped = torch.flip(
+                    samples.tensors[:, :, :img_h, :img_w], dims=[3]
+                )  # [1, C, img_h, img_w]
+                flip_full_tensor = samples.tensors.new_zeros(samples.tensors.shape)
+                flip_full_tensor[:, :, :img_h, :img_w] = valid_flipped
+                # Reuse samples as a carrier (only .tensors is read by _make_tile_nested)
+                flip_carrier = NestedTensor(flip_full_tensor, samples.mask)
+                flip_tile = _make_tile_nested(flip_carrier, y0, y1, flip_x0, flip_x1)
+                out_flip, _ = _predict_count(model, flip_tile, targets, epoch=epoch)
                 pts_flip = out_flip['pred_points'][0].detach()
                 if pts_flip.numel() > 0:
                     pts_flip_abs = pts_flip.to(dtype=torch.float32) * pts_flip.new_tensor([
                         float(tile_model_h),
                         float(tile_model_w),
                     ])
-                    # pts_flip_abs[:, 1] is x in the flipped-then-packed space.
-                    # The valid tile occupies columns [0, tile_w_actual).
-                    # Mirror back: x_orig = (tile_w_actual - 1) - x_flip
-                    pts_flip_abs[:, 1] = float(tile_w_actual) - 1.0 - pts_flip_abs[:, 1]
+                    # Coordinate transform back to original image:
+                    #   y_orig = y0 + y_flip_abs  (y range unchanged)
+                    #   x_in_flip_image = flip_x0 + x_flip_abs
+                    #   x_orig = img_w - 1 - x_in_flip_image
+                    #          = img_w - 1 - (img_w - x1) - x_flip_abs
+                    #          = (x1 - 1) - x_flip_abs
                     pts_flip_abs[:, 0] += float(y0)
-                    pts_flip_abs[:, 1] += float(x0)
+                    pts_flip_abs[:, 1] = float(x1 - 1) - pts_flip_abs[:, 1]
                     pred_points_abs_parts.append(pts_flip_abs)
                     if 'pred_logits' in out_flip and out_flip['pred_logits'].numel() > 0:
                         sc_flip = torch.softmax(out_flip['pred_logits'][0].detach(), dim=-1)[:, 1]
