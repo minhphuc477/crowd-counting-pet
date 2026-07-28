@@ -636,44 +636,29 @@ def _predict_count_tiled(
 
             # --- per-tile horizontal-flip TTA pass ---
             if tile_tta_flip:
-                # Strategy: pre-flip the valid image pixels into a full-size
-                # zero tensor (same layout as samples.tensors), then call
-                # _make_tile_nested at the mirror column range.
-                # This avoids all padding/mask confusion entirely.
-                #
-                # After horizontal flip, the tile that was at columns [x0, x1)
-                # in the original maps to columns [img_w-x1, img_w-x0) in the
-                # flipped image.  Both tiles have the same width (x1-x0) so
-                # _make_tile_nested produces the same pad shape → tile_model_w.
+                # Flip only the valid pixels of this tile (not the full image).
+                # tile_samples.tensors has valid pixels at [:tile_h, :tile_w]
+                # with zero-padding on right/bottom.
                 tile_h_actual = y1 - y0
                 tile_w_actual = x1 - x0
-                flip_x0 = img_w - x1
-                flip_x1 = img_w - x0
-                # Build a tensor where valid pixels are flipped and placed at
-                # top-left (same convention as the original samples.tensors).
-                valid_flipped = torch.flip(
-                    samples.tensors[:, :, :img_h, :img_w], dims=[3]
-                )  # [1, C, img_h, img_w]
-                flip_full_tensor = samples.tensors.new_zeros(samples.tensors.shape)
-                flip_full_tensor[:, :, :img_h, :img_w] = valid_flipped
-                # Reuse samples as a carrier (only .tensors is read by _make_tile_nested)
-                flip_carrier = NestedTensor(flip_full_tensor, samples.mask)
-                flip_tile = _make_tile_nested(flip_carrier, y0, y1, flip_x0, flip_x1)
-                out_flip, _ = _predict_count(model, flip_tile, targets, epoch=epoch)
+                valid_pixels = tile_samples.tensors[:, :, :tile_h_actual, :tile_w_actual]
+                valid_flipped = torch.flip(valid_pixels, dims=[3])
+                flip_tensor = tile_samples.tensors.new_zeros(tile_samples.tensors.shape)
+                flip_tensor[:, :, :tile_h_actual, :tile_w_actual] = valid_flipped
+                # Mask unchanged: valid region same shape/position, padding still right/bottom
+                flipped_tile = NestedTensor(flip_tensor, tile_samples.mask)
+                out_flip, _ = _predict_count(model, flipped_tile, targets, epoch=epoch)
                 pts_flip = out_flip['pred_points'][0].detach()
                 if pts_flip.numel() > 0:
                     pts_flip_abs = pts_flip.to(dtype=torch.float32) * pts_flip.new_tensor([
                         float(tile_model_h),
                         float(tile_model_w),
                     ])
-                    # Coordinate transform back to original image:
-                    #   y_orig = y0 + y_flip_abs  (y range unchanged)
-                    #   x_in_flip_image = flip_x0 + x_flip_abs
-                    #   x_orig = img_w - 1 - x_in_flip_image
-                    #          = img_w - 1 - (img_w - x1) - x_flip_abs
-                    #          = (x1 - 1) - x_flip_abs
+                    # Points are in padded-tile coords. Valid region is [0, tile_w_actual).
+                    # Mirror x back: x_orig_in_tile = (tile_w_actual - 1) - x_flip
+                    # Then global: x_global = x0 + x_orig_in_tile
+                    pts_flip_abs[:, 1] = float(tile_w_actual - 1) - pts_flip_abs[:, 1] + float(x0)
                     pts_flip_abs[:, 0] += float(y0)
-                    pts_flip_abs[:, 1] = float(x1 - 1) - pts_flip_abs[:, 1]
                     pred_points_abs_parts.append(pts_flip_abs)
                     if 'pred_logits' in out_flip and out_flip['pred_logits'].numel() > 0:
                         sc_flip = torch.softmax(out_flip['pred_logits'][0].detach(), dim=-1)[:, 1]
