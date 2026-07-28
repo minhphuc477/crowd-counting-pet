@@ -591,107 +591,108 @@ def _predict_count_tiled(
     tile_nms_radius=0.0,
     tile_tta_flip=False,
 ):
-    """Tiled inference with optional per-tile horizontal-flip TTA.
+    """Tiled inference with optional horizontal-flip TTA via count averaging.
 
-    TTA strategy (when tile_tta_flip=True):
-      For each tile, run a second forward pass on the horizontally-flipped
-      version of that tile. Mirror the predicted x-coordinates back to the
-      original orientation, then merge all points from original + flipped
-      passes before global NMS.  This doubles the number of forward passes
-      on tiled images but gives stable predictions at tile boundaries and
-      improves recall on symmetric crowd scenes without touching the
-      non-tiled path.
+    TTA strategy (tile_tta_flip=True):
+      Run TWO completely independent tiled passes — one on the original image,
+      one on its horizontal flip — each with its own NMS pass to deduplicate
+      tile-boundary duplicates.  Then average the two scalar counts.
+
+      This mirrors how density-map methods (ZIP, CLTR) do TTA: they average
+      the density-map outputs across augmentations before summing.  For
+      point-based PET, merging points across views then NMS-ing is wrong
+      (NMS removes the TTA-added points because the mirrored coords land on
+      the same person's position, giving zero net benefit).
+
+      Memory note: flip_carrier is pre-computed ONCE before the tile loop,
+      not inside it.  Cost is one extra full-image tensor (~288 MB for a
+      6000×4000 float32 image) held for the duration of the flip pass.
     """
     img_h, img_w = _valid_hw(samples)
     tile_size = max(1, int(tile_size))
     tile_overlap = max(0, int(tile_overlap))
-    pred_points_abs_parts = []
-    score_parts = []
 
-    for y0 in _tile_starts(img_h, tile_size, tile_overlap):
-        y1 = min(y0 + tile_size, img_h)
-        for x0 in _tile_starts(img_w, tile_size, tile_overlap):
-            x1 = min(x0 + tile_size, img_w)
-            tile_samples = _make_tile_nested(samples, y0, y1, x0, x1)
-            tile_model_h, tile_model_w = tile_samples.tensors.shape[-2:]
-
-            # --- original tile pass ---
-            outputs, _count = _predict_count(model, tile_samples, targets, epoch=epoch)
-            points = outputs['pred_points'][0].detach()
-            if points.numel() > 0:
-                # PET normalizes coordinates by the padded tensor passed through
-                # the model, not by the unpadded crop extent.
-                points_abs = points.to(dtype=torch.float32) * points.new_tensor([
-                    float(tile_model_h),
-                    float(tile_model_w),
-                ])
-                points_abs[:, 0] += float(y0)
-                points_abs[:, 1] += float(x0)
-                pred_points_abs_parts.append(points_abs)
-                if 'pred_logits' in outputs and outputs['pred_logits'].numel() > 0:
-                    scores = torch.softmax(outputs['pred_logits'][0].detach(), dim=-1)[:, 1]
-                else:
-                    scores = torch.ones(points_abs.shape[0], dtype=torch.float32, device=points_abs.device)
-                score_parts.append(scores)
-
-            # --- per-tile horizontal-flip TTA pass ---
-            if tile_tta_flip:
-                # Flip only the valid pixels of this tile (not the full image).
-                # tile_samples.tensors has valid pixels at [:tile_h, :tile_w]
-                # with zero-padding on right/bottom.
-                tile_h_actual = y1 - y0
-                tile_w_actual = x1 - x0
-                valid_pixels = tile_samples.tensors[:, :, :tile_h_actual, :tile_w_actual]
-                valid_flipped = torch.flip(valid_pixels, dims=[3])
-                flip_tensor = tile_samples.tensors.new_zeros(tile_samples.tensors.shape)
-                flip_tensor[:, :, :tile_h_actual, :tile_w_actual] = valid_flipped
-                # Mask unchanged: valid region same shape/position, padding still right/bottom
-                flipped_tile = NestedTensor(flip_tensor, tile_samples.mask)
-                out_flip, _ = _predict_count(model, flipped_tile, targets, epoch=epoch)
-                pts_flip = out_flip['pred_points'][0].detach()
-                if pts_flip.numel() > 0:
-                    pts_flip_abs = pts_flip.to(dtype=torch.float32) * pts_flip.new_tensor([
-                        float(tile_model_h),
-                        float(tile_model_w),
-                    ])
-                    # Points are in padded-tile coords. Valid region is [0, tile_w_actual).
-                    # Mirror x back: x_orig_in_tile = (tile_w_actual - 1) - x_flip
-                    # Then global: x_global = x0 + x_orig_in_tile
-                    pts_flip_abs[:, 1] = float(tile_w_actual - 1) - pts_flip_abs[:, 1] + float(x0)
-                    pts_flip_abs[:, 0] += float(y0)
-                    pred_points_abs_parts.append(pts_flip_abs)
-                    if 'pred_logits' in out_flip and out_flip['pred_logits'].numel() > 0:
-                        sc_flip = torch.softmax(out_flip['pred_logits'][0].detach(), dim=-1)[:, 1]
+    # ------------------------------------------------------------------ #
+    #  Helper: run one complete tiled pass on a carrier NestedTensor and  #
+    #  return (outputs_of_original, pred_points_norm, pred_count).        #
+    #  `keep_outputs` controls whether the full output dict is returned   #
+    #  (only needed for the primary pass — saves memory on the flip pass) #
+    # ------------------------------------------------------------------ #
+    def _run_tiled_pass(carrier, mirror_x=False):
+        """Single tiled pass; returns (outputs_dict_or_None, count_float)."""
+        pts_parts = []
+        sc_parts = []
+        for y0_ in _tile_starts(img_h, tile_size, tile_overlap):
+            y1_ = min(y0_ + tile_size, img_h)
+            for x0_ in _tile_starts(img_w, tile_size, tile_overlap):
+                x1_ = min(x0_ + tile_size, img_w)
+                # For the flip pass, extract from the mirror column position
+                tile_x0 = (img_w - x1_) if mirror_x else x0_
+                tile_x1 = (img_w - x0_) if mirror_x else x1_
+                t = _make_tile_nested(carrier, y0_, y1_, tile_x0, tile_x1)
+                th, tw = t.tensors.shape[-2:]
+                out, _ = _predict_count(model, t, targets, epoch=epoch)
+                pts = out['pred_points'][0].detach()
+                if pts.numel() > 0:
+                    pts_abs = pts.to(dtype=torch.float32) * pts.new_tensor([float(th), float(tw)])
+                    pts_abs[:, 0] += float(y0_)
+                    if mirror_x:
+                        # Convert from flipped-image coords back to original:
+                        # x_flip_image = tile_x0 + x_abs
+                        # x_orig = img_w - 1 - x_flip_image = (x1_ - 1) - x_abs
+                        pts_abs[:, 1] = float(x1_ - 1) - pts_abs[:, 1]
                     else:
-                        sc_flip = torch.ones(pts_flip_abs.shape[0], dtype=torch.float32, device=pts_flip_abs.device)
-                    score_parts.append(sc_flip)
+                        pts_abs[:, 1] += float(x0_)
+                    pts_parts.append(pts_abs)
+                    if 'pred_logits' in out and out['pred_logits'].numel() > 0:
+                        sc_parts.append(torch.softmax(out['pred_logits'][0].detach(), dim=-1)[:, 1])
+                    else:
+                        sc_parts.append(torch.ones(pts_abs.shape[0], dtype=torch.float32, device=pts_abs.device))
 
-    if pred_points_abs_parts:
-        pred_points_abs = torch.cat(pred_points_abs_parts, dim=0)
-        scores = torch.cat(score_parts, dim=0) if score_parts else None
-        # NMS deduplicates both tile-boundary double-counts and TTA duplicates
-        pred_points_abs = _nms_points_abs(pred_points_abs, scores=scores, radius=tile_nms_radius)
+        if pts_parts:
+            all_pts = torch.cat(pts_parts, dim=0)
+            all_sc = torch.cat(sc_parts, dim=0) if sc_parts else None
+            all_pts = _nms_points_abs(all_pts, scores=all_sc, radius=tile_nms_radius)
+        else:
+            all_pts = torch.empty((0, 2), dtype=samples.tensors.dtype, device=samples.tensors.device)
+
+        count = float(all_pts.shape[0])
         model_h, model_w = samples.tensors.shape[-2:]
-        pred_points_norm = pred_points_abs / pred_points_abs.new_tensor([
-            float(model_h),
-            float(model_w),
-        ])
-    else:
-        pred_points_norm = torch.empty((0, 2), dtype=samples.tensors.dtype, device=samples.tensors.device)
+        pts_norm = all_pts / all_pts.new_tensor([float(model_h), float(model_w)]) if all_pts.numel() > 0 \
+            else torch.empty((0, 2), dtype=samples.tensors.dtype, device=samples.tensors.device)
+        logits = pts_norm.new_zeros((1, pts_norm.shape[0], 2))
+        if pts_norm.shape[0] > 0:
+            logits[:, :, 1] = 1.0
+        outputs_dict = {
+            'pred_logits': logits,
+            'pred_points': pts_norm.unsqueeze(0),
+            'eval_count_debug': {'tile_count': float(len(pts_parts)), 'tile_final': count},
+        }
+        return outputs_dict, count
 
-    pred_count = float(pred_points_norm.shape[0])
-    logits = pred_points_norm.new_zeros((1, pred_points_norm.shape[0], 2))
-    if pred_points_norm.shape[0] > 0:
-        logits[:, :, 1] = 1.0
-    outputs = {
-        'pred_logits': logits,
-        'pred_points': pred_points_norm.unsqueeze(0),
-        'eval_count_debug': {
-            'tile_count': float(len(pred_points_abs_parts)),
-            'tile_final': pred_count,
-        },
-    }
-    return outputs, pred_count
+    # --- Primary pass (original image) ---
+    orig_outputs, orig_count = _run_tiled_pass(samples, mirror_x=False)
+    pred_count = orig_count
+
+    # --- Flip pass (run a complete independent tiled pass, then average count) ---
+    if tile_tta_flip:
+        # Pre-compute flipped carrier ONCE (not inside the tile loop).
+        # We flip only the valid pixel region and place it back at top-left
+        # to keep the same coordinate convention that _make_tile_nested expects.
+        valid_flipped = torch.flip(samples.tensors[:, :, :img_h, :img_w], dims=[3])
+        flip_full = samples.tensors.new_zeros(samples.tensors.shape)
+        flip_full[:, :, :img_h, :img_w] = valid_flipped
+        del valid_flipped  # free immediately
+        flip_carrier = NestedTensor(flip_full, samples.mask)
+
+        _, flip_count = _run_tiled_pass(flip_carrier, mirror_x=True)
+
+        # Average the two counts (analogous to averaging density maps in ZIP/CLTR)
+        pred_count = (orig_count + flip_count) / 2.0
+
+        del flip_full  # allow GPU memory reclaim
+
+    return orig_outputs, pred_count
 
 
 @utils.preserve_rng_state
