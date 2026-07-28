@@ -1748,9 +1748,11 @@ MODEL_RECIPES['vgg_apglc_counthead_stage2_nwpu'] = {
     'eval_tile_size': 1536,
     'eval_tile_overlap': 128,
     'eval_tile_nms_radius': 8.0,
-    'eval_tile_max_tiles': 16,
-    'eval_tile_trigger_count': 1500.0,
-    'eval_tile_trigger_area': 0,
+    # Stage-1 sweep confirmed: trigger_count=800, trigger_area=8000000 optimal.
+    # trigger_area=0 causes val MAE 49->62. max_tiles=64 handles NWPU tail.
+    'eval_tile_max_tiles': 64,
+    'eval_tile_trigger_count': 800.0,
+    'eval_tile_trigger_area': 8000000,
 }
 
 MODEL_RECIPES['vgg_apgcc_paper_ifi_nwpu'] = {
