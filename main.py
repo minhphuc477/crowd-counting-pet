@@ -2904,6 +2904,12 @@ def get_args_parser():
                         help='optional cross-tile NMS radius in pixels for overlapped tiled eval')
     parser.add_argument('--eval_tile_merge_mode', default='nms', choices=('nms', 'ownership'),
                         help='merge overlapping tiles with legacy global NMS or disjoint ownership cores')
+    parser.add_argument('--eval_tile_selection_mode', default='trigger', choices=('trigger', 'disagreement'),
+                        help='use direct triggers or validation-calibrated full/tiled disagreement routing')
+    parser.add_argument('--eval_tile_disagreement_min_count', default=50.0, type=float,
+                        help='minimum bounded-pass count eligible for disagreement routing')
+    parser.add_argument('--eval_tile_disagreement_ratio', default=1.1, type=float,
+                        help='minimum ownership-tiled/bounded count ratio selected by disagreement routing')
     parser.add_argument('--eval_tile_min_gt', default=0, type=int,
                         help='prohibited legacy oracle option; use a prediction/area trigger instead')
     parser.add_argument('--eval_tile_max_tiles', default=0, type=int,
@@ -3435,6 +3441,7 @@ def merge_checkpoint_args(args, checkpoint):
         'localization_protocol', 'localization_large_scale', 'localization_small_scale',
         'eval_count_source', 'eval_count_blend_alpha', 'eval_count_tail_threshold',
         'eval_tile_size', 'eval_tile_overlap', 'eval_tile_nms_radius', 'eval_tile_merge_mode',
+        'eval_tile_selection_mode', 'eval_tile_disagreement_min_count', 'eval_tile_disagreement_ratio',
         'eval_tile_min_gt', 'eval_tile_max_tiles',
         'eval_tile_trigger_count', 'eval_tile_trigger_area',
         'score_threshold', 'split_threshold', 'split_threshold_quantile', 'query_prune_threshold',
@@ -4699,6 +4706,9 @@ def main(args):
                 eval_tile_trigger_count=args.eval_tile_trigger_count,
                 eval_tile_trigger_area=args.eval_tile_trigger_area,
                 eval_tile_merge_mode=args.eval_tile_merge_mode,
+                eval_tile_selection_mode=args.eval_tile_selection_mode,
+                eval_tile_disagreement_min_count=args.eval_tile_disagreement_min_count,
+                eval_tile_disagreement_ratio=args.eval_tile_disagreement_ratio,
             )
         t2 = time.time()
         print("\n==========================")
@@ -4960,6 +4970,9 @@ def main(args):
                     eval_tile_trigger_count=args.eval_tile_trigger_count,
                     eval_tile_trigger_area=args.eval_tile_trigger_area,
                     eval_tile_merge_mode=args.eval_tile_merge_mode,
+                    eval_tile_selection_mode=args.eval_tile_selection_mode,
+                    eval_tile_disagreement_min_count=args.eval_tile_disagreement_min_count,
+                    eval_tile_disagreement_ratio=args.eval_tile_disagreement_ratio,
                 )
             t2 = time.time()
 
@@ -5050,6 +5063,9 @@ def main(args):
                     'eval_tile_overlap': int(getattr(args, 'eval_tile_overlap', 0)),
                     'eval_tile_nms_radius': float(getattr(args, 'eval_tile_nms_radius', 0.0)),
                     'eval_tile_merge_mode': str(getattr(args, 'eval_tile_merge_mode', 'nms')),
+                    'eval_tile_selection_mode': str(getattr(args, 'eval_tile_selection_mode', 'trigger')),
+                    'eval_tile_disagreement_min_count': float(getattr(args, 'eval_tile_disagreement_min_count', 50.0)),
+                    'eval_tile_disagreement_ratio': float(getattr(args, 'eval_tile_disagreement_ratio', 1.1)),
                     'eval_tile_min_gt': int(getattr(args, 'eval_tile_min_gt', 0)),
                     'eval_tile_max_tiles': int(getattr(args, 'eval_tile_max_tiles', 0)),
                     'eval_tile_trigger_count': float(getattr(args, 'eval_tile_trigger_count', 0.0)),

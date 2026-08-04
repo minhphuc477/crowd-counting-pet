@@ -815,6 +815,9 @@ def evaluate(
     eval_tile_trigger_count=0.0,
     eval_tile_trigger_area=0,
     eval_tile_merge_mode='nms',
+    eval_tile_selection_mode='trigger',
+    eval_tile_disagreement_min_count=50.0,
+    eval_tile_disagreement_ratio=1.1,
 ):
     if int(eval_tile_min_gt or 0) > 0:
         raise ValueError(
@@ -822,6 +825,9 @@ def evaluate(
             'path and is prohibited for reportable evaluation. Use '
             'eval_tile_trigger_count or eval_tile_trigger_area instead.'
         )
+    eval_tile_selection_mode = str(eval_tile_selection_mode)
+    if eval_tile_selection_mode not in ('trigger', 'disagreement'):
+        raise ValueError("eval_tile_selection_mode must be one of 'trigger' or 'disagreement'")
     model.eval()
     if tta_scales is None:
         tta_scales = (1.0,)
@@ -886,6 +892,8 @@ def evaluate(
             'tile_used': 0.0,
             'tile_count': 0.0,
             'tile_final': 0.0,
+            'tile_disagreement_candidate': 0.0,
+            'tile_disagreement_selected': 0.0,
         }
         trigger_count = float(eval_tile_trigger_count or 0.0)
         trigger_area = int(eval_tile_trigger_area or 0)
@@ -908,14 +916,23 @@ def evaluate(
             eval_count_debug['tile_trigger_projected_count'] = projected_trigger_count
             count_triggered = projected_trigger_count >= trigger_count
             area_triggered = trigger_area > 0 and int(img_h * img_w) >= trigger_area
-            use_tiled_eval = count_triggered or area_triggered
+            disagreement_candidate = (
+                eval_tile_selection_mode == 'disagreement'
+                and area_triggered
+                and not count_triggered
+            )
+            use_tiled_eval = count_triggered or (
+                area_triggered and eval_tile_selection_mode == 'trigger'
+            )
             eval_count_debug['tile_trigger_count_gate'] = float(count_triggered)
             eval_count_debug['tile_trigger_area_gate'] = float(area_triggered)
-            if not use_tiled_eval:
+            eval_count_debug['tile_disagreement_candidate'] = float(disagreement_candidate)
+            if not use_tiled_eval and not disagreement_candidate:
                 # Tiling not warranted: use the resized-pass outputs.
                 output_samples = trigger_samples
                 eval_count_debug['tile_trigger_skipped'] = 1.0
         else:
+            disagreement_candidate = False
             use_tiled_eval = tile_candidate
             if use_tiled_eval and trigger_area > 0:
                 use_tiled_eval = int(img_h * img_w) >= trigger_area
@@ -925,7 +942,42 @@ def evaluate(
                 output_samples = trigger_samples
                 eval_count_debug['tile_trigger_skipped'] = 1.0
 
-        if use_tiled_eval:
+        tiled_output_ready = False
+        if disagreement_candidate:
+            candidate_outputs, candidate_count = _predict_count_tiled(
+                model,
+                samples,
+                targets,
+                epoch=epoch,
+                tile_size=eval_tile_size,
+                tile_overlap=eval_tile_overlap,
+                tile_nms_radius=0.0,
+                tile_tta_flip=tile_tta_flip,
+                tile_merge_mode='ownership',
+            )
+            base_count = float(predict_cnt)
+            count_ratio = float(candidate_count) / max(base_count, 1.0)
+            selected = (
+                base_count >= float(eval_tile_disagreement_min_count)
+                and count_ratio >= float(eval_tile_disagreement_ratio)
+            )
+            eval_count_debug['tile_disagreement_base_count'] = base_count
+            eval_count_debug['tile_disagreement_tiled_count'] = float(candidate_count)
+            eval_count_debug['tile_disagreement_ratio'] = count_ratio
+            eval_count_debug['tile_disagreement_selected'] = float(selected)
+            if selected:
+                outputs, predict_cnt = candidate_outputs, candidate_count
+                output_samples = samples
+                use_tiled_eval = True
+                tiled_output_ready = True
+                eval_count_debug.update(outputs.get('eval_count_debug', {}))
+                eval_count_debug['tile_used'] = 1.0
+            else:
+                use_tiled_eval = False
+                output_samples = trigger_samples
+                eval_count_debug['tile_trigger_skipped'] = 1.0
+
+        if use_tiled_eval and not tiled_output_ready:
             outputs, predict_cnt = _predict_count_tiled(
                 model,
                 samples,
