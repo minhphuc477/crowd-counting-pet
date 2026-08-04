@@ -29,7 +29,7 @@ def _recipe_args(recipe):
     ]
     if recipe in main.EXPERIMENTAL_MODEL_RECIPES:
         argv.append('--allow_experimental_model_recipe')
-    if 'counthead_stage2' in recipe:
+    if 'counthead_stage2' in recipe or recipe == 'vgg_apglc_nwpu_loc_repair_counthead':
         argv.extend(('--resume', 'synthetic_stage1.pth', '--resume_model_only'))
     args = main.get_args_parser().parse_args(argv)
     args._explicit_args = main.get_explicit_arg_names(argv)
@@ -42,6 +42,15 @@ def _branch_ifi_args():
 
 
 class IFIContractTest(unittest.TestCase):
+    def test_nwpu_localization_counthead_stage_is_count_only(self):
+        args = _recipe_args('vgg_apglc_nwpu_loc_repair_counthead')
+        self.assertTrue(args.train_count_head_only)
+        self.assertFalse(args.train_localization_repair_only)
+        self.assertEqual(args.large_context_score_adapter, 'pyramid16')
+        self.assertEqual(args.eval_count_mode, 'threshold')
+        self.assertEqual(args.eval_count_source, 'count_head')
+        self.assertEqual(args.count_head_feature_grad_scale, 0.0)
+
     def test_paper_apg_recipe_uses_independent_auxiliary_points(self):
         args = _recipe_args('vgg_apgcc_paper_ifi')
         self.assertEqual(args.apg_loss_coef, 0.0)

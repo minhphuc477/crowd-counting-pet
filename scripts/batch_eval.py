@@ -449,7 +449,7 @@ def parse_args():
     parser.add_argument('--eval_foreground_gate_mode', default='', choices=('', 'suppress', 'logit_add'))
     parser.add_argument('--eval_foreground_gate_strength', default=None, type=float)
     parser.add_argument('--eval_count_mode', default='', choices=('', 'threshold', 'count_head_topk'))
-    parser.add_argument('--eval_count_source', default='', choices=('', 'pet', 'zip', 'zip_pet_blend', 'zip_tail_blend'))
+    parser.add_argument('--eval_count_source', default='', choices=('', 'pet', 'count_head', 'zip', 'zip_pet_blend', 'zip_tail_blend'))
     parser.add_argument('--eval_count_tail_threshold', default=None, type=float)
     parser.add_argument('--eval_count_blend_alpha', default=None, type=float)
     parser.add_argument('--eval_count_head_min_score', default=None, type=float)

@@ -1467,8 +1467,11 @@ class PET(nn.Module):
             )
 
         self.eval_count_source = getattr(args, 'eval_count_source', 'pet')
-        if self.eval_count_source not in ('pet', 'zip', 'zip_pet_blend', 'zip_tail_blend'):
-            raise ValueError('eval_count_source must be one of "pet", "zip", "zip_pet_blend", or "zip_tail_blend"')
+        if self.eval_count_source not in ('pet', 'count_head', 'zip', 'zip_pet_blend', 'zip_tail_blend'):
+            raise ValueError(
+                'eval_count_source must be one of "pet", "count_head", '
+                '"zip", "zip_pet_blend", or "zip_tail_blend"'
+            )
         self.eval_count_blend_alpha = float(getattr(args, 'eval_count_blend_alpha', 0.5))
         if not 0.0 <= self.eval_count_blend_alpha <= 1.0:
             raise ValueError('eval_count_blend_alpha must be in [0, 1]')
@@ -1763,6 +1766,7 @@ class PET(nn.Module):
             self.count_head_loss_coef > 0
             or self.density_map_loss_coef > 0
             or self.eval_count_mode == 'count_head_topk'
+            or self.eval_count_source == 'count_head'
             or self.eval_score_calibration == 'count_head_bias'
             or self.eval_dense_residual_mode == 'count_head'
         )
@@ -5279,6 +5283,9 @@ class PET(nn.Module):
         div_out['query_prune_threshold'] = outputs['query_prune_threshold']
         if 'count_pred' in outputs:
             div_out['count_pred'] = outputs['count_pred']
+            div_out['count_density'] = outputs['count_density']
+            if self.eval_count_source == 'count_head':
+                div_out['count_for_mae'] = outputs['count_pred']
         if 'zip_count_pred' in outputs:
             div_out['zip_count_pred'] = outputs['zip_count_pred']
             if self.eval_count_source == 'zip':

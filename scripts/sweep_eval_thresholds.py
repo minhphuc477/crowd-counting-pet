@@ -529,7 +529,7 @@ def get_args() -> argparse.Namespace:
     parser.add_argument(
         "--eval_count_sources",
         nargs="+",
-        choices=("checkpoint", "pet", "zip", "zip_pet_blend", "zip_tail_blend"),
+        choices=("checkpoint", "pet", "count_head", "zip", "zip_pet_blend", "zip_tail_blend"),
         default=["checkpoint"],
         help="count source passed to eval.py; checkpoint preserves the checkpoint args",
     )

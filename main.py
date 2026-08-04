@@ -2021,6 +2021,30 @@ MODEL_RECIPES['vgg_apglc_nwpu_loc_repair_rifi'] = {
     'freeze_bn': True,
 }
 
+# Count-only calibration on top of the verified NWPU localization repair.
+#
+# The localization adapter improves scale-balanced recall but cannot recover
+# count errors once the fixed score threshold has discarded a query.  This
+# stage preserves every detector/localization parameter and learns only the
+# scalar count head.  At evaluation the predicted count selects the top-K PET
+# candidates; localization submissions must continue to use the parent recipe
+# with normal threshold inference so count calibration cannot alter positions.
+MODEL_RECIPES['vgg_apglc_nwpu_loc_repair_counthead'] = {
+    **MODEL_RECIPES['vgg_apglc_nwpu_loc_repair_rifi'],
+    'train_localization_repair_only': False,
+    'train_count_head_only': True,
+    'count_head_loss_coef': 1.0,
+    'count_head_loss_type': 'smooth_l1',
+    'count_head_start_epoch': 0,
+    'count_head_end_epoch': -1,
+    'count_head_warmup_epochs': 5,
+    'count_head_feature_grad_scale': 0.0,
+    'density_map_loss_coef': 0.0,
+    'eval_count_mode': 'threshold',
+    'eval_count_source': 'count_head',
+    'freeze_bn': True,
+}
+
 MODEL_RECIPES['vgg_apglc_branch_ifi_counthead_stage2_nwpu'] = {
     **MODEL_RECIPES['vgg_apglc_counthead_stage2_nwpu'],
     'query_feature_interpolation': 'implicit',
@@ -2064,6 +2088,7 @@ EXPERIMENTAL_MODEL_RECIPES = {
     'vgg_apglc_density_routed_ifi_nwpu',
     'vgg_apglc_nwpu_tail_rifi',
     'vgg_apglc_nwpu_loc_repair_rifi',
+    'vgg_apglc_nwpu_loc_repair_counthead',
     'vgg_apglc_rifi',
     'vgg_apglc_scale_rifi',
     'vgg_apglc_ebc_router_scale_rifi',
@@ -2905,8 +2930,8 @@ def get_args_parser():
                         help='foreground gate strength during evaluation')
     parser.add_argument('--eval_count_mode', default='threshold', choices=('threshold', 'count_head_topk'),
                         help='threshold keeps PET behavior; count_head_topk keeps top-K APG candidates using the separate count head')
-    parser.add_argument('--eval_count_source', default='pet', choices=('pet', 'zip', 'zip_pet_blend', 'zip_tail_blend'),
-                        help='count used for MAE/RMSE: pet counts thresholded point predictions; zip sums the EBC-ZIP count branch; zip_pet_blend mixes both; zip_tail_blend only blends high PET-count images')
+    parser.add_argument('--eval_count_source', default='pet', choices=('pet', 'count_head', 'zip', 'zip_pet_blend', 'zip_tail_blend'),
+                        help='count used for MAE/RMSE: pet counts thresholded points; count_head uses the scalar density-sum head without changing localization points; zip sums the EBC-ZIP branch; blend modes combine ZIP and PET counts')
     parser.add_argument('--eval_count_blend_alpha', default=0.5, type=float,
                         help='ZIP weight for --eval_count_source zip_pet_blend; 0=PET count, 1=ZIP count')
     parser.add_argument('--eval_count_tail_threshold', default=1500.0, type=float,
@@ -3227,6 +3252,12 @@ def sanitize_unstable_training_args(args):
             'model_recipe=vgg_apglc_density_counthead_ft_legacy is a recovery fine-tune recipe and requires '
             '--resume outputs/SHA/vgg16_bn_drop700_apg_lc_seed42/best_checkpoint.pth with --resume_model_only. '
             'Do not use it for fresh scratch training; it can reproduce the old count-head over-count failure.'
+        )
+    if recipe_name == 'vgg_apglc_nwpu_loc_repair_counthead' and fresh_train:
+        raise ValueError(
+            'model_recipe=vgg_apglc_nwpu_loc_repair_counthead is a count-only '
+            'calibration stage and requires a trained NWPU localization-repair '
+            'checkpoint via --resume and --resume_model_only.'
         )
     if count_coef > 0 and fresh_train and not bool(getattr(args, 'allow_count_head_fresh_train', False)):
         print(
@@ -3853,6 +3884,7 @@ def model_only_allowed_missing_prefixes(args):
     needs_count_head = (
         float(getattr(args, 'count_head_loss_coef', 0.0)) > 0
         or getattr(args, 'eval_count_mode', 'threshold') == 'count_head_topk'
+        or getattr(args, 'eval_count_source', 'pet') == 'count_head'
         or getattr(args, 'eval_score_calibration', 'none') == 'count_head_bias'
         or getattr(args, 'eval_dense_residual_mode', 'none') == 'count_head'
     )

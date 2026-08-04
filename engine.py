@@ -661,6 +661,8 @@ def _predict_count_tiled(
         """Single tiled pass; returns (outputs_dict_or_None, count_float)."""
         pts_parts = []
         sc_parts = []
+        owned_scalar_count = 0.0
+        has_owned_scalar_count = False
         for y_index, y0_ in enumerate(y_starts):
             y1_ = min(y0_ + tile_size, img_h)
             owned_y0, owned_y1 = _tile_ownership_bounds(y_starts, y_index, tile_size, img_h)
@@ -672,7 +674,43 @@ def _predict_count_tiled(
                 tile_x1 = (img_w - x0_) if mirror_x else x1_
                 t = _make_tile_nested(carrier, y0_, y1_, tile_x0, tile_x1)
                 th, tw = t.tensors.shape[-2:]
-                out, _ = _predict_count(model, t, targets, epoch=epoch)
+                out, tile_count = _predict_count(model, t, targets, epoch=epoch)
+                if 'count_for_mae' in out:
+                    # Scalar count heads must not be summed over overlapping
+                    # tiles.  Partition their spatial density by the same
+                    # ownership bounds used for point merging.  This keeps the
+                    # count submission independent from localization points and
+                    # makes the head effective on the extreme images that are
+                    # evaluated exclusively through tiling.
+                    density = out.get('count_density')
+                    if torch.is_tensor(density) and density.ndim == 3:
+                        tile_density = density[0].detach().float()
+                        map_h, map_w = tile_density.shape
+                        center_y = (
+                            float(y0_)
+                            + (torch.arange(map_h, device=tile_density.device, dtype=torch.float32) + 0.5)
+                            * (float(th) / max(float(map_h), 1.0))
+                        )
+                        center_x_local = (
+                            (torch.arange(map_w, device=tile_density.device, dtype=torch.float32) + 0.5)
+                            * (float(tw) / max(float(map_w), 1.0))
+                        )
+                        if mirror_x:
+                            center_x = float(x1_) - center_x_local
+                        else:
+                            center_x = float(x0_) + center_x_local
+                        own_y = (center_y >= float(owned_y0)) & (center_y < float(owned_y1))
+                        own_x = (center_x >= float(owned_x0)) & (center_x < float(owned_x1))
+                        owned_scalar_count += float(
+                            tile_density[own_y[:, None] & own_x[None, :]].sum().item()
+                        )
+                    else:
+                        owned_area = max(0.0, float(owned_y1 - owned_y0)) * max(
+                            0.0, float(owned_x1 - owned_x0)
+                        )
+                        tile_area = max(float(th * tw), 1.0)
+                        owned_scalar_count += float(tile_count) * owned_area / tile_area
+                    has_owned_scalar_count = True
                 pts = out['pred_points'][0].detach()
                 if pts.numel() > 0:
                     pts_abs = pts.to(dtype=torch.float32) * pts.new_tensor([float(th), float(tw)])
@@ -717,7 +755,8 @@ def _predict_count_tiled(
         else:
             all_pts = torch.empty((0, 2), dtype=samples.tensors.dtype, device=samples.tensors.device)
 
-        count = float(all_pts.shape[0])
+        point_count = float(all_pts.shape[0])
+        count = owned_scalar_count if has_owned_scalar_count else point_count
         model_h, model_w = samples.tensors.shape[-2:]
         pts_norm = all_pts / all_pts.new_tensor([float(model_h), float(model_w)]) if all_pts.numel() > 0 \
             else torch.empty((0, 2), dtype=samples.tensors.dtype, device=samples.tensors.device)
@@ -727,8 +766,15 @@ def _predict_count_tiled(
         outputs_dict = {
             'pred_logits': logits,
             'pred_points': pts_norm.unsqueeze(0),
-            'eval_count_debug': {'tile_count': float(len(pts_parts)), 'tile_final': count},
+            'eval_count_debug': {
+                'tile_count': float(len(pts_parts)),
+                'tile_point_final': point_count,
+                'tile_final': count,
+                'tile_scalar_used': float(has_owned_scalar_count),
+            },
         }
+        if has_owned_scalar_count:
+            outputs_dict['count_for_mae'] = count
         return outputs_dict, count
 
     # --- Primary pass (original image) ---

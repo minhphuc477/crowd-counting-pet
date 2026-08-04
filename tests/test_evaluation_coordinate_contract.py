@@ -86,6 +86,33 @@ class EvaluationCoordinateContractTest(unittest.TestCase):
             ]),
         )
 
+    def test_tiled_scalar_count_uses_density_ownership_not_point_count(self):
+        class ConstantCountModel(nn.Module):
+            def forward(self, samples, **_kwargs):
+                density = samples.tensors.new_ones((1, 2, 2))
+                return {
+                    'pred_points': samples.tensors.new_empty((1, 0, 2)),
+                    'pred_logits': samples.tensors.new_empty((1, 0, 2)),
+                    'count_density': density,
+                    'count_for_mae': density.flatten(1).sum(dim=1),
+                }
+
+        samples = NestedTensor(
+            torch.zeros(1, 3, 512, 512),
+            torch.zeros(1, 512, 512, dtype=torch.bool),
+        )
+        outputs, count = _predict_count_tiled(
+            ConstantCountModel(),
+            samples,
+            [{'points': torch.empty(0, 2)}],
+            tile_size=256,
+            tile_overlap=0,
+        )
+
+        self.assertEqual(count, 16.0)
+        self.assertEqual(outputs['pred_points'].shape[1], 0)
+        self.assertEqual(outputs['eval_count_debug']['tile_scalar_used'], 1.0)
+
     def test_resized_trigger_predictions_map_back_to_original_image(self):
         source_tensors = torch.zeros(1, 3, 256, 256)
         source_mask = torch.ones(1, 256, 256, dtype=torch.bool)
