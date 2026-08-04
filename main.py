@@ -1564,6 +1564,23 @@ MODEL_RECIPES['vgg_apglc_qnrf_tail_scale_rifi'] = {
     **TRANSFERABLE_SCALE_RIFI_OVERRIDES,
 }
 
+# QNRF reproducibility-first Scale-RIFI.
+#
+# The PET authors' QNRF issue guidance recommends disabling scale jitter,
+# retaining the original 0.5 routing threshold, rejecting empty crops, and
+# removing the single abnormal dense-loss sample.  Keep this as a separate
+# recipe so historical qnrf_tail_scale_rifi checkpoints retain their exact
+# training contract.
+MODEL_RECIPES['vgg_apglc_qnrf_stable_scale_rifi'] = {
+    **MODEL_RECIPES['vgg_apglc_qnrf_tail_scale_rifi'],
+    'patch_size_choices': '256',
+    'no_random_scale': True,
+    'score_threshold': 0.5,
+    'split_threshold': 0.5,
+    'split_threshold_quantile': 0.5,
+    'query_prune_threshold': 0.5,
+}
+
 # QNRF shifted-annotation restoration + the transferable detector core.
 #
 # This recipe deliberately changes no evaluation rule and adds no count prior.
@@ -2019,6 +2036,7 @@ EXPERIMENTAL_MODEL_RECIPES = {
     'vgg_apglc_ebc_router_scale_rifi',
     'vgg_apglc_scale_rifi_counthead_stage2',
     'vgg_apglc_qnrf_tail_scale_rifi',
+    'vgg_apglc_qnrf_stable_scale_rifi',
     'vgg_apglc_qnrf_sae_scale_rifi',
     'vgg_apglc_jhu_tail_scale_rifi',
     'vgg_apglc_ucfcc50_scale_rifi',
@@ -3986,6 +4004,18 @@ class IndexedSubset(torch.utils.data.Dataset):
         return getattr(self.dataset, name)
 
 
+def build_count_sampling_weights(counts, power, max_weight):
+    """Build relative sampling weights, then cap the relative tail weight."""
+    weights = torch.pow(
+        torch.as_tensor(counts, dtype=torch.float64) + 1.0,
+        float(power),
+    )
+    weights = weights / weights.mean().clamp_min(1e-12)
+    if float(max_weight) > 0:
+        weights = weights.clamp(max=float(max_weight))
+    return weights
+
+
 class DistributedReplacementSampler(torch.utils.data.Sampler):
     """Distributed replacement sampler with optional per-sample weights.
 
@@ -4263,12 +4293,12 @@ def main(args):
         distributed_weights = None
         if count_weight_power > 0:
             if hasattr(dataset_train, 'get_sample_counts'):
-                counts = torch.as_tensor(dataset_train.get_sample_counts(), dtype=torch.float64)
-                distributed_weights = torch.pow(counts + 1.0, count_weight_power)
                 max_weight = float(getattr(args, 'train_count_weight_max', 0.0))
-                if max_weight > 0:
-                    distributed_weights = distributed_weights.clamp(max=max_weight)
-                distributed_weights = distributed_weights / distributed_weights.mean().clamp_min(1e-12)
+                distributed_weights = build_count_sampling_weights(
+                    dataset_train.get_sample_counts(),
+                    count_weight_power,
+                    max_weight,
+                )
             elif utils.is_main_process():
                 print('WARNING: --train_count_weight_power requested but dataset has no get_sample_counts')
         if distributed_weights is not None or sample_multiplier > 1.0:
@@ -4309,12 +4339,12 @@ def main(args):
         num_train_samples = max(1, int(math.ceil(len(dataset_train) * sample_multiplier)))
         count_weight_power = float(getattr(args, 'train_count_weight_power', 0.0))
         if count_weight_power > 0 and hasattr(dataset_train, 'get_sample_counts'):
-            counts = torch.as_tensor(dataset_train.get_sample_counts(), dtype=torch.float64)
-            weights = torch.pow(counts + 1.0, count_weight_power)
             max_weight = float(getattr(args, 'train_count_weight_max', 0.0))
-            if max_weight > 0:
-                weights = weights.clamp(max=max_weight)
-            weights = weights / weights.mean().clamp_min(1e-12)
+            weights = build_count_sampling_weights(
+                dataset_train.get_sample_counts(),
+                count_weight_power,
+                max_weight,
+            )
             sampler_train = torch.utils.data.WeightedRandomSampler(
                 weights,
                 num_samples=num_train_samples,
