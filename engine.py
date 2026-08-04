@@ -111,12 +111,23 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
                     data_loader: Iterable, optimizer: torch.optim.Optimizer,
                     device: torch.device, epoch: int, max_norm: float = 0,
                     model_ema=None, model_without_ddp=None, freeze_bn: bool = False,
+                    localization_repair_only: bool = False,
                     amp_enabled: bool = False, scaler=None, accum_iter: int = 1,
                     amp_dtype=None):
     model.train()
     criterion.train()
     accum_iter = max(1, int(accum_iter))
-    if freeze_bn:
+    if localization_repair_only:
+        # Keep all inherited dropout/BatchNorm behavior identical to
+        # checkpoint evaluation. Only the newly introduced repair modules run
+        # in training mode; they use GroupNorm and therefore have no mutable
+        # running statistics.
+        model.eval()
+        repair_model = model_without_ddp if model_without_ddp is not None else model
+        repair_model.large_context_input_proj.train()
+        repair_model.quadtree_sparse.large_context_score_adapter.train()
+        repair_model.quadtree_dense.large_context_score_adapter.train()
+    elif freeze_bn:
         for module in model.modules():
             if isinstance(module, torch.nn.modules.batchnorm._BatchNorm):
                 module.eval()

@@ -98,6 +98,61 @@ def _query_shape_for_image(image_shape, stride):
     return (image_shape + stride // 2 - 1) // stride
 
 
+class LargeContextScoreAdapter(nn.Module):
+    """Zero-initialized confidence correction sampled from the 16x FPN map.
+
+    The adapter changes classification confidence only.  Its final projection
+    starts at exactly zero, so adding it to an existing checkpoint preserves
+    the checkpoint's predictions until the adapter is fine-tuned.
+    """
+
+    def __init__(self, hidden_dim, dilations=(1, 3, 6)):
+        super().__init__()
+        self.branches = nn.ModuleList([
+            nn.Sequential(
+                nn.Conv2d(
+                    hidden_dim,
+                    hidden_dim,
+                    kernel_size=3,
+                    padding=int(dilation),
+                    dilation=int(dilation),
+                    groups=hidden_dim,
+                    bias=False,
+                ),
+                _make_group_norm(hidden_dim),
+                nn.GELU(),
+            )
+            for dilation in dilations
+        ])
+        self.fuse = nn.Sequential(
+            nn.Conv2d(hidden_dim * len(dilations), hidden_dim, kernel_size=1, bias=False),
+            _make_group_norm(hidden_dim),
+            nn.GELU(),
+        )
+        self.logit_delta = nn.Conv2d(hidden_dim, 2, kernel_size=1)
+        nn.init.zeros_(self.logit_delta.weight)
+        nn.init.zeros_(self.logit_delta.bias)
+
+    def forward(self, feature, points_yx, image_shape):
+        if points_yx.numel() == 0:
+            return feature.new_empty((feature.shape[0], 0, 2))
+        context = self.fuse(torch.cat([branch(feature) for branch in self.branches], dim=1))
+        logits = self.logit_delta(context)
+        image_h, image_w = image_shape
+        grid_x = 2.0 * points_yx[:, 1].to(logits.dtype) / max(float(image_w - 1), 1.0) - 1.0
+        grid_y = 2.0 * points_yx[:, 0].to(logits.dtype) / max(float(image_h - 1), 1.0) - 1.0
+        grid = torch.stack((grid_x, grid_y), dim=-1).view(1, 1, -1, 2)
+        grid = grid.expand(logits.shape[0], -1, -1, -1)
+        sampled = F.grid_sample(
+            logits,
+            grid,
+            mode='bilinear',
+            padding_mode='border',
+            align_corners=True,
+        )
+        return sampled[:, :, 0, :].transpose(1, 2).contiguous()
+
+
 class BasePETCount(nn.Module):
     """ 
     Base PET model
@@ -118,6 +173,22 @@ class BasePETCount(nn.Module):
             nn.init.constant_(self.class_embed.bias, 0.0)
             self.class_embed.bias.data[1:] = bias_value
         self.coord_embed = MLP(hidden_dim, hidden_dim, 2, 3)
+        context_adapter = getattr(args, 'large_context_score_adapter', 'none')
+        if context_adapter == 'none':
+            self.large_context_score_adapter = None
+        elif context_adapter == 'pyramid16':
+            self.large_context_score_adapter = LargeContextScoreAdapter(
+                hidden_dim,
+                dilations=_parse_positive_int_list(
+                    getattr(args, 'large_context_dilations', '1,3,6'),
+                    (1, 3, 6),
+                    'large_context_dilations',
+                ),
+            )
+        else:
+            raise ValueError(
+                'large_context_score_adapter must be one of "none" or "pyramid16"'
+            )
 
         self.pq_stride = args.sparse_stride if quadtree_layer == 'sparse' else args.dense_stride
         self.feat_name = '8x' if quadtree_layer == 'sparse' else '4x'
@@ -406,6 +477,23 @@ class BasePETCount(nn.Module):
         Crowd prediction
         """
         outputs_class = self.class_embed(hs)
+        context_feature = kwargs.get('large_context_feature')
+        if self.large_context_score_adapter is not None:
+            if context_feature is None:
+                raise ValueError('pyramid16 score adapter requires a 16x context feature')
+            logit_delta = self.large_context_score_adapter(
+                context_feature,
+                points_queries,
+                samples.tensors.shape[-2:],
+            )
+            if outputs_class[-1].ndim == 2:
+                if logit_delta.shape[0] != 1:
+                    raise ValueError('unbatched PET logits require batch_size=1 context')
+                outputs_class = outputs_class.clone()
+                outputs_class[-1] = outputs_class[-1] + logit_delta[0]
+            else:
+                outputs_class = outputs_class.clone()
+                outputs_class[-1] = outputs_class[-1] + logit_delta
         # normalize to 0~1
         outputs_offsets = (self.coord_embed(hs).sigmoid() - 0.5) * 2.0
 
@@ -428,6 +516,8 @@ class BasePETCount(nn.Module):
     
         out['points_queries'] = points_queries
         out['pq_stride'] = self.pq_stride
+        if self.large_context_score_adapter is not None:
+            out['large_context_logit_delta'] = logit_delta[0] if out['pred_logits'].ndim == 2 else logit_delta
         return out
 
     def forward(
@@ -468,7 +558,14 @@ class BasePETCount(nn.Module):
 
         # prediction
         points_queries = pqs[1]
-        outputs = self.predict(samples, points_queries, hs, **kwargs)
+        large_context = features.get('16x')
+        outputs = self.predict(
+            samples,
+            points_queries,
+            hs,
+            large_context_feature=None if large_context is None else large_context.tensors,
+            **kwargs,
+        )
         return outputs
     
 
@@ -1252,6 +1349,19 @@ class PET(nn.Module):
             nn.Conv2d(backbone.num_channels, hidden_dim, kernel_size=1),
             ]
         )
+        self.large_context_score_adapter = getattr(args, 'large_context_score_adapter', 'none')
+        if self.large_context_score_adapter == 'pyramid16':
+            self.large_context_input_proj = nn.Conv2d(
+                backbone.num_channels,
+                hidden_dim,
+                kernel_size=1,
+            )
+        elif self.large_context_score_adapter == 'none':
+            self.large_context_input_proj = None
+        else:
+            raise ValueError(
+                'large_context_score_adapter must be one of "none" or "pyramid16"'
+            )
         scale_fusion = getattr(args, 'scale_fusion', 'none')
         if scale_fusion == 'none':
             self.scale_fusion = None
@@ -1745,6 +1855,34 @@ class PET(nn.Module):
         self.apg_soft_pos_k = max(1, int(getattr(args, 'apg_soft_pos_k', 4)))
         self.apg_soft_sigma = float(getattr(args, 'apg_soft_sigma', 6.0))
         self.apg_soft_point_coef = float(getattr(args, 'apg_soft_point_coef', 2.0))
+        self.large_head_coverage_loss_coef = max(
+            0.0,
+            float(getattr(args, 'large_head_coverage_loss_coef', 0.0)),
+        )
+        self.large_head_coverage_min_sigma = max(
+            1.0,
+            float(getattr(args, 'large_head_coverage_min_sigma', 32.0)),
+        )
+        self.large_head_coverage_max_targets = max(
+            1,
+            int(getattr(args, 'large_head_coverage_max_targets', 96)),
+        )
+        self.inference_alignment_loss_coef = max(
+            0.0,
+            float(getattr(args, 'inference_alignment_loss_coef', 0.0)),
+        )
+        self.inference_alignment_candidate_ratio = max(
+            1.0,
+            float(getattr(args, 'inference_alignment_candidate_ratio', 1.25)),
+        )
+        self.inference_alignment_max_candidates = max(
+            1,
+            int(getattr(args, 'inference_alignment_max_candidates', 2048)),
+        )
+        self.inference_alignment_point_coef = max(
+            0.0,
+            float(getattr(args, 'inference_alignment_point_coef', 0.2)),
+        )
         self.ifi_point_coef = float(getattr(args, 'ifi_point_coef', 1.0))
         self.ifi_point_loss_type = getattr(args, 'ifi_point_loss_type', 'smooth_l1')
         if self.ifi_point_loss_type not in ('smooth_l1', 'mse'):
@@ -2256,6 +2394,109 @@ class PET(nn.Module):
         per_anchor = -(log_probability * positive_mask).sum(dim=1) / positive_count.clamp(min=1)
         return per_anchor[valid_anchor].mean()
 
+    def compute_large_head_coverage_loss(self, output, targets):
+        """Encourage at least one confident prediction inside each large GT radius."""
+        logits = output['pred_logits']
+        pred_points = output['pred_points']
+        img_h, img_w = output['img_shape']
+        person_prob = logits.softmax(dim=-1)[..., 1]
+        losses = []
+        for batch_idx, target in enumerate(targets):
+            gt_points = target['points'].to(device=pred_points.device, dtype=torch.float32)
+            sigma = target.get('sigma')
+            if gt_points.numel() == 0 or sigma is None or pred_points.shape[1] == 0:
+                continue
+            sigma = sigma.to(device=pred_points.device, dtype=torch.float32)
+            sigma_l = sigma[:, -1].clamp_min(1.0)
+            large_indices = torch.nonzero(
+                sigma_l >= self.large_head_coverage_min_sigma,
+                as_tuple=False,
+            ).flatten()
+            if large_indices.numel() == 0:
+                continue
+            if large_indices.numel() > self.large_head_coverage_max_targets:
+                # Deterministically prioritize the heads with the largest
+                # support, which are the failure mode targeted by this loss.
+                order = sigma_l[large_indices].argsort(descending=True)
+                large_indices = large_indices[order[:self.large_head_coverage_max_targets]]
+            gt_points = gt_points[large_indices]
+            sigma_l = sigma_l[large_indices]
+            pred_abs = pred_points[batch_idx].float().clone()
+            pred_abs[:, 0] *= float(img_h)
+            pred_abs[:, 1] *= float(img_w)
+            distance = torch.cdist(gt_points, pred_abs, p=2)
+            spatial_quality = torch.exp(-0.5 * (distance / sigma_l[:, None]).pow(2))
+            joint_quality = spatial_quality * person_prob[batch_idx].float()[None, :]
+            best_quality = joint_quality.max(dim=1).values.clamp_min(1e-6)
+            losses.append(-best_quality.log().mean())
+        if not losses:
+            return logits.sum() * 0.0
+        return torch.stack(losses).mean()
+
+    def compute_inference_alignment_loss(self, output, targets, matcher):
+        """Match only confidence-ranked candidates, as inference will see them.
+
+        Standard Hungarian training can assign a low-confidence proposal that
+        is removed by the score threshold at test time.  This auxiliary first
+        selects the highest person scores, then performs the same matcher and
+        supervises matched and unmatched candidates explicitly.
+        """
+        logits = output['pred_logits']
+        pred_points = output['pred_points']
+        img_h, img_w = output['img_shape']
+        losses = []
+        for batch_idx, target in enumerate(targets):
+            target_count = int(target['points'].shape[0])
+            query_count = int(logits.shape[1])
+            if target_count == 0 or query_count == 0:
+                continue
+            candidate_count = min(
+                query_count,
+                self.inference_alignment_max_candidates,
+                max(target_count, int(math.ceil(target_count * self.inference_alignment_candidate_ratio))),
+            )
+            scores = logits[batch_idx].detach().softmax(dim=-1)[:, 1]
+            selected_idx = scores.topk(candidate_count, largest=True).indices
+            selected = {
+                'pred_logits': logits[batch_idx:batch_idx + 1, selected_idx],
+                'pred_points': pred_points[batch_idx:batch_idx + 1, selected_idx],
+                'img_shape': output['img_shape'],
+            }
+            query_points = output.get('points_queries')
+            if query_points is not None:
+                if query_points.ndim == 3:
+                    selected['points_queries'] = query_points[batch_idx:batch_idx + 1, selected_idx]
+                else:
+                    selected['points_queries'] = query_points[selected_idx]
+            match_src, match_tgt = matcher(selected, [target])[0]
+            class_target = torch.zeros(candidate_count, dtype=torch.long, device=logits.device)
+            class_target[match_src] = 1
+            class_raw = F.cross_entropy(selected['pred_logits'][0], class_target, reduction='none')
+            class_weight = torch.full_like(class_raw, 0.25)
+            class_weight[match_src] = 1.0
+            loss = (class_raw * class_weight).sum() / class_weight.sum().clamp_min(1.0)
+            if match_src.numel() > 0 and self.inference_alignment_point_coef > 0:
+                pred_abs = selected['pred_points'][0, match_src].float().clone()
+                pred_abs[:, 0] *= float(img_h)
+                pred_abs[:, 1] *= float(img_w)
+                gt_abs = target['points'][match_tgt].to(device=pred_abs.device, dtype=torch.float32)
+                sigma = target.get('sigma')
+                if sigma is not None and sigma.shape[0] == target['points'].shape[0]:
+                    scale = sigma[match_tgt, -1].to(device=pred_abs.device, dtype=torch.float32)
+                    scale = scale.clamp_min(2.0)
+                else:
+                    scale = pred_abs.new_full((match_src.numel(),), 8.0)
+                point_loss = F.smooth_l1_loss(
+                    pred_abs / scale[:, None],
+                    gt_abs / scale[:, None],
+                    reduction='none',
+                ).sum(dim=1).mean()
+                loss = loss + self.inference_alignment_point_coef * point_loss
+            losses.append(loss)
+        if not losses:
+            return logits.sum() * 0.0
+        return torch.stack(losses).mean()
+
     def compute_loss(self, outputs, criterion, targets, epoch, samples):
         """
         Compute loss, including:
@@ -2310,6 +2551,29 @@ class PET(nn.Module):
         weight_dict = dict()
         weight_dict.update(weight_dict_sparse)
         weight_dict.update(weight_dict_dense)
+
+        if self.large_head_coverage_loss_coef > 0:
+            coverage_sparse = self.compute_large_head_coverage_loss(output_sparse, targets_sparse)
+            coverage_dense = self.compute_large_head_coverage_loss(output_dense, targets_dense)
+            loss_coverage = coverage_sparse + coverage_dense
+            loss_dict['loss_large_head_coverage'] = loss_coverage
+            weight_dict['loss_large_head_coverage'] = self.large_head_coverage_loss_coef
+            losses += loss_coverage * self.large_head_coverage_loss_coef
+        if self.inference_alignment_loss_coef > 0:
+            align_sparse = self.compute_inference_alignment_loss(
+                output_sparse,
+                targets_sparse,
+                criterion.matcher,
+            )
+            align_dense = self.compute_inference_alignment_loss(
+                output_dense,
+                targets_dense,
+                criterion.matcher,
+            )
+            loss_alignment = align_sparse + align_dense
+            loss_dict['loss_inference_alignment'] = loss_alignment
+            weight_dict['loss_inference_alignment'] = self.inference_alignment_loss_coef
+            losses += loss_alignment * self.inference_alignment_loss_coef
 
         if self.local_density_mixer is not None:
             local_losses = self.compute_local_density_losses(outputs, targets, samples)
@@ -4263,6 +4527,13 @@ class PET(nn.Module):
         # feature projection
         features['4x'] = NestedTensor(self.input_proj[0](features['4x'].tensors), features['4x'].mask)
         features['8x'] = NestedTensor(self.input_proj[1](features['8x'].tensors), features['8x'].mask)
+        if self.large_context_input_proj is not None:
+            if '16x' not in features:
+                raise ValueError('pyramid16 score adapter requires a backbone 16x feature')
+            features['16x'] = NestedTensor(
+                self.large_context_input_proj(features['16x'].tensors),
+                features['16x'].mask,
+            )
         if self.scale_fusion is not None:
             fused_4x, fused_8x = self.scale_fusion(features['4x'].tensors, features['8x'].tensors)
             features['4x'] = NestedTensor(fused_4x, features['4x'].mask)

@@ -1989,6 +1989,35 @@ MODEL_RECIPES['vgg_apglc_nwpu_tail_rifi'] = {
     **TRANSFERABLE_SCALE_RIFI_OVERRIDES,
 }
 
+# NWPU large-head localization repair.
+#
+# This is a checkpoint fine-tuning recipe, not a replacement for the verified
+# Tail-RIFI detector.  It exposes the VGG-FPN 16x context map that legacy PET
+# discarded and learns a zero-initialized confidence residual.  The inherited
+# detector is frozen by default.  Coverage supervision targets large-sigma
+# heads, while ranked augmented matching aligns training positives with the
+# confidence filtering used at inference.
+MODEL_RECIPES['vgg_apglc_nwpu_loc_repair_rifi'] = {
+    **MODEL_RECIPES['vgg_apglc_nwpu_tail_rifi'],
+    'large_context_score_adapter': 'pyramid16',
+    'large_context_dilations': '1,3,6',
+    'large_head_coverage_loss_coef': 0.05,
+    'large_head_coverage_min_sigma': 32.0,
+    'large_head_coverage_max_targets': 96,
+    'inference_alignment_loss_coef': 0.02,
+    'inference_alignment_candidate_ratio': 1.25,
+    'inference_alignment_max_candidates': 2048,
+    'inference_alignment_point_coef': 0.0,
+    'patch_size_choices': '256,384,512',
+    'nwpu_context_crop_prob': 0.35,
+    'nwpu_context_crop_min_sigma': 32.0,
+    'apg_loss_coef': 0.0,
+    'ifi_loss_coef': 0.0,
+    'scale_point_loss_coef': 0.0,
+    'train_localization_repair_only': True,
+    'freeze_bn': True,
+}
+
 MODEL_RECIPES['vgg_apglc_branch_ifi_counthead_stage2_nwpu'] = {
     **MODEL_RECIPES['vgg_apglc_counthead_stage2_nwpu'],
     'query_feature_interpolation': 'implicit',
@@ -2031,6 +2060,7 @@ EXPERIMENTAL_MODEL_RECIPES = {
     'vgg_apglc_density_routed_ifi',
     'vgg_apglc_density_routed_ifi_nwpu',
     'vgg_apglc_nwpu_tail_rifi',
+    'vgg_apglc_nwpu_loc_repair_rifi',
     'vgg_apglc_rifi',
     'vgg_apglc_scale_rifi',
     'vgg_apglc_ebc_router_scale_rifi',
@@ -2147,6 +2177,8 @@ ARCHITECTURE_OVERRIDE_KEYS = {
     'query_ifi_branch_scope',
     'query_ifi_residual',
     'query_ifi_residual_init',
+    'large_context_score_adapter',
+    'large_context_dilations',
     'ifi_interpolation',
     'ifi_feature_source',
     'ifi_pos_dim',
@@ -2701,6 +2733,25 @@ def get_args_parser():
                         help='pixel sigma for Gaussian soft APG classification targets')
     parser.add_argument('--apg_soft_point_coef', default=2.0, type=float,
                         help='point-regression coefficient inside Gaussian soft APG')
+    parser.add_argument('--large_context_score_adapter', default='none',
+                        choices=('none', 'pyramid16'),
+                        help='zero-initialized 16x FPN confidence adapter for large-context localization')
+    parser.add_argument('--large_context_dilations', default='1,3,6', type=str,
+                        help='comma-separated dilation rates in the 16x confidence adapter')
+    parser.add_argument('--large_head_coverage_loss_coef', default=0.0, type=float,
+                        help='large-sigma GT coverage loss weight; 0 disables it')
+    parser.add_argument('--large_head_coverage_min_sigma', default=32.0, type=float,
+                        help='minimum target sigma_l in pixels supervised by coverage loss')
+    parser.add_argument('--large_head_coverage_max_targets', default=96, type=int,
+                        help='maximum large heads supervised per image and branch')
+    parser.add_argument('--inference_alignment_loss_coef', default=0.0, type=float,
+                        help='confidence-ranked augmented matching loss weight; 0 disables it')
+    parser.add_argument('--inference_alignment_candidate_ratio', default=1.25, type=float,
+                        help='ranked candidates per GT used by inference-aligned matching')
+    parser.add_argument('--inference_alignment_max_candidates', default=2048, type=int,
+                        help='candidate cap for inference-aligned matching')
+    parser.add_argument('--inference_alignment_point_coef', default=0.2, type=float,
+                        help='scale-normalized point term inside inference-aligned matching')
     parser.add_argument('--query_feature_interpolation', default='nearest', choices=('nearest', 'implicit'),
                         help='point-query feature extraction: PET nearest-cell lookup or APGCC-style implicit interpolation')
     parser.add_argument('--query_ifi_sharing', default='independent', choices=('independent', 'shared'),
@@ -2964,6 +3015,10 @@ def get_args_parser():
                         help='NWPU train only: probability of choosing the densest crop among random candidates')
     parser.add_argument('--nwpu_dense_crop_attempts', default=16, type=int,
                         help='NWPU train only: candidates for dense crop selection')
+    parser.add_argument('--nwpu_context_crop_prob', default=0.0, type=float,
+                        help='NWPU train only: probability of a sigma-aware large-head context crop')
+    parser.add_argument('--nwpu_context_crop_min_sigma', default=32.0, type=float,
+                        help='minimum sigma_l eligible to anchor an NWPU context crop')
     parser.add_argument('--train_count_weight_power', default=0.0, type=float,
                         help='sample training images with weight (count+1)^power; 0 keeps uniform sampling')
     parser.add_argument('--train_count_weight_max', default=8.0, type=float,
@@ -2982,6 +3037,8 @@ def get_args_parser():
                         help='load only model weights from --resume and reset optimizer/scheduler/epoch counters')
     parser.add_argument('--resume_allow_arch_change', action='store_true',
                         help='with --resume_model_only, allow explicitly passed architecture flags to override checkpoint args')
+    parser.add_argument('--train_localization_repair_only', action='store_true',
+                        help='freeze the inherited detector and train only the new 16x localization-repair adapter')
     parser.add_argument('--allow_output_overwrite', action='store_true',
                         help='explicitly permit writing a resumed run into an unrelated non-empty output directory')
     parser.add_argument('--start_epoch', default=0, type=int, metavar='N',
@@ -3430,6 +3487,7 @@ def merge_checkpoint_args(args, checkpoint):
         'patch_size', 'patch_size_choices', 'crop_attempts', 'min_crop_points',
         'no_random_scale',
         'nwpu_dense_crop_prob', 'nwpu_dense_crop_attempts',
+        'nwpu_context_crop_prob', 'nwpu_context_crop_min_sigma',
         'train_count_weight_power', 'train_count_weight_max', 'train_sample_multiplier',
         'no_localization_metrics', 'localization_large_threshold', 'localization_small_threshold',
         'localization_protocol', 'localization_large_scale', 'localization_small_scale',
@@ -3537,6 +3595,11 @@ def merge_checkpoint_args(args, checkpoint):
             'apg_contrastive_coef', 'apg_neg_k', 'apg_margin',
             'apg_consistency_coef', 'apg_consistency_k', 'apg_consistency_sigma',
             'apg_soft_loss_coef', 'apg_soft_pos_k', 'apg_soft_sigma', 'apg_soft_point_coef',
+            'large_head_coverage_loss_coef', 'large_head_coverage_min_sigma',
+            'large_head_coverage_max_targets',
+            'inference_alignment_loss_coef', 'inference_alignment_candidate_ratio',
+            'inference_alignment_max_candidates', 'inference_alignment_point_coef',
+            'train_localization_repair_only',
             'query_feature_interpolation', 'query_ifi_sharing', 'query_ifi_feature_source',
             'query_ifi_branch_scope',
             'query_ifi_residual', 'query_ifi_residual_init',
@@ -3825,6 +3888,12 @@ def model_only_allowed_missing_prefixes(args):
         ))
     if float(getattr(args, 'ifi_loss_coef', 0.0)) > 0 and getattr(args, 'ifi_head_source', 'separate') == 'separate':
         prefixes.extend(('ifi_cls_embed.', 'ifi_coord_embed.'))
+    if getattr(args, 'large_context_score_adapter', 'none') != 'none':
+        prefixes.extend((
+            'large_context_input_proj.',
+            'quadtree_sparse.large_context_score_adapter.',
+            'quadtree_dense.large_context_score_adapter.',
+        ))
     return tuple(prefixes)
 
 
@@ -3924,6 +3993,28 @@ def set_count_head_only_trainability(model_without_ddp):
             trainable += param.numel()
         else:
             frozen += param.numel()
+    return trainable, frozen
+
+
+def set_localization_repair_only_trainability(model_without_ddp):
+    repair_prefixes = (
+        'large_context_input_proj.',
+        'quadtree_sparse.large_context_score_adapter.',
+        'quadtree_dense.large_context_score_adapter.',
+    )
+    trainable, frozen = 0, 0
+    for name, param in model_without_ddp.named_parameters():
+        is_repair = any(name.startswith(prefix) for prefix in repair_prefixes)
+        param.requires_grad_(is_repair)
+        if is_repair:
+            trainable += param.numel()
+        else:
+            frozen += param.numel()
+    if trainable == 0:
+        raise ValueError(
+            '--train_localization_repair_only requires '
+            '--large_context_score_adapter pyramid16'
+        )
     return trainable, frozen
 
 
@@ -4181,6 +4272,18 @@ def main(args):
         trainable_count, frozen_count = set_count_head_only_trainability(model_without_ddp)
         if utils.is_main_process():
             print(f'count-head-only training: trainable_params={trainable_count} frozen_params={frozen_count}')
+    if getattr(args, 'train_localization_repair_only', False):
+        if getattr(args, 'train_count_head_only', False):
+            raise ValueError(
+                '--train_count_head_only and --train_localization_repair_only '
+                'cannot be enabled together'
+            )
+        trainable_count, frozen_count = set_localization_repair_only_trainability(model_without_ddp)
+        if utils.is_main_process():
+            print(
+                'localization-repair-only training: '
+                f'trainable_params={trainable_count} frozen_params={frozen_count}'
+            )
     if args.distributed:
         model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu], find_unused_parameters=True)
         model_without_ddp = model.module
@@ -4875,6 +4978,7 @@ def main(args):
             model, criterion, data_loader_train, optimizer, device, epoch,
             args.clip_max_norm, model_ema=model_ema, model_without_ddp=model_without_ddp,
             freeze_bn=getattr(args, 'freeze_bn', False),
+            localization_repair_only=getattr(args, 'train_localization_repair_only', False),
             amp_enabled=amp_enabled,
             scaler=scaler,
             amp_dtype=amp_dtype,

@@ -388,6 +388,7 @@ class BackboneBase_VGG(nn.Module):
                 self.body = nn.Sequential(*features[:44])  # 16x down-sample
         self.num_channels = num_channels
         self.return_interm_layers = return_interm_layers
+        self.return_context_16x = getattr(args, 'large_context_score_adapter', 'none') != 'none'
         self.fpn = FeatsFusion(
             256,
             512,
@@ -420,6 +421,7 @@ class BackboneBase_VGG(nn.Module):
             features_fpn = self.fpn([feats[1], feats[2], feats[3]])
             features_fpn_4x = features_fpn[0]
             features_fpn_8x = features_fpn[1]
+            features_fpn_16x = features_fpn[2]
 
             # get tensor mask
             m = tensor_list.mask
@@ -430,6 +432,12 @@ class BackboneBase_VGG(nn.Module):
             out: Dict[str, NestedTensor] = {}
             out['4x'] = NestedTensor(features_fpn_4x, mask_4x)
             out['8x'] = NestedTensor(features_fpn_8x, mask_8x)
+            if self.return_context_16x:
+                mask_16x = F.interpolate(
+                    m[None].float(),
+                    size=features_fpn_16x.shape[-2:],
+                ).to(torch.bool)[0]
+                out['16x'] = NestedTensor(features_fpn_16x, mask_16x)
         else:
             xs = self.body(tensor_list)
             out.append(xs)

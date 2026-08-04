@@ -1,4 +1,5 @@
 import json
+import math
 import os
 import random
 from pathlib import Path
@@ -6,6 +7,7 @@ from pathlib import Path
 import numpy as np
 import scipy.io as io
 import torch
+import torch.nn.functional as F
 import torchvision.transforms as standard_transforms
 from PIL import Image
 from torch.utils.data import Dataset
@@ -39,6 +41,8 @@ class NWPU(Dataset):
         require_official_sigma=False,
         dense_crop_prob=0.0,
         dense_crop_attempts=16,
+        context_crop_prob=0.0,
+        context_crop_min_sigma=32.0,
         no_random_scale=False,
     ):
         self.root_path = str(data_root)
@@ -56,6 +60,8 @@ class NWPU(Dataset):
         self.require_official_sigma = bool(require_official_sigma)
         self.dense_crop_prob = max(0.0, min(1.0, float(dense_crop_prob)))
         self.dense_crop_attempts = max(1, int(dense_crop_attempts))
+        self.context_crop_prob = max(0.0, min(1.0, float(context_crop_prob)))
+        self.context_crop_min_sigma = max(1.0, float(context_crop_min_sigma))
         self.no_random_scale = bool(no_random_scale)
         self.official_localization = load_official_localization_data(
             self.data_root / f'{split}_gt_loc.txt'
@@ -212,7 +218,20 @@ class NWPU(Dataset):
                 point_records = points
             if not self.no_random_scale:
                 img, point_records = safe_random_scale(img, point_records, patch_size)
-            if point_records.shape[0] > 0 and random.random() < self.dense_crop_prob:
+            use_context_crop = (
+                sigma_valid
+                and point_records.shape[0] > 0
+                and random.random() < self.context_crop_prob
+                and (point_records[:, -1] >= self.context_crop_min_sigma).any()
+            )
+            if use_context_crop:
+                img, point_records = large_head_context_crop(
+                    img,
+                    point_records,
+                    patch_size=patch_size,
+                    min_sigma=self.context_crop_min_sigma,
+                )
+            elif point_records.shape[0] > 0 and random.random() < self.dense_crop_prob:
                 img, point_records = max_count_random_crop(
                     img,
                     point_records,
@@ -478,6 +497,52 @@ def max_count_random_crop(img, points, patch_size=256, attempts=16):
     return best_img, best_points
 
 
+def large_head_context_crop(img, point_records, patch_size=256, min_sigma=32.0):
+    """Crop around a large annotated head without discarding its surroundings."""
+    candidates = np.flatnonzero(point_records[:, -1] >= float(min_sigma))
+    if candidates.size == 0:
+        return random_crop(img, point_records, patch_size)
+    sigma_l = point_records[candidates, -1]
+    weights = sigma_l / np.maximum(sigma_l.sum(), 1e-6)
+    anchor_index = int(np.random.choice(candidates, p=weights))
+    anchor_y, anchor_x = point_records[anchor_index, :2]
+    patch_h = patch_w = int(patch_size)
+    image_h, image_w = img.shape[-2:]
+    jitter_y = random.uniform(-0.2, 0.2) * patch_h
+    jitter_x = random.uniform(-0.2, 0.2) * patch_w
+    start_h = int(round(anchor_y - patch_h * 0.5 + jitter_y))
+    start_w = int(round(anchor_x - patch_w * 0.5 + jitter_x))
+    start_h = min(max(start_h, 0), max(image_h - patch_h, 0))
+    start_w = min(max(start_w, 0), max(image_w - patch_w, 0))
+    end_h = start_h + patch_h
+    end_w = start_w + patch_w
+    keep = (
+        (point_records[:, 0] >= start_h)
+        & (point_records[:, 0] < end_h)
+        & (point_records[:, 1] >= start_w)
+        & (point_records[:, 1] < end_w)
+    )
+    cropped = img[:, start_h:end_h, start_w:end_w]
+    records = point_records[keep].copy()
+    if records.shape[0] > 0:
+        records[:, 0] -= start_h
+        records[:, 1] -= start_w
+    crop_h, crop_w = cropped.shape[-2:]
+    scale_h = patch_h / float(crop_h)
+    scale_w = patch_w / float(crop_w)
+    cropped = F.interpolate(
+        cropped.unsqueeze(0),
+        size=(patch_h, patch_w),
+        mode='bilinear',
+        align_corners=False,
+    ).squeeze(0)
+    if records.shape[0] > 0:
+        records[:, 0] *= scale_h
+        records[:, 1] *= scale_w
+        records[:, 2:] *= math.sqrt(scale_h * scale_w)
+    return cropped, records
+
+
 def _as_numeric_array(value):
     try:
         arr = np.asarray(value)
@@ -718,6 +783,8 @@ def build(image_set, args):
             sigma_mode=getattr(args, 'nwpu_sigma_mode', 'official'),
             dense_crop_prob=getattr(args, 'nwpu_dense_crop_prob', 0.0),
             dense_crop_attempts=getattr(args, 'nwpu_dense_crop_attempts', 16),
+            context_crop_prob=getattr(args, 'nwpu_context_crop_prob', 0.0),
+            context_crop_min_sigma=getattr(args, 'nwpu_context_crop_min_sigma', 32.0),
             no_random_scale=getattr(args, 'no_random_scale', False),
         )
     if image_set == 'train_eval':
