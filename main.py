@@ -4412,7 +4412,8 @@ def main(args):
         if validation_protocol == 'final_test_once':
             print(
                 'final-test protocol: the benchmark test split will be '
-                'evaluated only after the last training epoch'
+                'evaluated only after the last training epoch; --eval_freq '
+                'and --eval_start_epoch do not schedule intermediate evaluations'
             )
 
     # output directory and log

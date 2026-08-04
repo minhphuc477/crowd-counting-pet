@@ -492,10 +492,14 @@ def get_args_parser():
     parser.add_argument('--checkpoint_model_key', default='auto',
                         choices=('auto', 'model', 'model_ema', 'model_raw'),
                         help='checkpoint state to evaluate; auto prefers model_ema when present')
-    parser.add_argument('--tta_flip', action='store_true',
+    parser.add_argument('--tta_flip', dest='tta_flip', action='store_true', default=False,
                         help='average original and horizontal-flip predicted counts at evaluation time')
-    parser.add_argument('--tile_tta_flip', action='store_true',
+    parser.add_argument('--no_tta_flip', dest='tta_flip', action='store_false',
+                        help='disable horizontal-flip TTA even when it was enabled in the checkpoint')
+    parser.add_argument('--tile_tta_flip', dest='tile_tta_flip', action='store_true', default=False,
                         help='per-tile horizontal-flip TTA during tiled eval; doubles tile forward passes')
+    parser.add_argument('--no_tile_tta_flip', dest='tile_tta_flip', action='store_false',
+                        help='disable tiled horizontal-flip TTA even when it was enabled in the checkpoint')
     parser.add_argument('--tta_scales', default='1.0',
                         help='comma-separated eval scales; dimensions are rounded to PET-compatible 256 multiples')
     parser.add_argument('--eval_protocol', default='pet', choices=('pet', 'crowd_no_overlap'),
@@ -761,6 +765,22 @@ def main(args):
         )
 
     print(args)
+    print(
+        'resolved eval config: '
+        f"score={getattr(args, 'score_threshold', None)} "
+        f"split={getattr(args, 'split_threshold', None)} "
+        f"max_size={getattr(args, 'eval_max_size', None)} "
+        f"tile_size={getattr(args, 'eval_tile_size', None)} "
+        f"tile_overlap={getattr(args, 'eval_tile_overlap', None)} "
+        f"tile_nms={getattr(args, 'eval_tile_nms_radius', None)} "
+        f"tile_merge={getattr(args, 'eval_tile_merge_mode', None)} "
+        f"tile_trigger_count={getattr(args, 'eval_tile_trigger_count', None)} "
+        f"tile_trigger_area={getattr(args, 'eval_tile_trigger_area', None)} "
+        f"tile_max_tiles={getattr(args, 'eval_tile_max_tiles', None)} "
+        f"tta_flip={getattr(args, 'tta_flip', None)} "
+        f"tile_tta_flip={getattr(args, 'tile_tta_flip', None)} "
+        f"tta_scales={getattr(args, 'tta_scales', None)}"
+    )
 
     # build model
     model, criterion = build_model(args)
@@ -980,4 +1000,8 @@ if __name__ == '__main__':
         for token in sys.argv[1:]
         if token.startswith('--')
     }
+    if 'no_tta_flip' in args._explicit_args:
+        args._explicit_args.add('tta_flip')
+    if 'no_tile_tta_flip' in args._explicit_args:
+        args._explicit_args.add('tile_tta_flip')
     main(args)
