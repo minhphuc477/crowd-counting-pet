@@ -1061,6 +1061,10 @@ def evaluate(
                 'abs_error': float(mae),
                 'sq_error': float(mse_sq),
             }
+            row.update({
+                f'dbg_{key}': float(value)
+                for key, value in eval_count_debug.items()
+            })
             if localization_metrics:
                 row.update(per_image_loc)
             per_image_rows.append(row)
