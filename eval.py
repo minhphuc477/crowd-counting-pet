@@ -471,6 +471,8 @@ def get_args_parser():
                         help='pixel overlap between eval tiles; 0 gives non-overlap tiling')
     parser.add_argument('--eval_tile_nms_radius', default=0.0, type=float,
                         help='optional cross-tile NMS radius in pixels for overlapped tiled eval')
+    parser.add_argument('--eval_tile_merge_mode', default='nms', choices=('nms', 'ownership'),
+                        help='merge overlapping tiles with legacy global NMS or disjoint ownership cores')
     parser.add_argument('--eval_tile_min_gt', default=0, type=int,
                         help='prohibited legacy oracle option; use a prediction/area trigger instead')
     parser.add_argument('--eval_tile_max_tiles', default=0, type=int,
@@ -535,7 +537,7 @@ def merge_checkpoint_args(args, checkpoint):
     explicit_only_runtime_keys = {
         'eval_max_size',
         'nwpu_sigma_mode',
-        'eval_tile_size', 'eval_tile_overlap', 'eval_tile_nms_radius',
+        'eval_tile_size', 'eval_tile_overlap', 'eval_tile_nms_radius', 'eval_tile_merge_mode',
         'eval_tile_min_gt', 'eval_tile_max_tiles', 'eval_tile_trigger_count', 'eval_tile_trigger_area',
         'override_score_threshold', 'override_split_threshold', 'override_split_threshold_quantile',
         'override_query_prune_threshold',
@@ -870,6 +872,7 @@ def main(args):
             eval_tile_max_tiles=args.eval_tile_max_tiles,
             eval_tile_trigger_count=args.eval_tile_trigger_count,
             eval_tile_trigger_area=args.eval_tile_trigger_area,
+            eval_tile_merge_mode=args.eval_tile_merge_mode,
         )
         mae, mse = test_stats['mae'], test_stats['mse']
     loc_text = format_localization_metrics(test_stats, prefix=', ')
@@ -939,6 +942,7 @@ def main(args):
             'eval_tile_size': int(getattr(args, 'eval_tile_size', 0)),
             'eval_tile_overlap': int(getattr(args, 'eval_tile_overlap', 0)),
             'eval_tile_nms_radius': float(getattr(args, 'eval_tile_nms_radius', 0.0)),
+            'eval_tile_merge_mode': str(getattr(args, 'eval_tile_merge_mode', 'nms')),
             'eval_tile_min_gt': int(getattr(args, 'eval_tile_min_gt', 0)),
             'eval_tile_max_tiles': int(getattr(args, 'eval_tile_max_tiles', 0)),
             'eval_tile_trigger_count': float(getattr(args, 'eval_tile_trigger_count', 0.0)),

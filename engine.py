@@ -522,6 +522,28 @@ def _tile_starts(length, tile_size, overlap):
     return starts
 
 
+def _tile_ownership_bounds(starts, index, tile_size, image_size):
+    """Return the non-overlapping global interval owned by one tile.
+
+    The midpoint of each overlap assigns every image position to exactly one
+    tile. This removes duplicate tile predictions without global point NMS,
+    which can incorrectly suppress distinct heads in very dense crowds.
+    """
+    start = int(starts[index])
+    end = min(start + int(tile_size), int(image_size))
+    if index == 0:
+        owned_start = 0.0
+    else:
+        previous_end = min(int(starts[index - 1]) + int(tile_size), int(image_size))
+        owned_start = 0.5 * (float(start) + float(previous_end))
+    if index == len(starts) - 1:
+        owned_end = float(image_size)
+    else:
+        next_start = int(starts[index + 1])
+        owned_end = 0.5 * (float(end) + float(next_start))
+    return owned_start, owned_end
+
+
 def _make_tile_nested(samples, y0, y1, x0, x1):
     tile = samples.tensors[:, :, y0:y1, x0:x1]
     _, channels, tile_h, tile_w = tile.shape
@@ -590,6 +612,7 @@ def _predict_count_tiled(
     tile_overlap=0,
     tile_nms_radius=0.0,
     tile_tta_flip=False,
+    tile_merge_mode='nms',
 ):
     """Tiled inference with optional horizontal-flip TTA via count averaging.
 
@@ -611,6 +634,11 @@ def _predict_count_tiled(
     img_h, img_w = _valid_hw(samples)
     tile_size = max(1, int(tile_size))
     tile_overlap = max(0, int(tile_overlap))
+    tile_merge_mode = str(tile_merge_mode)
+    if tile_merge_mode not in ('nms', 'ownership'):
+        raise ValueError("tile_merge_mode must be one of 'nms' or 'ownership'")
+    y_starts = _tile_starts(img_h, tile_size, tile_overlap)
+    x_starts = _tile_starts(img_w, tile_size, tile_overlap)
 
     # ------------------------------------------------------------------ #
     #  Helper: run one complete tiled pass on a carrier NestedTensor and  #
@@ -622,10 +650,12 @@ def _predict_count_tiled(
         """Single tiled pass; returns (outputs_dict_or_None, count_float)."""
         pts_parts = []
         sc_parts = []
-        for y0_ in _tile_starts(img_h, tile_size, tile_overlap):
+        for y_index, y0_ in enumerate(y_starts):
             y1_ = min(y0_ + tile_size, img_h)
-            for x0_ in _tile_starts(img_w, tile_size, tile_overlap):
+            owned_y0, owned_y1 = _tile_ownership_bounds(y_starts, y_index, tile_size, img_h)
+            for x_index, x0_ in enumerate(x_starts):
                 x1_ = min(x0_ + tile_size, img_w)
+                owned_x0, owned_x1 = _tile_ownership_bounds(x_starts, x_index, tile_size, img_w)
                 # For the flip pass, extract from the mirror column position
                 tile_x0 = (img_w - x1_) if mirror_x else x0_
                 tile_x1 = (img_w - x0_) if mirror_x else x1_
@@ -643,16 +673,36 @@ def _predict_count_tiled(
                         pts_abs[:, 1] = float(x1_ - 1) - pts_abs[:, 1]
                     else:
                         pts_abs[:, 1] += float(x0_)
-                    pts_parts.append(pts_abs)
-                    if 'pred_logits' in out and out['pred_logits'].numel() > 0:
-                        sc_parts.append(torch.softmax(out['pred_logits'][0].detach(), dim=-1)[:, 1])
+                    if tile_merge_mode == 'ownership':
+                        owned = (
+                            (pts_abs[:, 0] >= owned_y0)
+                            & (pts_abs[:, 0] < owned_y1)
+                            & (pts_abs[:, 1] >= owned_x0)
+                            & (pts_abs[:, 1] < owned_x1)
+                        )
+                        pts_abs = pts_abs[owned]
+                        if 'pred_logits' in out and out['pred_logits'].numel() > 0:
+                            tile_scores = torch.softmax(out['pred_logits'][0].detach(), dim=-1)[:, 1][owned]
+                        else:
+                            tile_scores = torch.ones(
+                                pts_abs.shape[0], dtype=torch.float32, device=pts_abs.device
+                            )
+                    elif 'pred_logits' in out and out['pred_logits'].numel() > 0:
+                        tile_scores = torch.softmax(out['pred_logits'][0].detach(), dim=-1)[:, 1]
                     else:
-                        sc_parts.append(torch.ones(pts_abs.shape[0], dtype=torch.float32, device=pts_abs.device))
+                        tile_scores = torch.ones(
+                            pts_abs.shape[0], dtype=torch.float32, device=pts_abs.device
+                        )
+                    if pts_abs.numel() == 0:
+                        continue
+                    pts_parts.append(pts_abs)
+                    sc_parts.append(tile_scores)
 
         if pts_parts:
             all_pts = torch.cat(pts_parts, dim=0)
             all_sc = torch.cat(sc_parts, dim=0) if sc_parts else None
-            all_pts = _nms_points_abs(all_pts, scores=all_sc, radius=tile_nms_radius)
+            if tile_merge_mode == 'nms':
+                all_pts = _nms_points_abs(all_pts, scores=all_sc, radius=tile_nms_radius)
         else:
             all_pts = torch.empty((0, 2), dtype=samples.tensors.dtype, device=samples.tensors.device)
 
@@ -764,6 +814,7 @@ def evaluate(
     eval_tile_max_tiles=0,
     eval_tile_trigger_count=0.0,
     eval_tile_trigger_area=0,
+    eval_tile_merge_mode='nms',
 ):
     if int(eval_tile_min_gt or 0) > 0:
         raise ValueError(
@@ -884,6 +935,7 @@ def evaluate(
                 tile_overlap=eval_tile_overlap,
                 tile_nms_radius=eval_tile_nms_radius,
                 tile_tta_flip=tile_tta_flip,
+                tile_merge_mode=eval_tile_merge_mode,
             )
             output_samples = samples
             eval_count_debug.update(outputs.get('eval_count_debug', {}))

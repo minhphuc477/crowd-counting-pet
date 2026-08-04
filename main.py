@@ -2902,6 +2902,8 @@ def get_args_parser():
                         help='pixel overlap between eval tiles; 0 gives non-overlap tiling')
     parser.add_argument('--eval_tile_nms_radius', default=0.0, type=float,
                         help='optional cross-tile NMS radius in pixels for overlapped tiled eval')
+    parser.add_argument('--eval_tile_merge_mode', default='nms', choices=('nms', 'ownership'),
+                        help='merge overlapping tiles with legacy global NMS or disjoint ownership cores')
     parser.add_argument('--eval_tile_min_gt', default=0, type=int,
                         help='prohibited legacy oracle option; use a prediction/area trigger instead')
     parser.add_argument('--eval_tile_max_tiles', default=0, type=int,
@@ -3432,7 +3434,7 @@ def merge_checkpoint_args(args, checkpoint):
         'no_localization_metrics', 'localization_large_threshold', 'localization_small_threshold',
         'localization_protocol', 'localization_large_scale', 'localization_small_scale',
         'eval_count_source', 'eval_count_blend_alpha', 'eval_count_tail_threshold',
-        'eval_tile_size', 'eval_tile_overlap', 'eval_tile_nms_radius',
+        'eval_tile_size', 'eval_tile_overlap', 'eval_tile_nms_radius', 'eval_tile_merge_mode',
         'eval_tile_min_gt', 'eval_tile_max_tiles',
         'eval_tile_trigger_count', 'eval_tile_trigger_area',
         'score_threshold', 'split_threshold', 'split_threshold_quantile', 'query_prune_threshold',
@@ -4696,6 +4698,7 @@ def main(args):
                 eval_tile_max_tiles=args.eval_tile_max_tiles,
                 eval_tile_trigger_count=args.eval_tile_trigger_count,
                 eval_tile_trigger_area=args.eval_tile_trigger_area,
+                eval_tile_merge_mode=args.eval_tile_merge_mode,
             )
         t2 = time.time()
         print("\n==========================")
@@ -4956,6 +4959,7 @@ def main(args):
                     eval_tile_max_tiles=args.eval_tile_max_tiles,
                     eval_tile_trigger_count=args.eval_tile_trigger_count,
                     eval_tile_trigger_area=args.eval_tile_trigger_area,
+                    eval_tile_merge_mode=args.eval_tile_merge_mode,
                 )
             t2 = time.time()
 
@@ -5045,6 +5049,7 @@ def main(args):
                     'eval_tile_size': int(getattr(args, 'eval_tile_size', 0)),
                     'eval_tile_overlap': int(getattr(args, 'eval_tile_overlap', 0)),
                     'eval_tile_nms_radius': float(getattr(args, 'eval_tile_nms_radius', 0.0)),
+                    'eval_tile_merge_mode': str(getattr(args, 'eval_tile_merge_mode', 'nms')),
                     'eval_tile_min_gt': int(getattr(args, 'eval_tile_min_gt', 0)),
                     'eval_tile_max_tiles': int(getattr(args, 'eval_tile_max_tiles', 0)),
                     'eval_tile_trigger_count': float(getattr(args, 'eval_tile_trigger_count', 0.0)),

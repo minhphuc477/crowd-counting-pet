@@ -6,12 +6,28 @@ from torch import nn
 from engine import (
     _pred_points_to_image_pixels,
     _predict_count_tiled,
+    _tile_ownership_bounds,
+    _tile_starts,
     _valid_hw,
 )
 from util.misc import NestedTensor
 
 
 class EvaluationCoordinateContractTest(unittest.TestCase):
+    def test_tile_ownership_partitions_image_without_gaps(self):
+        for image_size in (1537, 3000, 6000):
+            starts = _tile_starts(image_size, tile_size=1536, overlap=128)
+            bounds = [
+                _tile_ownership_bounds(starts, index, 1536, image_size)
+                for index in range(len(starts))
+            ]
+            self.assertEqual(bounds[0][0], 0.0)
+            self.assertEqual(bounds[-1][1], float(image_size))
+            for current, following in zip(bounds, bounds[1:]):
+                self.assertEqual(current[1], following[0])
+            for lower, upper in bounds:
+                self.assertLess(lower, upper)
+
     def test_predictions_are_denormalized_with_model_padding(self):
         tensors = torch.zeros(1, 3, 256, 512)
         mask = torch.ones(1, 256, 512, dtype=torch.bool)
