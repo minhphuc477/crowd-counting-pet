@@ -1,0 +1,18 @@
+{
+  "ok": true,
+  "backbone": "convnextv2_base",
+  "dir": "convnextv2_base_fpn_paper",
+  "checkpoint": "outputs/SHA/convnextv2_base_fpn_paper/best_checkpoint.pth",
+  "checkpoint_name": "best_checkpoint.pth",
+  "eval_epoch": 295,
+  "eval_mae": 56.47802197802198,
+  "eval_mse": 91.6421312485705,
+  "returncode": 0,
+  "error": null,
+  "log_path": "outputs/SHA/results/convnextv2_base_fpn_paper/eval_log.txt",
+  "evaluated_at": "2026-05-31T23:23:59",
+  "train_best_mae": 56.47802197802198,
+  "train_best_mse": 91.6421312485705,
+  "best_epoch": 295,
+  "checkpoint_epoch": 295
+}

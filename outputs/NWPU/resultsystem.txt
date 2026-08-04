@@ -1,0 +1,24 @@
+submission_fix_area0.txt
+ 
+
+Overall results
+Overall mae	76.882
+Overall mse	323.522
+Overall nae	0.182883
+ 
+
+Luminance details
+Luminance level	mae	mse	nae
+[0, 0.25]	211.024	700.293	0.226217
+(0.25, 0.5]	71.6187	302.597	0.190337
+(0.5, 0.75]	60.5925	227.014	0.147581
+(0.75, 1.0]	Nan	Nan	Nan
+ 
+
+Crowd details
+Crowd level	mae	mse	nae
+Negative Sample (0)	42.534	267.338	Nan
+(0, 100]	9.48643	14.1341	0.252489
+(100, 500]	34.3761	56.8239	0.147001
+(500, 5000]	186.686	318.834	0.151132
+More Than 5000	2169.81	2748.06	0.298415

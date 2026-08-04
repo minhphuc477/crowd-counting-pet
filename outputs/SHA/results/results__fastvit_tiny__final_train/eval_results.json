@@ -1,0 +1,18 @@
+{
+  "ok": true,
+  "backbone": "fastvit_tiny",
+  "dir": "results/fastvit_tiny/final_train",
+  "checkpoint": "outputs/SHA/results/fastvit_tiny/final_train/best_checkpoint.pth",
+  "checkpoint_name": "best_checkpoint.pth",
+  "eval_epoch": 315,
+  "eval_mae": 72.53296703296704,
+  "eval_mse": 120.7419598943171,
+  "returncode": 0,
+  "error": null,
+  "log_path": "outputs/SHA/results/results__fastvit_tiny__final_train/eval_log.txt",
+  "evaluated_at": "2026-05-22T20:44:01",
+  "train_best_mae": 72.53296703296704,
+  "train_best_mse": 120.7419598943171,
+  "best_epoch": 315,
+  "checkpoint_epoch": 315
+}

@@ -1,0 +1,15 @@
+{
+  "epoch": 165,
+  "test_mae": 1000.2857142857143,
+  "test_mse": 1157.9693954846653,
+  "pred_cnt": 1433.5934065934066,
+  "gt_cnt": 433.3076923076923,
+  "best_epoch": 115,
+  "best_test_mae": 459.31868131868134,
+  "best_test_mse": 545.1070264908262,
+  "improved": false,
+  "eval_time": 8.671252965927124,
+  "eval_model": "raw",
+  "eval_count_mode": "threshold",
+  "eval_count_head_min_score": 0.0
+}

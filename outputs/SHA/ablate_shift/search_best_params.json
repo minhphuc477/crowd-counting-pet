@@ -1,0 +1,13 @@
+{
+  "backbone": "convnextv2_base",
+  "batch_size": 1,
+  "lr": 1.0838581269344744e-05,
+  "lr_backbone": 1.0838581269344744e-05,
+  "weight_decay": 0.0003142880890840109,
+  "clip_max_norm": 0.05,
+  "accum_iter": 2,
+  "use_amp": true,
+  "best_mae": 150.2802276611328,
+  "best_epoch": 5,
+  "best_threshold": 0.5
+}

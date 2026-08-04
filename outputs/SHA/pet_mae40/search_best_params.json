@@ -1,0 +1,13 @@
+{
+  "backbone": "swinv2_small_window8_256",
+  "batch_size": 2,
+  "lr": 0.0003946212980759095,
+  "lr_backbone": 3.313483615508954e-05,
+  "weight_decay": 6.218704727769077e-05,
+  "clip_max_norm": 0.05,
+  "accum_iter": 4,
+  "use_amp": true,
+  "best_mae": 116.36813354492188,
+  "best_epoch": 9,
+  "best_threshold": 0.5
+}

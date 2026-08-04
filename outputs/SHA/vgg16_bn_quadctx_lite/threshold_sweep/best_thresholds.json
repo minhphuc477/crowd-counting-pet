@@ -1,0 +1,15 @@
+{
+  "score_threshold": 0.5,
+  "split_threshold": 0.5,
+  "returncode": 0,
+  "elapsed_sec": 11.76718020439148,
+  "results_file": "/home/tan/crowd-counting-pet/outputs/SHA/vgg16_bn_quadctx_lite/threshold_sweep/score_0p5_split_0p5.json",
+  "log_file": "/home/tan/crowd-counting-pet/outputs/SHA/vgg16_bn_quadctx_lite/threshold_sweep/score_0p5_split_0p5.log",
+  "epoch": 150,
+  "eval_mae": 333.3241758241758,
+  "eval_mse": 465.86159690677175,
+  "pred_cnt": 120.53296703296704,
+  "gt_cnt": 433.9010989010989,
+  "checkpoint": "outputs/SHA/vgg16_bn_quadctx_lite/best_checkpoint.pth",
+  "ok": true
+}

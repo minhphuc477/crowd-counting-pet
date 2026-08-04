@@ -1,0 +1,18 @@
+{
+  "ok": true,
+  "backbone": "convnext_tiny",
+  "dir": "results/convnext_tiny/final_train",
+  "checkpoint": "outputs/SHA/results/convnext_tiny/final_train/best_checkpoint.pth",
+  "checkpoint_name": "best_checkpoint.pth",
+  "eval_epoch": 570,
+  "eval_mae": 54.862637362637365,
+  "eval_mse": 91.19852153226131,
+  "returncode": 0,
+  "error": null,
+  "log_path": "outputs/SHA/results/results__convnext_tiny__final_train/eval_log.txt",
+  "evaluated_at": "2026-05-22T20:41:12",
+  "train_best_mae": 54.862637362637365,
+  "train_best_mse": 91.19852153226131,
+  "best_epoch": 570,
+  "checkpoint_epoch": 570
+}

@@ -1,0 +1,10 @@
+{
+  "epoch": 450,
+  "test_mae": 54.065934065934066,
+  "test_mse": 86.04675447710946,
+  "best_epoch": 450,
+  "best_test_mae": 54.065934065934066,
+  "best_test_mse": 86.04675447710946,
+  "final": true,
+  "eval_model": "auto"
+}

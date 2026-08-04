@@ -1,0 +1,9 @@
+{
+  "epoch": 20,
+  "aborted": true,
+  "reason": "bad-count guard triggered: over-count pred_cnt=2107.9176 gt_cnt=433.3077 ratio=4.865 mae=1674.6099 (limits: ratio>=2.000, mae>=200.0000)",
+  "test_mae": 1674.60989010989,
+  "test_mse": 1884.9246261200594,
+  "pred_cnt": 2107.9175824175823,
+  "gt_cnt": 433.3076923076923
+}

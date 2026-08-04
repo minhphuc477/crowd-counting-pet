@@ -1,0 +1,20 @@
+{
+  "score_threshold": 0.62,
+  "split_threshold": 0.5,
+  "eval_nms_radius": 0.0,
+  "eval_branch_gate": "none",
+  "eval_protocol": "pet",
+  "tta_flip": false,
+  "returncode": 0,
+  "elapsed_sec": 11.634794473648071,
+  "results_file": "/home/tan/crowd-counting-pet/outputs/SHA/threshold_sweep/score_0p62_split_0p5_nms_0_gate_none.json",
+  "log_file": "/home/tan/crowd-counting-pet/outputs/SHA/threshold_sweep/score_0p62_split_0p5_nms_0_gate_none.log",
+  "epoch": 860,
+  "eval_mae": 52.27472527472528,
+  "eval_mse": 84.24069388065666,
+  "pred_cnt": 423.5824175824176,
+  "gt_cnt": 433.3076923076923,
+  "checkpoint": "outputs/SHA/best_checkpoint.pth",
+  "eval_model": "model",
+  "ok": true
+}
