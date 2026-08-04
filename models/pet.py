@@ -1867,6 +1867,18 @@ class PET(nn.Module):
             1,
             int(getattr(args, 'large_head_coverage_max_targets', 96)),
         )
+        self.large_head_coverage_missed_threshold = min(
+            1.0,
+            max(0.0, float(getattr(args, 'large_head_coverage_missed_threshold', 0.55))),
+        )
+        self.large_context_preservation_loss_coef = max(
+            0.0,
+            float(getattr(args, 'large_context_preservation_loss_coef', 0.0)),
+        )
+        self.large_context_preservation_radius = max(
+            1.0,
+            float(getattr(args, 'large_context_preservation_radius', 16.0)),
+        )
         self.inference_alignment_loss_coef = max(
             0.0,
             float(getattr(args, 'inference_alignment_loss_coef', 0.0)),
@@ -2395,11 +2407,16 @@ class PET(nn.Module):
         return per_anchor[valid_anchor].mean()
 
     def compute_large_head_coverage_loss(self, output, targets):
-        """Encourage at least one confident prediction inside each large GT radius."""
+        """Recover large GTs missed by the inherited detector confidence."""
         logits = output['pred_logits']
         pred_points = output['pred_points']
         img_h, img_w = output['img_shape']
         person_prob = logits.softmax(dim=-1)[..., 1]
+        logit_delta = output.get('large_context_logit_delta')
+        if logit_delta is None:
+            base_person_prob = person_prob.detach()
+        else:
+            base_person_prob = (logits - logit_delta).detach().softmax(dim=-1)[..., 1]
         losses = []
         for batch_idx, target in enumerate(targets):
             gt_points = target['points'].to(device=pred_points.device, dtype=torch.float32)
@@ -2426,11 +2443,59 @@ class PET(nn.Module):
             pred_abs[:, 1] *= float(img_w)
             distance = torch.cdist(gt_points, pred_abs, p=2)
             spatial_quality = torch.exp(-0.5 * (distance / sigma_l[:, None]).pow(2))
+            inherited_quality = (
+                spatial_quality * base_person_prob[batch_idx].float()[None, :]
+            ).max(dim=1).values
+            missed = inherited_quality < self.large_head_coverage_missed_threshold
+            if not missed.any():
+                continue
+            spatial_quality = spatial_quality[missed]
             joint_quality = spatial_quality * person_prob[batch_idx].float()[None, :]
             best_quality = joint_quality.max(dim=1).values.clamp_min(1e-6)
             losses.append(-best_quality.log().mean())
         if not losses:
             return logits.sum() * 0.0
+        return torch.stack(losses).mean()
+
+    def compute_large_context_preservation_loss(self, output, targets):
+        """Prevent positive confidence residuals far from every annotation."""
+        logit_delta = output.get('large_context_logit_delta')
+        query_points = output.get('points_queries')
+        if logit_delta is None or query_points is None or logit_delta.numel() == 0:
+            return output['pred_logits'].sum() * 0.0
+        img_h, img_w = output['img_shape']
+        delta_margin = logit_delta[..., 1] - logit_delta[..., 0]
+        losses = []
+        for batch_idx, target in enumerate(targets):
+            gt_points = target['points'].to(device=delta_margin.device, dtype=torch.float32)
+            if query_points.ndim == 3:
+                query_abs = query_points[batch_idx].float().clone()
+            else:
+                query_abs = query_points.float().clone()
+            query_abs[:, 0] *= float(img_h)
+            query_abs[:, 1] *= float(img_w)
+            margin = delta_margin[batch_idx].float()
+            if gt_points.numel() == 0:
+                background = torch.ones_like(margin, dtype=torch.bool)
+            else:
+                min_distance_parts = []
+                for start in range(0, query_abs.shape[0], 512):
+                    distance = torch.cdist(
+                        query_abs[start:start + 512],
+                        gt_points,
+                        p=2,
+                    )
+                    min_distance_parts.append(distance.min(dim=1).values)
+                min_distance = torch.cat(min_distance_parts)
+                background = min_distance > self.large_context_preservation_radius
+            global_drift = 0.05 * margin.square().mean()
+            if background.any():
+                false_positive_drift = F.relu(margin[background]).square().mean()
+                losses.append(false_positive_drift + global_drift)
+            else:
+                losses.append(global_drift)
+        if not losses:
+            return output['pred_logits'].sum() * 0.0
         return torch.stack(losses).mean()
 
     def compute_inference_alignment_loss(self, output, targets, matcher):
@@ -2559,6 +2624,19 @@ class PET(nn.Module):
             loss_dict['loss_large_head_coverage'] = loss_coverage
             weight_dict['loss_large_head_coverage'] = self.large_head_coverage_loss_coef
             losses += loss_coverage * self.large_head_coverage_loss_coef
+        if self.large_context_preservation_loss_coef > 0:
+            preserve_sparse = self.compute_large_context_preservation_loss(
+                output_sparse,
+                targets_sparse,
+            )
+            preserve_dense = self.compute_large_context_preservation_loss(
+                output_dense,
+                targets_dense,
+            )
+            loss_preservation = preserve_sparse + preserve_dense
+            loss_dict['loss_large_context_preservation'] = loss_preservation
+            weight_dict['loss_large_context_preservation'] = self.large_context_preservation_loss_coef
+            losses += loss_preservation * self.large_context_preservation_loss_coef
         if self.inference_alignment_loss_coef > 0:
             align_sparse = self.compute_inference_alignment_loss(
                 output_sparse,

@@ -2001,15 +2001,18 @@ MODEL_RECIPES['vgg_apglc_nwpu_loc_repair_rifi'] = {
     **MODEL_RECIPES['vgg_apglc_nwpu_tail_rifi'],
     'large_context_score_adapter': 'pyramid16',
     'large_context_dilations': '1,3,6',
-    'large_head_coverage_loss_coef': 0.05,
+    'large_head_coverage_loss_coef': 0.015,
     'large_head_coverage_min_sigma': 32.0,
     'large_head_coverage_max_targets': 96,
+    'large_head_coverage_missed_threshold': 0.55,
+    'large_context_preservation_loss_coef': 0.05,
+    'large_context_preservation_radius': 16.0,
     'inference_alignment_loss_coef': 0.02,
     'inference_alignment_candidate_ratio': 1.25,
     'inference_alignment_max_candidates': 2048,
     'inference_alignment_point_coef': 0.0,
     'patch_size_choices': '256,384,512',
-    'nwpu_context_crop_prob': 0.35,
+    'nwpu_context_crop_prob': 0.15,
     'nwpu_context_crop_min_sigma': 32.0,
     'apg_loss_coef': 0.0,
     'ifi_loss_coef': 0.0,
@@ -2744,6 +2747,12 @@ def get_args_parser():
                         help='minimum target sigma_l in pixels supervised by coverage loss')
     parser.add_argument('--large_head_coverage_max_targets', default=96, type=int,
                         help='maximum large heads supervised per image and branch')
+    parser.add_argument('--large_head_coverage_missed_threshold', default=0.55, type=float,
+                        help='inherited-detector quality below which a large GT is treated as missed')
+    parser.add_argument('--large_context_preservation_loss_coef', default=0.0, type=float,
+                        help='teacher-preserving penalty for positive adapter drift on background')
+    parser.add_argument('--large_context_preservation_radius', default=16.0, type=float,
+                        help='pixel exclusion radius around GT for adapter background preservation')
     parser.add_argument('--inference_alignment_loss_coef', default=0.0, type=float,
                         help='confidence-ranked augmented matching loss weight; 0 disables it')
     parser.add_argument('--inference_alignment_candidate_ratio', default=1.25, type=float,
@@ -3596,7 +3605,8 @@ def merge_checkpoint_args(args, checkpoint):
             'apg_consistency_coef', 'apg_consistency_k', 'apg_consistency_sigma',
             'apg_soft_loss_coef', 'apg_soft_pos_k', 'apg_soft_sigma', 'apg_soft_point_coef',
             'large_head_coverage_loss_coef', 'large_head_coverage_min_sigma',
-            'large_head_coverage_max_targets',
+            'large_head_coverage_max_targets', 'large_head_coverage_missed_threshold',
+            'large_context_preservation_loss_coef', 'large_context_preservation_radius',
             'inference_alignment_loss_coef', 'inference_alignment_candidate_ratio',
             'inference_alignment_max_candidates', 'inference_alignment_point_coef',
             'train_localization_repair_only',
