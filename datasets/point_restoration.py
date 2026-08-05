@@ -201,13 +201,19 @@ class QNRFShiftRestorationDataset(Dataset):
             image = image.transpose(Image.FLIP_LEFT_RIGHT)
             points[:, 0] = (self.crop_size - 1) - points[:, 0]
 
+        # SAE supervises a discrete restoration field.  Match the reference
+        # implementation: annotations and shifted locations index image pixels.
+        points_int = np.rint(points).astype(np.int64)
+        points_int[:, 0] = np.clip(points_int[:, 0], 0, self.crop_size - 1)
+        points_int[:, 1] = np.clip(points_int[:, 1], 0, self.crop_size - 1)
         angle = np.random.uniform(0.0, 2.0 * np.pi, size=points.shape[0])
         magnitude = np.random.uniform(0.0, 1.0, size=points.shape[0]) * radii
         shift_xy = np.stack((magnitude * np.cos(angle), magnitude * np.sin(angle)), axis=1)
         shifted = points + shift_xy
+        shifted = np.rint(shifted).astype(np.int64)
         shifted[:, 0] = np.clip(shifted[:, 0], 0, self.crop_size - 1)
         shifted[:, 1] = np.clip(shifted[:, 1], 0, self.crop_size - 1)
-        inverse_shift = points - shifted
+        inverse_shift = points_int - shifted
 
         image_tensor = TF.to_tensor(image)
         image_tensor = TF.normalize(image_tensor, IMAGENET_MEAN, IMAGENET_STD)

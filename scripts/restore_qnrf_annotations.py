@@ -167,6 +167,7 @@ def main():
             points = original.copy()
             points[:, 0] = np.clip(points[:, 0], 0, width - 1)
             points[:, 1] = np.clip(points[:, 1], 0, height - 1)
+            points_int = np.rint(points).astype(np.float32)
             radii = restoration_radii(points, alpha=alpha)
             tiles, owners = assign_points_to_tiles(
                 points,
@@ -193,7 +194,7 @@ def main():
                     enabled=amp_enabled,
                 ):
                     vector_field = model(image_tensor)
-                local_yx = points[point_indices][:, ::-1].copy()
+                local_yx = points_int[point_indices][:, ::-1].copy()
                 local_yx[:, 0] -= top
                 local_yx[:, 1] -= left
                 local_yx_tensor = torch.from_numpy(local_yx).to(device=device, dtype=torch.float32)
@@ -206,7 +207,7 @@ def main():
                 sample_clipped += clipped
                 displacement[point_indices] = predicted_yx.cpu().numpy()[:, ::-1]
 
-            restored = points + displacement
+            restored = np.rint(points_int + displacement)
             restored[:, 0] = np.clip(restored[:, 0], 0, width - 1)
             restored[:, 1] = np.clip(restored[:, 1], 0, height - 1)
             if restored.shape[0] != original.shape[0] or not np.isfinite(restored).all():

@@ -49,7 +49,15 @@ def parse_args():
     parser.add_argument('--alpha', default=0.4, type=float)
     parser.add_argument('--scale_min', default=0.7, type=float)
     parser.add_argument('--scale_max', default=1.3, type=float)
-    parser.add_argument('--holdout_fraction', default=0.1, type=float)
+    parser.add_argument(
+        '--holdout_fraction',
+        default=0.0,
+        type=float,
+        help=(
+            'fraction excluded from restorer training; 0 uses the complete QNRF '
+            'training split and matches the published SAE protocol'
+        ),
+    )
     parser.add_argument('--holdout_seed', default=42, type=int)
     parser.add_argument('--seed', default=42, type=int)
     parser.add_argument('--num_workers', default=2, type=int)
@@ -58,7 +66,12 @@ def parse_args():
     parser.add_argument('--no_pretrained_backbone', action='store_true')
     parser.add_argument('--resume', default='')
     parser.add_argument('--save_freq', default=10, type=int)
-    parser.add_argument('--max_grad_norm', default=5.0, type=float)
+    parser.add_argument(
+        '--max_grad_norm',
+        default=0.0,
+        type=float,
+        help='gradient clipping threshold; 0 disables clipping as in the SAE reference code',
+    )
     return parser.parse_args()
 
 
@@ -89,12 +102,26 @@ def batch_restoration_loss(vector_fields, batch, device):
     for batch_index, sample in enumerate(batch):
         points = sample['shifted_points_yx'].to(device=device, dtype=torch.float32)
         target = sample['inverse_shift_yx'].to(device=device, dtype=torch.float32)
+        # The reference implementation writes supervision into a dense mask.
+        # If shifted points collide, the last annotation owns that pixel.
+        width = int(vector_fields.shape[-1])
+        linear = (points[:, 0].long() * width + points[:, 1].long()).tolist()
+        owner = {}
+        for point_index, pixel_index in enumerate(linear):
+            owner[pixel_index] = point_index
+        keep = torch.as_tensor(
+            sorted(owner.values()),
+            device=device,
+            dtype=torch.long,
+        )
+        points = points.index_select(0, keep)
+        target = target.index_select(0, keep)
         prediction = sample_vector_field(vector_fields[batch_index].float(), points)
-        image_losses.append((prediction - target).square().sum(dim=1).mean())
-        point_count += int(points.shape[0])
+        image_losses.append((prediction - target).square().sum())
+        point_count += int(keep.numel())
     if not image_losses:
         raise RuntimeError('annotation restoration batch contains no supervised points')
-    return torch.stack(image_losses).mean(), point_count
+    return torch.stack(image_losses).sum(), point_count
 
 
 def main():
@@ -206,9 +233,10 @@ def main():
             ):
                 vector_fields = model(images)
                 loss, point_count = batch_restoration_loss(vector_fields, batch, device)
-            group_start = (step // args.accum_iter) * args.accum_iter
-            group_size = min(args.accum_iter, len(loader) - group_start)
-            scaler.scale(loss / group_size).backward()
+            # The published SAE objective is a sum over supervised vector-field
+            # pixels. Accumulation therefore sums microbatches to reproduce the
+            # gradient of one larger batch; dividing here would change the loss.
+            scaler.scale(loss).backward()
             should_step = (step + 1) % args.accum_iter == 0 or step + 1 == len(loader)
             if should_step:
                 if args.max_grad_norm > 0:
@@ -219,11 +247,11 @@ def main():
                 optimizer.zero_grad(set_to_none=True)
 
             batch_images = len(batch)
-            running_loss += float(loss.detach()) * batch_images
+            running_loss += float(loss.detach())
             running_images += batch_images
             running_points += point_count
 
-        train_loss = running_loss / max(running_images, 1)
+        train_loss = running_loss / max(running_points, 1)
         record = {
             'epoch': epoch,
             'train_loss': train_loss,

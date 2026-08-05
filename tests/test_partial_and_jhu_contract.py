@@ -13,6 +13,7 @@ from datasets.JHU import build as build_jhu
 from datasets.JHU import load_jhu_annotation
 from datasets.NWPU import build as build_nwpu
 from datasets.NWPU import _sigma_from_boxes
+from datasets.QNRF import _file_sha256 as qnrf_file_sha256
 from datasets.QNRF import build as build_qnrf
 from datasets.QNRF import load_points as load_qnrf_points
 from datasets.QNRF import resize_long_side
@@ -76,6 +77,15 @@ class PartialAnnotationContractTests(unittest.TestCase):
         self.assertEqual(valid.tolist(), [True, False, True, False])
         indices = HungarianMatcher(1.0, 1.0)(outputs, [target])
         self.assertTrue(set(indices[0][0].tolist()).issubset({0, 2}))
+
+    def test_qnrf_override_hashing_is_available(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'annotation.mat'
+            path.write_bytes(b'qnrf-annotation')
+            self.assertEqual(
+                qnrf_file_sha256(path),
+                '34a22895179d4755d1f39e492d24d32d667b77388aabcc32229e3b8c46fe444b',
+            )
 
 
 class JHUContractTests(unittest.TestCase):
