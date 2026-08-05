@@ -5069,6 +5069,12 @@ def main(args):
             else scheduled_eval
         )
         if should_evaluate:
+            # Training uses small variable-size crops while NWPU validation
+            # switches to substantially larger full/tiled images. Release
+            # only unused allocator cache at this phase boundary to reduce
+            # fragmentation; live tensors and model state are unaffected.
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
             validation_data_loader_generator.manual_seed(validation_seed)
             t1 = time.time()
             eval_model, eval_model_name = select_eval_model(model, model_without_ddp, model_ema, args)

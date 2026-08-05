@@ -205,6 +205,10 @@ class MetricLogger(object):
         data_time = SmoothedValue(fmt='{avg:.4f}')
         space_fmt = ':' + str(len(str(len(iterable)))) + 'd'
         if torch.cuda.is_available():
+            # Report a phase-local peak. Without this reset, "max mem" is the
+            # lifetime process peak and can only increase across train/eval,
+            # which makes normal CUDA caching look like a memory leak.
+            torch.cuda.reset_peak_memory_stats()
             log_msg = self.delimiter.join([
                 header,
                 '[{0' + space_fmt + '}/{1}]',
@@ -212,6 +216,7 @@ class MetricLogger(object):
                 '{meters}',
                 'time: {time}',
                 'data: {data}',
+                'mem alloc/reserved: {allocated:.0f}/{reserved:.0f}',
                 'max mem: {memory:.0f}'
             ])
         else:
@@ -237,6 +242,8 @@ class MetricLogger(object):
                         i, len(iterable), eta=eta_string,
                         meters=meters,
                         time=str(iter_time), data=str(data_time),
+                        allocated=torch.cuda.memory_allocated() / MB,
+                        reserved=torch.cuda.memory_reserved() / MB,
                         memory=torch.cuda.max_memory_allocated() / MB))
                 else:
                     print(log_msg.format(

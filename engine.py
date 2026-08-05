@@ -189,6 +189,14 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
 
         metric_logger.update(loss=loss_value, **loss_dict_reduced_scaled, **loss_dict_reduced_unscaled)
         metric_logger.update(lr=optimizer.param_groups[0]["lr"])
+
+        # Do not retain the previous iteration's output graph while Python
+        # evaluates the next model forward. Backward releases saved
+        # activations, but these references can still keep output storage live
+        # and raise the peak for variable-size crop batches.
+        del outputs, loss_dict, weight_dict, losses
+        del loss_dict_reduced, loss_dict_reduced_unscaled, loss_dict_reduced_scaled
+        del losses_reduced_scaled, losses_to_backward, samples, targets, gt_points
     
     # gather the stats from all processes
     metric_logger.synchronize_between_processes()
@@ -672,6 +680,11 @@ def _predict_count_tiled(
                 # For the flip pass, extract from the mirror column position
                 tile_x0 = (img_w - x1_) if mirror_x else x0_
                 tile_x1 = (img_w - x0_) if mirror_x else x1_
+                # Explicitly release the preceding tile input/output before
+                # allocating and evaluating the next tile. Assignment alone
+                # retains the old object until its right-hand side completes.
+                t = None
+                out = None
                 t = _make_tile_nested(carrier, y0_, y1_, tile_x0, tile_x1)
                 th, tw = t.tensors.shape[-2:]
                 out, tile_count = _predict_count(model, t, targets, epoch=epoch)
@@ -983,6 +996,10 @@ def evaluate(
                 eval_count_debug['tile_trigger_skipped'] = 1.0
 
         if use_tiled_eval:
+            # A trigger pass may have populated a full PET output. Release it
+            # before tiled inference rather than retaining it for the entire
+            # first tile forward through Python's assignment semantics.
+            outputs = None
             outputs, predict_cnt = _predict_count_tiled(
                 model,
                 samples,
