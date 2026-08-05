@@ -1,6 +1,7 @@
 """
 PET model and criterion classes
 """
+from contextlib import nullcontext
 import math
 
 import torch
@@ -19,6 +20,16 @@ from .backbones import *
 from .transformer import *
 from .position_encoding import build_position_encoding
 from .ebc_router import EBCQuadtreeRouter
+
+
+def _disable_autocast_for(tensor):
+    """Keep numerically sensitive count reductions in full precision."""
+    if hasattr(torch, 'amp') and hasattr(torch.amp, 'autocast'):
+        if tensor.device.type in ('cuda', 'cpu'):
+            return torch.amp.autocast(tensor.device.type, enabled=False)
+    if tensor.device.type == 'cuda':
+        return torch.cuda.amp.autocast(enabled=False)
+    return nullcontext()
 
 
 def _parse_size_pair(value, default, name):
@@ -1085,7 +1096,11 @@ class GlobalCountHead(nn.Module):
         nn.init.constant_(self.net[-1].bias, init_density_logit)
 
     def predict_density(self, x, mask=None):
-        density = F.softplus(self.net(x.float()).squeeze(1))
+        # A half-precision density sum loses integer resolution on the dense
+        # NWPU/QNRF tail.  Keep both the convolution and reduction inputs in
+        # FP32 even when the detector runs under AMP.
+        with _disable_autocast_for(x):
+            density = F.softplus(self.net(x.float()).squeeze(1))
         if mask is not None:
             density = density * (~mask).to(dtype=density.dtype, device=density.device)
         return density
@@ -4210,10 +4225,13 @@ class PET(nn.Module):
     def compute_count_head_loss(self, outputs, targets):
         if self.count_head is None or 'count_pred' not in outputs:
             return outputs['split_map_raw'].sum() * 0.0
-        pred_counts = outputs['count_pred'].to(dtype=outputs['split_map_raw'].dtype)
+        # Do not cast image-level counts back to the detector's AMP dtype.
+        # FP16 has a spacing greater than one above 2048, which is material on
+        # the dense tails of NWPU and QNRF.
+        pred_counts = outputs['count_pred'].float()
         target_counts = torch.as_tensor(
             [target['points'].shape[0] for target in targets],
-            dtype=pred_counts.dtype,
+            dtype=torch.float32,
             device=pred_counts.device,
         )
         if self.count_head_loss_type == 'l1':
