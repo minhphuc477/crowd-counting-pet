@@ -15,6 +15,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from datasets.QNRF import find_annotation_path, load_raw_points_xy  # noqa: E402
+from scripts.preprocess_qnrf_aligned import orient_points  # noqa: E402
 
 
 IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".bmp"}
@@ -50,6 +51,7 @@ def inspect_split(source_root: Path, processed_root: Path, split: str, max_side:
         "swapped_size_matches": 0,
         "other_size_mismatches": 0,
         "annotation_scale_matches": 0,
+        "annotation_exif_matches": 0,
         "annotation_scale_mismatches": 0,
         "count_mismatches": 0,
         "suspected_orientation_mismatches": 0,
@@ -95,8 +97,20 @@ def inspect_split(source_root: Path, processed_root: Path, split: str, max_side:
         else:
             max_difference = point_difference(source_points, processed_points, factor)
             annotation_matches = max_difference is not None and max_difference <= 1e-3
+        oriented_source_points = orient_points(
+            source_points, exif_orientation, source_size[0], source_size[1]
+        )
+        exif_max_difference = point_difference(
+            oriented_source_points, processed_points, factor
+        )
+        annotation_exif_matches = (
+            exif_max_difference is not None and exif_max_difference <= 1e-3
+        )
         rows["annotation_scale_matches"] += int(annotation_matches)
-        rows["annotation_scale_mismatches"] += int(not annotation_matches)
+        rows["annotation_exif_matches"] += int(annotation_exif_matches)
+        rows["annotation_scale_mismatches"] += int(
+            not annotation_matches and not annotation_exif_matches
+        )
 
         suspected = swapped_matches and annotation_matches
         rows["suspected_orientation_mismatches"] += int(suspected)
@@ -109,6 +123,8 @@ def inspect_split(source_root: Path, processed_root: Path, split: str, max_side:
                     "expected_size": list(expected_size),
                     "source_exif_orientation": exif_orientation,
                     "annotation_max_abs_difference": max_difference,
+                    "annotation_exif_max_abs_difference": exif_max_difference,
+                    "annotation_exif_matches": annotation_exif_matches,
                     "suspected_orientation_mismatch": suspected,
                 }
             )
