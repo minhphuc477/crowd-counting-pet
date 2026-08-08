@@ -2070,7 +2070,46 @@ MODEL_RECIPES['vgg_apglc_branch_ifi_counthead_stage2_nwpu'] = {
     'scale_point_sigma_max': 128.0,
 }
 
+# Standalone VGG EBC-Point. This does not instantiate PET's quadtree or
+# Transformer decoder. It retains the proven VGG16-BN 4x/8x FPN and separates
+# blockwise count estimation from point localization.
+MODEL_RECIPES['vgg_ebc_point_qnrf'] = {
+    'model_family': 'vgg_ebc_point',
+    'backbone': 'vgg16_bn',
+    'vgg_fpn_main_lr': True,
+    'ebc_point_hidden_dim': 256,
+    'ebc_point_activation': 'gelu',
+    'ebc_point_fusion_init': 1e-3,
+    'ebc_point_block_size': 32,
+    'ebc_point_slots': 4,
+    'ebc_point_bin_centers': '0,1,2,3,4,6,8,12,16,24,32,48,64,96,128,192,256,384,512',
+    'ebc_point_zero_prior': 0.95,
+    'ebc_point_zero_class_weight': 0.25,
+    'ebc_point_prior': 0.01,
+    'ebc_point_focal_alpha': 0.25,
+    'ebc_point_focal_gamma': 2.0,
+    'ebc_point_ce_coef': 1.0,
+    'ebc_point_local_count_coef': 0.25,
+    'ebc_point_global_count_coef': 0.25,
+    'ebc_point_multiscale_coef': 0.1,
+    'ebc_point_cls_coef': 1.0,
+    'ebc_point_coord_coef': 5.0,
+    'ebc_point_consistency_coef': 0.02,
+    'patch_size_choices': '512,672',
+    'crop_attempts': 8,
+    'min_crop_points': 1,
+    'train_count_weight_power': 0.3,
+    'train_count_weight_max': 4.0,
+    'eval_max_size': 1536,
+    'score_threshold': 0.5,
+    'eval_count_mode': 'threshold',
+    'eval_count_source': 'pet',
+    'eval_tile_size': 0,
+}
+
+
 EXPERIMENTAL_MODEL_RECIPES = {
+    'vgg_ebc_point_qnrf',
     # RMI-PET is the current cross-dataset hypothesis. It is not promoted to a
     # production recipe until fixed-protocol SHA/SHB/QNRF/JHU/NWPU runs pass.
     'vgg_pet_rmi',
@@ -2173,6 +2212,7 @@ BACKBONE_ABLATION_PRESETS = {
 }
 
 ARCHITECTURE_OVERRIDE_KEYS = {
+    'model_family',
     'backbone',
     'no_pretrained_backbone',
     'allow_random_backbone_fallback',
@@ -2277,6 +2317,24 @@ ARCHITECTURE_OVERRIDE_KEYS = {
     'ebc_router_activation',
     'eval_count_blend_alpha',
     'vgg_fpn_main_lr',
+    'ebc_point_hidden_dim',
+    'ebc_point_activation',
+    'ebc_point_fusion_init',
+    'ebc_point_block_size',
+    'ebc_point_slots',
+    'ebc_point_bin_centers',
+    'ebc_point_zero_prior',
+    'ebc_point_zero_class_weight',
+    'ebc_point_prior',
+    'ebc_point_focal_alpha',
+    'ebc_point_focal_gamma',
+    'ebc_point_ce_coef',
+    'ebc_point_local_count_coef',
+    'ebc_point_global_count_coef',
+    'ebc_point_multiscale_coef',
+    'ebc_point_cls_coef',
+    'ebc_point_coord_coef',
+    'ebc_point_consistency_coef',
 }
 
 
@@ -2340,6 +2398,27 @@ def get_args_parser():
     # - backbone
     parser.add_argument('--backbone', default='vgg16_bn', type=str,
                         help="Name of the convolutional backbone to use")
+    parser.add_argument('--model_family', default='pet', choices=('pet', 'vgg_ebc_point'),
+                        help='top-level model implementation; recipes normally set this')
+    parser.add_argument('--ebc_point_hidden_dim', default=256, type=int)
+    parser.add_argument('--ebc_point_activation', default='gelu', choices=('relu', 'gelu', 'silu'))
+    parser.add_argument('--ebc_point_fusion_init', default=1e-3, type=float)
+    parser.add_argument('--ebc_point_block_size', default=32, type=int)
+    parser.add_argument('--ebc_point_slots', default=4, type=int)
+    parser.add_argument('--ebc_point_bin_centers',
+                        default='0,1,2,3,4,6,8,12,16,24,32,48,64,96,128,192,256,384,512')
+    parser.add_argument('--ebc_point_zero_prior', default=0.95, type=float)
+    parser.add_argument('--ebc_point_zero_class_weight', default=0.25, type=float)
+    parser.add_argument('--ebc_point_prior', default=0.01, type=float)
+    parser.add_argument('--ebc_point_focal_alpha', default=0.25, type=float)
+    parser.add_argument('--ebc_point_focal_gamma', default=2.0, type=float)
+    parser.add_argument('--ebc_point_ce_coef', default=1.0, type=float)
+    parser.add_argument('--ebc_point_local_count_coef', default=0.25, type=float)
+    parser.add_argument('--ebc_point_global_count_coef', default=0.25, type=float)
+    parser.add_argument('--ebc_point_multiscale_coef', default=0.1, type=float)
+    parser.add_argument('--ebc_point_cls_coef', default=1.0, type=float)
+    parser.add_argument('--ebc_point_coord_coef', default=5.0, type=float)
+    parser.add_argument('--ebc_point_consistency_coef', default=0.02, type=float)
     parser.add_argument('--list_backbones', action='store_true',
                         help='print supported timm ablation backbones and exit')
     parser.add_argument('--no_pretrained_backbone', action='store_true',

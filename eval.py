@@ -25,6 +25,7 @@ from models import build_model
 
 
 ARCHITECTURE_OVERRIDE_KEYS = {
+    'model_family',
     'backbone',
     'no_pretrained_backbone',
     'allow_random_backbone_fallback',
@@ -111,6 +112,15 @@ ARCHITECTURE_OVERRIDE_KEYS = {
     'scale_point_fallback',
     'scale_point_fallback_k',
     'scale_point_fallback_factor',
+    'ebc_point_hidden_dim',
+    'ebc_point_activation',
+    'ebc_point_fusion_init',
+    'ebc_point_block_size',
+    'ebc_point_slots',
+    'ebc_point_bin_centers',
+    'ebc_point_zero_prior',
+    'ebc_point_zero_class_weight',
+    'ebc_point_prior',
 }
 
 
@@ -121,6 +131,17 @@ def get_args_parser():
     # - backbone
     parser.add_argument('--backbone', default='vgg16_bn', type=str,
                         help="Name of the convolutional backbone to use")
+    parser.add_argument('--model_family', default='pet', choices=('pet', 'vgg_ebc_point'))
+    parser.add_argument('--ebc_point_hidden_dim', default=256, type=int)
+    parser.add_argument('--ebc_point_activation', default='gelu', choices=('relu', 'gelu', 'silu'))
+    parser.add_argument('--ebc_point_fusion_init', default=1e-3, type=float)
+    parser.add_argument('--ebc_point_block_size', default=32, type=int)
+    parser.add_argument('--ebc_point_slots', default=4, type=int)
+    parser.add_argument('--ebc_point_bin_centers',
+                        default='0,1,2,3,4,6,8,12,16,24,32,48,64,96,128,192,256,384,512')
+    parser.add_argument('--ebc_point_zero_prior', default=0.95, type=float)
+    parser.add_argument('--ebc_point_zero_class_weight', default=0.25, type=float)
+    parser.add_argument('--ebc_point_prior', default=0.01, type=float)
     parser.add_argument('--no_pretrained_backbone', action='store_true',
                         help='initialize the backbone randomly instead of loading timm/ImageNet weights')
     parser.add_argument('--allow_random_backbone_fallback', action='store_true',
