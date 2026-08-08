@@ -15,7 +15,10 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from datasets.QNRF import find_annotation_path, load_raw_points_xy  # noqa: E402
-from scripts.preprocess_qnrf_aligned import orient_points  # noqa: E402
+from scripts.preprocess_qnrf_aligned import (  # noqa: E402
+    normalize_orientation,
+    orient_points,
+)
 
 
 IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".bmp"}
@@ -69,7 +72,7 @@ def inspect_split(source_root: Path, processed_root: Path, split: str, max_side:
 
         with Image.open(source_image) as image:
             source_size = image.size
-            exif_orientation = int(image.getexif().get(274, 1))
+            exif_orientation = normalize_orientation(image.getexif().get(274, 1))
         with Image.open(processed_image) as image:
             processed_size = image.size
 

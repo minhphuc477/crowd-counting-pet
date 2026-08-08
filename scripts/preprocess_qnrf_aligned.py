@@ -9,7 +9,7 @@ from pathlib import Path
 
 import numpy as np
 import scipy.io as sio
-from PIL import Image, ImageOps
+from PIL import Image
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -30,7 +30,39 @@ def find_split(root: Path, name: str) -> Path:
     raise FileNotFoundError(f"missing {name} directory under {root}")
 
 
+def normalize_orientation(value) -> int:
+    if isinstance(value, bytes):
+        value = value.decode("ascii", errors="strict")
+    if isinstance(value, str):
+        value = value.strip()
+    try:
+        orientation = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"invalid EXIF orientation: {value!r}") from exc
+    if orientation not in range(1, 9):
+        raise ValueError(f"unsupported EXIF orientation: {value!r}")
+    return orientation
+
+
+def orient_image(image: Image.Image, orientation) -> Image.Image:
+    orientation = normalize_orientation(orientation)
+    transpose = getattr(Image, "Transpose", Image)
+    transforms = {
+        1: None,
+        2: transpose.FLIP_LEFT_RIGHT,
+        3: transpose.ROTATE_180,
+        4: transpose.FLIP_TOP_BOTTOM,
+        5: transpose.TRANSPOSE,
+        6: transpose.ROTATE_270,
+        7: transpose.TRANSVERSE,
+        8: transpose.ROTATE_90,
+    }
+    operation = transforms[orientation]
+    return image.copy() if operation is None else image.transpose(operation)
+
+
 def orient_points(points: np.ndarray, orientation: int, width: int, height: int):
+    orientation = normalize_orientation(orientation)
     if points.size == 0 or orientation == 1:
         return points.copy()
     x = points[:, 0]
@@ -44,8 +76,6 @@ def orient_points(points: np.ndarray, orientation: int, width: int, height: int)
         7: (height - 1 - y, width - 1 - x),
         8: (y, width - 1 - x),
     }
-    if orientation not in transforms:
-        raise ValueError(f"unsupported EXIF orientation: {orientation}")
     new_x, new_y = transforms[orientation]
     return np.stack((new_x, new_y), axis=1).astype(np.float32, copy=False)
 
@@ -85,11 +115,11 @@ def process_split(source_root: Path, output_root: Path, split: str, max_side: in
 
         with Image.open(image_path) as source_image:
             source_width, source_height = source_image.size
-            orientation = int(source_image.getexif().get(274, 1))
+            orientation = normalize_orientation(source_image.getexif().get(274, 1))
             points = orient_points(
                 points, orientation, source_width, source_height
             )
-            image = ImageOps.exif_transpose(source_image).convert("RGB")
+            image = orient_image(source_image, orientation).convert("RGB")
         exif_oriented += int(orientation != 1)
 
         width, height = image.size
