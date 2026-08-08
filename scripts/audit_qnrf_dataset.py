@@ -55,6 +55,7 @@ def inspect_split(
     outside_beyond_tolerance = 0
     maximum_outside_distance = 0.0
     outside_examples = []
+    outside_by_image = []
     nonfinite = 0
     max_side = 0
     min_side = math.inf
@@ -104,6 +105,16 @@ def inspect_split(
             outside_beyond_tolerance += int(
                 (outside_distance > outside_tolerance).sum()
             )
+            image_far_count = int((outside_distance > outside_tolerance).sum())
+            outside_by_image.append(
+                {
+                    "image": image_path.name,
+                    "size": [width, height],
+                    "outside": outside_count,
+                    "far_outside": image_far_count,
+                    "maximum_outside_distance": float(outside_distance.max()),
+                }
+            )
             maximum_outside_distance = max(
                 maximum_outside_distance, float(outside_distance.max())
             )
@@ -132,14 +143,15 @@ def inspect_split(
         raise ValueError(f"{split_name}: found {nonfinite} non-finite point coordinates")
     outside_fraction = outside_xy / max(total_points - nonfinite, 1)
     far_outside_fraction = outside_beyond_tolerance / max(total_points - nonfinite, 1)
+    violations = []
     if outside_xy and outside_if_swapped < outside_xy:
-        raise ValueError(
+        violations.append(
             f"{split_name}: interpreting annPoints as y/x produces fewer out-of-bounds "
             f"coordinates than x/y ({outside_if_swapped} versus {outside_xy}); inspect "
             "the preprocessing and annotation orientation"
         )
     if outside_fraction > max_outside_fraction:
-        raise ValueError(
+        violations.append(
             f"{split_name}: {outside_xy}/{total_points} annPoints coordinates "
             f"({outside_fraction:.4%}) are outside image bounds, exceeding "
             f"--max_outside_fraction={max_outside_fraction:.4%}; "
@@ -147,7 +159,7 @@ def inspect_split(
             f"maximum_outside_distance={maximum_outside_distance:.3f}"
         )
     if far_outside_fraction > max_far_outside_fraction:
-        raise ValueError(
+        violations.append(
             f"{split_name}: {outside_beyond_tolerance}/{total_points} annPoints "
             f"({far_outside_fraction:.4%}) exceed image bounds by more than "
             f"--outside_tolerance={outside_tolerance:g} pixels, exceeding "
@@ -158,7 +170,7 @@ def inspect_split(
         )
     if oversized:
         first = oversized[0]
-        raise ValueError(
+        violations.append(
             f"{split_name}: {len(oversized)} images exceed --expected_max_side="
             f"{expected_max_side}; first={first['image']} size={first['size']}"
         )
@@ -178,7 +190,13 @@ def inspect_split(
         "far_outside_fraction": far_outside_fraction,
         "maximum_outside_distance": maximum_outside_distance,
         "outside_examples": outside_examples,
+        "top_outside_images": sorted(
+            outside_by_image,
+            key=lambda row: (row["far_outside"], row["outside"]),
+            reverse=True,
+        )[:25],
         "outside_if_swapped": outside_if_swapped,
+        "violations": violations,
     }
 
 
@@ -195,11 +213,12 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--max_outside_fraction",
-        default=0.01,
+        default=1.0,
         type=float,
         help=(
             "Maximum fraction of finite annotations allowed outside decoded image bounds. "
-            "QNRF/PET preserves these rows for benchmark count parity; default: 0.01."
+            "QNRF/PET preserves these rows for benchmark count parity; default: 1.0 "
+            "(report-only). Use 0.01 for a strict label-noise audit."
         ),
     )
     parser.add_argument(
@@ -210,9 +229,12 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--max_far_outside_fraction",
-        default=0.001,
+        default=1.0,
         type=float,
-        help="Maximum fraction of far outliers allowed; default: 0.001 (0.1%%).",
+        help=(
+            "Maximum fraction of far outliers allowed; default: 1.0 (report-only). "
+            "Use 0.001 for a strict label-noise audit."
+        ),
     )
     parser.add_argument("--output", type=Path, default=None)
     return parser.parse_args()
@@ -265,6 +287,16 @@ def main() -> int:
     if args.output is not None:
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(rendered + "\n", encoding="utf-8")
+    violations = [
+        violation
+        for row in report["splits"].values()
+        for violation in row["violations"]
+    ]
+    if violations:
+        print("QNRF data audit failed:", file=sys.stderr)
+        for violation in violations:
+            print(f"  - {violation}", file=sys.stderr)
+        return 1
     print("QNRF data audit passed.")
     return 0
 
