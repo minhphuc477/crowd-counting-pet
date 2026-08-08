@@ -34,6 +34,8 @@ def inspect_split(
     split_name: str,
     expected_max_side: int,
     max_outside_fraction: float,
+    outside_tolerance: float,
+    max_far_outside_fraction: float,
 ) -> dict:
     split_dir = find_split(root, split_name)
     images = sorted(
@@ -50,7 +52,7 @@ def inspect_split(
     outside_xy = 0
     outside_if_swapped = 0
     outside_images = 0
-    outside_beyond_one_pixel = 0
+    outside_beyond_tolerance = 0
     maximum_outside_distance = 0.0
     outside_examples = []
     nonfinite = 0
@@ -99,7 +101,9 @@ def inspect_split(
                 )
             )
             outside_distance = distance[outside]
-            outside_beyond_one_pixel += int((outside_distance > 1.0).sum())
+            outside_beyond_tolerance += int(
+                (outside_distance > outside_tolerance).sum()
+            )
             maximum_outside_distance = max(
                 maximum_outside_distance, float(outside_distance.max())
             )
@@ -127,6 +131,7 @@ def inspect_split(
     if nonfinite:
         raise ValueError(f"{split_name}: found {nonfinite} non-finite point coordinates")
     outside_fraction = outside_xy / max(total_points - nonfinite, 1)
+    far_outside_fraction = outside_beyond_tolerance / max(total_points - nonfinite, 1)
     if outside_xy and outside_if_swapped < outside_xy:
         raise ValueError(
             f"{split_name}: interpreting annPoints as y/x produces fewer out-of-bounds "
@@ -140,6 +145,16 @@ def inspect_split(
             f"--max_outside_fraction={max_outside_fraction:.4%}; "
             f"outside_if_swapped={outside_if_swapped}, "
             f"maximum_outside_distance={maximum_outside_distance:.3f}"
+        )
+    if far_outside_fraction > max_far_outside_fraction:
+        raise ValueError(
+            f"{split_name}: {outside_beyond_tolerance}/{total_points} annPoints "
+            f"({far_outside_fraction:.4%}) exceed image bounds by more than "
+            f"--outside_tolerance={outside_tolerance:g} pixels, exceeding "
+            f"--max_far_outside_fraction={max_far_outside_fraction:.4%}; "
+            f"maximum_outside_distance={maximum_outside_distance:.3f}. This is not "
+            "boundary rounding; compare against the original UCF-QNRF images and "
+            "annotations before training."
         )
     if oversized:
         first = oversized[0]
@@ -158,7 +173,9 @@ def inspect_split(
         "outside_xy": outside_xy,
         "outside_xy_fraction": outside_fraction,
         "outside_images": outside_images,
-        "outside_beyond_one_pixel": outside_beyond_one_pixel,
+        "outside_tolerance": outside_tolerance,
+        "outside_beyond_tolerance": outside_beyond_tolerance,
+        "far_outside_fraction": far_outside_fraction,
         "maximum_outside_distance": maximum_outside_distance,
         "outside_examples": outside_examples,
         "outside_if_swapped": outside_if_swapped,
@@ -185,6 +202,18 @@ def parse_args() -> argparse.Namespace:
             "QNRF/PET preserves these rows for benchmark count parity; default: 0.01."
         ),
     )
+    parser.add_argument(
+        "--outside_tolerance",
+        default=2.0,
+        type=float,
+        help="Distance in pixels beyond image bounds considered a far outlier; default: 2.",
+    )
+    parser.add_argument(
+        "--max_far_outside_fraction",
+        default=0.001,
+        type=float,
+        help="Maximum fraction of far outliers allowed; default: 0.001 (0.1%%).",
+    )
     parser.add_argument("--output", type=Path, default=None)
     return parser.parse_args()
 
@@ -193,6 +222,10 @@ def main() -> int:
     args = parse_args()
     if not 0.0 <= args.max_outside_fraction <= 1.0:
         raise ValueError("--max_outside_fraction must be between 0 and 1")
+    if args.outside_tolerance < 0.0:
+        raise ValueError("--outside_tolerance must be non-negative")
+    if not 0.0 <= args.max_far_outside_fraction <= 1.0:
+        raise ValueError("--max_far_outside_fraction must be between 0 and 1")
     root = args.data_path.expanduser().resolve()
     if not root.is_dir():
         raise FileNotFoundError(f"QNRF root does not exist: {root}")
@@ -202,12 +235,16 @@ def main() -> int:
         "root": str(root),
         "expected_max_side": args.expected_max_side,
         "max_outside_fraction": args.max_outside_fraction,
+        "outside_tolerance": args.outside_tolerance,
+        "max_far_outside_fraction": args.max_far_outside_fraction,
         "splits": {
             split: inspect_split(
                 root,
                 split,
                 args.expected_max_side,
                 args.max_outside_fraction,
+                args.outside_tolerance,
+                args.max_far_outside_fraction,
             )
             for split in ("Train", "Test")
         },
