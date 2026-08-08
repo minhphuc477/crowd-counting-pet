@@ -4,7 +4,9 @@
 import argparse
 import json
 import os
+import shutil
 import sys
+import tempfile
 from pathlib import Path
 
 import numpy as np
@@ -31,14 +33,22 @@ def find_split(root: Path, name: str) -> Path:
 
 
 def normalize_orientation(value) -> int:
+    if value is None or value == "" or value == b"":
+        return 1
     if isinstance(value, bytes):
         value = value.decode("ascii", errors="strict")
     if isinstance(value, str):
         value = value.strip()
+        if not value:
+            return 1
     try:
         orientation = int(value)
     except (TypeError, ValueError) as exc:
         raise ValueError(f"invalid EXIF orientation: {value!r}") from exc
+    # A small number of QNRF JPEGs use the non-standard value 0 to mean
+    # unspecified orientation. Decoders treat it as no transform.
+    if orientation == 0:
+        return 1
     if orientation not in range(1, 9):
         raise ValueError(f"unsupported EXIF orientation: {value!r}")
     return orientation
@@ -81,12 +91,46 @@ def orient_points(points: np.ndarray, orientation: int, width: int, height: int)
 
 
 def save_mat_with_points(source_path: str, output_path: Path, points: np.ndarray):
-    annotation = sio.loadmat(source_path)
+    annotation = {
+        key: value
+        for key, value in sio.loadmat(source_path).items()
+        if not key.startswith("__")
+    }
     annotation["annPoints"] = points.astype(np.float32, copy=False)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     temporary = output_path.with_suffix(output_path.suffix + ".tmp")
     sio.savemat(temporary, annotation, appendmat=False)
     os.replace(temporary, output_path)
+
+
+def preflight_source(source_root: Path):
+    summary = {}
+    for split in ("Train", "Test"):
+        source_dir = find_split(source_root, split)
+        images = sorted(
+            path for path in source_dir.iterdir()
+            if path.is_file() and path.suffix.lower() in IMAGE_SUFFIXES
+        )
+        if len(images) != EXPECTED_IMAGES[split]:
+            raise ValueError(
+                f"{split}: expected {EXPECTED_IMAGES[split]} images, found {len(images)}"
+            )
+        orientations = {}
+        for image_path in images:
+            annotation_path = find_annotation_path(str(image_path))
+            if annotation_path is None:
+                raise FileNotFoundError(f"missing annotation for {image_path}")
+            with Image.open(image_path) as image:
+                raw_orientation = image.getexif().get(274, 1)
+                orientation = normalize_orientation(raw_orientation)
+                image.verify()
+            key = str(orientation)
+            orientations[key] = orientations.get(key, 0) + 1
+        summary[split] = {
+            "images": len(images),
+            "normalized_exif_orientations": orientations,
+        }
+    return summary
 
 
 def process_split(source_root: Path, output_root: Path, split: str, max_side: int):
@@ -177,31 +221,48 @@ def main() -> int:
     output_root = args.output_data_path.expanduser().resolve()
     if not source_root.is_dir():
         raise FileNotFoundError(f"source root does not exist: {source_root}")
-    if output_root.exists() and any(output_root.iterdir()):
+    if output_root.exists():
         raise FileExistsError(
-            f"output directory is not empty: {output_root}; use a new path"
+            f"output path already exists: {output_root}; use a new path"
         )
     if args.max_side <= 0:
         raise ValueError("--max_side must be positive")
 
-    output_root.mkdir(parents=True, exist_ok=True)
-    report = {
-        "dataset": "UCF-QNRF",
-        "method": "exif_aligned_long_side_resize",
-        "source": str(source_root),
-        "output": str(output_root),
-        "max_side": args.max_side,
-        "splits": {
-            split: process_split(
-                source_root, output_root, split, args.max_side
-            )
-            for split in ("Train", "Test")
-        },
-    }
-    manifest_path = output_root / "preprocess_manifest.json"
-    manifest_path.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+    preflight = preflight_source(source_root)
+    output_root.parent.mkdir(parents=True, exist_ok=True)
+    staging_root = Path(
+        tempfile.mkdtemp(
+            prefix=f".{output_root.name}.building-",
+            dir=str(output_root.parent),
+        )
+    )
+    try:
+        report = {
+            "dataset": "UCF-QNRF",
+            "method": "exif_aligned_long_side_resize",
+            "source": str(source_root),
+            "output": str(output_root),
+            "max_side": args.max_side,
+            "preflight": preflight,
+            "splits": {
+                split: process_split(
+                    source_root, staging_root, split, args.max_side
+                )
+                for split in ("Train", "Test")
+            },
+        }
+        manifest_path = staging_root / "preprocess_manifest.json"
+        manifest_path.write_text(
+            json.dumps(report, indent=2) + "\n", encoding="utf-8"
+        )
+        os.replace(staging_root, output_root)
+    except BaseException:
+        shutil.rmtree(staging_root, ignore_errors=True)
+        raise
+
+    final_manifest_path = output_root / "preprocess_manifest.json"
     print(json.dumps(report, indent=2))
-    print(f"Wrote {manifest_path}")
+    print(f"Wrote {final_manifest_path}")
     return 0
 
 
