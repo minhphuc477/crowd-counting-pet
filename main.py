@@ -3043,6 +3043,8 @@ def get_args_parser():
                         help='preferred height fraction of each fixed partial annotation rectangle')
     parser.add_argument('--annotation_override_dir', default='', type=str,
                         help='directory of manifest-validated training annotation overrides; never used for validation/test labels')
+    parser.add_argument('--qnrf_max_train_outside_fraction', default=1.0, type=float,
+                        help='QNRF train only: exclude images whose fraction of annotations more than 2px outside the decoded canvas exceeds this value; 1 disables filtering')
     parser.add_argument('--nwpu_sigma_mode', default='official', choices=('area', 'diag', 'min_diag', 'official'),
                         help='fallback localization sigma derived from NWPU boxes when annotation sigma is absent')
     parser.add_argument('--nwpu_dense_crop_prob', default=0.0, type=float,
@@ -3548,6 +3550,7 @@ def merge_checkpoint_args(args, checkpoint):
         'no_eval_filter_invalid_points', 'eval_debug_counting',
         'ucfcc50_fold', 'ucfcc50_fold_seed', 'ucfcc50_fold_manifest',
         'annotation_override_dir',
+        'qnrf_max_train_outside_fraction',
     }
     runtime_keys = {
         'resume', 'device', 'output_dir', 'seed', 'start_epoch',
@@ -4399,6 +4402,14 @@ def main(args):
     validation_protocol = resolve_validation_protocol(args)
     validate_annotation_override_contract(args, validation_protocol)
     dataset_train = build_dataset(image_set='train', args=args)
+    qnrf_train_exclusions = list(
+        getattr(dataset_train, 'excluded_train_samples', ())
+    )
+    qnrf_train_retained_count = len(dataset_train)
+    qnrf_train_filter_enabled = (
+        getattr(args, 'dataset_file', '') == 'QNRF'
+        and float(getattr(args, 'qnrf_max_train_outside_fraction', 1.0)) < 1.0
+    )
     split_manifest = None
     if validation_protocol == 'train_holdout':
         dataset_train_eval = build_dataset(image_set='train_eval', args=args)
@@ -4575,6 +4586,23 @@ def main(args):
         if split_manifest is not None:
             (output_dir / 'split_manifest.json').write_text(
                 json.dumps(split_manifest, indent=2) + "\n",
+                encoding='utf-8',
+            )
+        if qnrf_train_filter_enabled:
+            qnrf_exclusion_manifest = {
+                'dataset': 'QNRF',
+                'scope': 'train_only',
+                'policy': 'exclude_samples_with_far_outside_annotation_fraction',
+                'outside_tolerance_pixels': 2.0,
+                'max_outside_fraction': float(args.qnrf_max_train_outside_fraction),
+                'data_path': str(Path(args.data_path).expanduser().resolve()),
+                'excluded_samples': qnrf_train_exclusions,
+                'excluded_count': len(qnrf_train_exclusions),
+                'retained_count': qnrf_train_retained_count,
+                'validation_and_test_modified': False,
+            }
+            (output_dir / 'qnrf_train_exclusion_manifest.json').write_text(
+                json.dumps(qnrf_exclusion_manifest, indent=2) + "\n",
                 encoding='utf-8',
             )
         if checkpoint is not None:

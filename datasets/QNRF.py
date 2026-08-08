@@ -37,6 +37,7 @@ class QNRF(Dataset):
         eval_max_size=1536,
         no_random_scale=False,
         annotation_override_dir='',
+        max_train_outside_fraction=1.0,
     ):
         self.root_path = data_root
         if source_split is None:
@@ -137,6 +138,58 @@ class QNRF(Dataset):
                         raise ValueError(
                             f'QNRF restored annotation hash mismatch for {image_name}'
                         )
+
+        max_train_outside_fraction = float(max_train_outside_fraction)
+        if not 0.0 <= max_train_outside_fraction <= 1.0:
+            raise ValueError('max_train_outside_fraction must be in [0, 1]')
+        self.qnrf_max_train_outside_fraction = max_train_outside_fraction
+        self.excluded_train_samples = []
+        if train and source_split == 'train' and max_train_outside_fraction < 1.0:
+            retained_images = []
+            outside_tolerance = 2.0
+            for img_path in self.img_list:
+                with Image.open(img_path) as image:
+                    width, height = image.size
+                points = load_raw_points_xy(self.original_gt_list[img_path])
+                if points.shape[0] == 0:
+                    outside_count = 0
+                else:
+                    x = points[:, 0]
+                    y = points[:, 1]
+                    outside_distance = np.maximum.reduce((
+                        -x,
+                        x - float(width - 1),
+                        -y,
+                        y - float(height - 1),
+                    ))
+                    invalid = ~np.isfinite(points).all(axis=1)
+                    outside_count = int(
+                        (invalid | (outside_distance > outside_tolerance)).sum()
+                    )
+                outside_fraction = outside_count / max(int(points.shape[0]), 1)
+                if outside_fraction > max_train_outside_fraction:
+                    self.excluded_train_samples.append({
+                        'image': os.path.basename(img_path),
+                        'image_size': [int(width), int(height)],
+                        'points': int(points.shape[0]),
+                        'outside_points': outside_count,
+                        'outside_fraction': outside_fraction,
+                    })
+                else:
+                    retained_images.append(img_path)
+            self.img_list = retained_images
+            self.nSamples = len(self.img_list)
+            if self.nSamples == 0:
+                raise ValueError('QNRF corruption filter excluded every training sample')
+            excluded_names = ', '.join(
+                row['image'] for row in self.excluded_train_samples
+            ) or 'none'
+            print(
+                'QNRF train corruption filter: '
+                f'excluded={len(self.excluded_train_samples)} retained={self.nSamples} '
+                f'max_outside_fraction={max_train_outside_fraction:.6f} '
+                f'outside_tolerance={outside_tolerance:.1f}px images=[{excluded_names}]'
+            )
 
         self.transform = transform
         self.train = train
@@ -406,6 +459,11 @@ def build(image_set, args):
             eval_max_size=eval_max_size,
             no_random_scale=getattr(args, 'no_random_scale', False),
             annotation_override_dir=getattr(args, 'annotation_override_dir', ''),
+            max_train_outside_fraction=getattr(
+                args,
+                'qnrf_max_train_outside_fraction',
+                1.0,
+            ),
         )
     if image_set == 'train_eval':
         return QNRF(
