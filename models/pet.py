@@ -1500,6 +1500,17 @@ class PET(nn.Module):
         self.zip_count_loss_coef = max(0.0, float(getattr(args, 'zip_count_loss_coef', 0.0)))
         self.zip_count_ce_coef = max(0.0, float(getattr(args, 'zip_count_ce_coef', 1.0)))
         self.zip_count_count_coef = max(0.0, float(getattr(args, 'zip_count_count_coef', 1.0)))
+        self.zip_count_loss_variant = str(getattr(args, 'zip_count_loss_variant', 'legacy'))
+        if self.zip_count_loss_variant not in ('legacy', 'paper'):
+            raise ValueError('zip_count_loss_variant must be one of "legacy" or "paper"')
+        self.zip_count_multiscale_coef = max(
+            0.0, float(getattr(args, 'zip_count_multiscale_coef', 0.0))
+        )
+        self.zip_count_multiscale_scales = _parse_positive_int_list(
+            getattr(args, 'zip_count_multiscale_scales', '1,2,4'),
+            (1, 2, 4),
+            'zip_count_multiscale_scales',
+        )
         self.zip_count_start_epoch = max(0, int(getattr(args, 'zip_count_start_epoch', 0)))
         self.zip_count_end_epoch = int(getattr(args, 'zip_count_end_epoch', -1))
         self.zip_count_warmup_epochs = max(0, int(getattr(args, 'zip_count_warmup_epochs', 0)))
@@ -2280,6 +2291,7 @@ class PET(nn.Module):
                 'loss_zip_nll': zero,
                 'loss_zip_ce': zero,
                 'loss_zip_count': zero,
+                'loss_zip_msmae': zero,
             }
 
         counts, valid = self.build_local_block_targets(zip_output, targets, samples)
@@ -2298,26 +2310,85 @@ class PET(nn.Module):
         )
         log_prob = torch.where(counts > 0, positive_log_prob, zero_log_prob)
         if valid.any():
-            loss_nll = -log_prob[valid].mean()
+            if self.zip_count_loss_variant == 'paper':
+                loss_nll = (-(log_prob * valid)).flatten(1).sum(dim=1).mean()
+            else:
+                loss_nll = -log_prob[valid].mean()
         else:
             loss_nll = lambda_logits.sum() * 0.0
 
         positive = valid & (counts > 0)
         if positive.any():
             centers = self.zip_count_head.count_bin_centers.to(device=counts.device, dtype=counts.dtype)
-            bin_target = (counts[positive].unsqueeze(1) - centers.unsqueeze(0)).abs().argmin(dim=1)
+            exact_prefix = torch.arange(
+                1,
+                centers.numel(),
+                device=centers.device,
+                dtype=centers.dtype,
+            )
+            if (
+                self.zip_count_loss_variant == 'paper'
+                and torch.allclose(centers[:-1], exact_prefix)
+            ):
+                # NWPU block-16 bins are 1,2,...,9,10-inf. Nearest-center
+                # assignment would incorrectly map count=10 to center 9.
+                bin_target = (counts[positive].round().long() - 1).clamp(
+                    min=0, max=centers.numel() - 1
+                )
+            else:
+                bin_target = (
+                    counts[positive].unsqueeze(1) - centers.unsqueeze(0)
+                ).abs().argmin(dim=1)
             positive_logits = lambda_logits.permute(0, 2, 3, 1)[positive]
-            loss_ce = F.cross_entropy(positive_logits, bin_target)
+            positive_ce = F.cross_entropy(positive_logits, bin_target, reduction='none')
+            if self.zip_count_loss_variant == 'paper':
+                positive_batch = positive.nonzero(as_tuple=False)[:, 0]
+                per_image_ce = positive_ce.new_zeros(counts.shape[0])
+                per_image_ce.scatter_add_(0, positive_batch, positive_ce)
+                loss_ce = per_image_ce.mean()
+            else:
+                loss_ce = positive_ce.mean()
         else:
             loss_ce = lambda_logits.sum() * 0.0
 
-        pred_count = (zip_output['expected_count'].float() * valid).flatten(1).sum(dim=1)
+        expected_count = zip_output['expected_count'].float() * valid
+        target_count = counts * valid
+        pred_count = expected_count.flatten(1).sum(dim=1)
         gt_count = (counts * valid).flatten(1).sum(dim=1)
-        loss_count = F.smooth_l1_loss(torch.log1p(pred_count), torch.log1p(gt_count))
+        if self.zip_count_loss_variant == 'paper':
+            loss_count = F.l1_loss(pred_count, gt_count)
+            loss_msmae = expected_count.sum() * 0.0
+            max_scale = max(self.zip_count_multiscale_scales)
+            for scale in self.zip_count_multiscale_scales:
+                if scale > expected_count.shape[-2] or scale > expected_count.shape[-1]:
+                    continue
+                if scale == 1:
+                    pred_scale = expected_count
+                    target_scale = target_count
+                    valid_scale = valid
+                else:
+                    pred_scale = F.avg_pool2d(
+                        expected_count[:, None], kernel_size=scale, stride=scale
+                    ).squeeze(1)
+                    target_scale = F.avg_pool2d(
+                        target_count[:, None], kernel_size=scale, stride=scale
+                    ).squeeze(1)
+                    valid_scale = F.avg_pool2d(
+                        valid[:, None].float(), kernel_size=scale, stride=scale
+                    ).squeeze(1) >= 1.0
+                scale_loss = (
+                    (pred_scale - target_scale).abs() * valid_scale
+                ).flatten(1).sum(dim=1).mean()
+                scale_weight = 0.5 ** math.log2(float(max_scale) / float(scale))
+                loss_msmae = loss_msmae + scale_weight * scale_loss
+        else:
+            loss_count = F.smooth_l1_loss(torch.log1p(pred_count), torch.log1p(gt_count))
+            loss_msmae = expected_count.sum() * 0.0
         return {
             'loss_zip_nll': loss_nll,
             'loss_zip_ce': loss_ce,
             'loss_zip_count': loss_count,
+            'loss_zip_msmae': loss_msmae,
         }
 
     def compute_ebc_router_losses(self, outputs, targets, samples):
@@ -2706,11 +2777,13 @@ class PET(nn.Module):
                     'loss_zip_nll': zero,
                     'loss_zip_ce': zero,
                     'loss_zip_count': zero,
+                    'loss_zip_msmae': zero,
                 }
             zip_weights = {
                 'loss_zip_nll': zip_weight,
                 'loss_zip_ce': zip_weight * self.zip_count_ce_coef,
                 'loss_zip_count': zip_weight * self.zip_count_count_coef,
+                'loss_zip_msmae': zip_weight * self.zip_count_multiscale_coef,
             }
             loss_dict.update(zip_losses)
             weight_dict.update(zip_weights)
@@ -5323,6 +5396,11 @@ class PET(nn.Module):
                     )
         if 'zip_count_pred' in outputs:
             div_out['zip_count_pred'] = outputs['zip_count_pred']
+            if self.eval_count_source in ('zip', 'zip_pet_blend', 'zip_tail_blend'):
+                # Block entries are spatial counts. Exposing them lets tiled
+                # evaluation assign overlap cells by ownership instead of
+                # area-scaling a scalar tile total.
+                div_out['count_density'] = outputs['zip_count']['expected_count']
             if self.eval_count_source == 'zip':
                 div_out['count_for_mae'] = outputs['zip_count_pred']
             elif self.eval_count_source in ('zip_pet_blend', 'zip_tail_blend'):

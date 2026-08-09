@@ -2045,6 +2045,43 @@ MODEL_RECIPES['vgg_apglc_nwpu_loc_repair_counthead'] = {
     'freeze_bn': True,
 }
 
+# Spatial recounting on top of the verified NWPU detector/localizer.
+#
+# Unlike the scalar count head, this branch retains block ownership during
+# tiled inference and uses the published ZIP reductions: per-image spatial
+# ZIP-NLL/positive-bin CE, raw image-count L1, and multiscale map MAE.  It is
+# intentionally isolated so existing PET and localization checkpoints remain
+# bit-for-bit compatible.
+MODEL_RECIPES['vgg_apglc_nwpu_zip_recount'] = {
+    **MODEL_RECIPES['vgg_apglc_nwpu_loc_repair_rifi'],
+    'train_localization_repair_only': False,
+    'train_zip_count_head_only': True,
+    'zip_count_loss_coef': 1.0,
+    'zip_count_loss_variant': 'paper',
+    'zip_count_block_size': 16,
+    'zip_count_feature_source': 'fpn4x8x',
+    # Official NWPU block-16 bins are 1..9 and 10-inf. The final center is
+    # the count-frequency weighted mean published with ZIP.
+    'zip_count_bin_centers': '1,2,3,4,5,6,7,8,9,12.1610791333',
+    'zip_count_zero_prior': 0.9,
+    'zip_count_ce_coef': 1.0,
+    'zip_count_count_coef': 1.0,
+    'zip_count_multiscale_coef': 1.0,
+    'zip_count_multiscale_scales': '1,2,4',
+    'zip_count_start_epoch': 0,
+    'zip_count_end_epoch': -1,
+    'zip_count_warmup_epochs': 5,
+    'zip_count_feature_grad_scale': 0.0,
+    'eval_count_source': 'zip',
+    'patch_size_choices': '672',
+    'nwpu_dense_crop_prob': 0.0,
+    'train_count_weight_power': 0.0,
+    'train_count_weight_max': 1.0,
+    'nwpu_random_scale_min': 0.75,
+    'nwpu_random_scale_max': 2.0,
+    'freeze_bn': True,
+}
+
 MODEL_RECIPES['vgg_apglc_branch_ifi_counthead_stage2_nwpu'] = {
     **MODEL_RECIPES['vgg_apglc_counthead_stage2_nwpu'],
     'query_feature_interpolation': 'implicit',
@@ -2128,6 +2165,7 @@ EXPERIMENTAL_MODEL_RECIPES = {
     'vgg_apglc_nwpu_tail_rifi',
     'vgg_apglc_nwpu_loc_repair_rifi',
     'vgg_apglc_nwpu_loc_repair_counthead',
+    'vgg_apglc_nwpu_zip_recount',
     'vgg_apglc_rifi',
     'vgg_apglc_scale_rifi',
     'vgg_apglc_ebc_router_scale_rifi',
@@ -2302,6 +2340,9 @@ ARCHITECTURE_OVERRIDE_KEYS = {
     'zip_count_zero_prior',
     'zip_count_ce_coef',
     'zip_count_count_coef',
+    'zip_count_loss_variant',
+    'zip_count_multiscale_coef',
+    'zip_count_multiscale_scales',
     'zip_count_start_epoch',
     'zip_count_end_epoch',
     'zip_count_warmup_epochs',
@@ -2553,7 +2594,13 @@ def get_args_parser():
     parser.add_argument('--zip_count_ce_coef', default=1.0, type=float,
                         help='positive count-bin CE multiplier inside ZIP count supervision')
     parser.add_argument('--zip_count_count_coef', default=1.0, type=float,
-                        help='global log-count consistency multiplier inside ZIP count supervision')
+                        help='global count consistency multiplier inside ZIP count supervision')
+    parser.add_argument('--zip_count_loss_variant', default='legacy', choices=('legacy', 'paper'),
+                        help='legacy uses normalized log-count losses; paper matches the published ZIP spatial reductions')
+    parser.add_argument('--zip_count_multiscale_coef', default=0.0, type=float,
+                        help='multiscale block-map MAE multiplier for paper ZIP supervision')
+    parser.add_argument('--zip_count_multiscale_scales', default='1,2,4', type=str,
+                        help='comma-separated pooling scales for paper ZIP multiscale MAE')
     parser.add_argument('--zip_count_start_epoch', default=0, type=int,
                         help='epoch when ZIP count supervision starts')
     parser.add_argument('--zip_count_end_epoch', default=-1, type=int,
@@ -2690,6 +2737,8 @@ def get_args_parser():
                         help='linearly ramp count-head feature gradients after --count_head_feature_grad_start_epoch')
     parser.add_argument('--train_count_head_only', action='store_true',
                         help='freeze PET and train only the separate count head')
+    parser.add_argument('--train_zip_count_head_only', action='store_true',
+                        help='freeze PET and train only the spatial EBC-ZIP count head')
     parser.add_argument('--density_map_loss_coef', default=0.0, type=float,
                         help='spatial density-map auxiliary weight for the count head; 0 disables it')
     parser.add_argument('--allow_unstable_density_map_loss', action='store_true',
@@ -3134,6 +3183,10 @@ def get_args_parser():
                         help='NWPU train only: probability of a sigma-aware large-head context crop')
     parser.add_argument('--nwpu_context_crop_min_sigma', default=32.0, type=float,
                         help='minimum sigma_l eligible to anchor an NWPU context crop')
+    parser.add_argument('--nwpu_random_scale_min', default=0.8, type=float,
+                        help='NWPU train-only lower bound for random scale jitter')
+    parser.add_argument('--nwpu_random_scale_max', default=1.2, type=float,
+                        help='NWPU train-only upper bound for random scale jitter')
     parser.add_argument('--train_count_weight_power', default=0.0, type=float,
                         help='sample training images with weight (count+1)^power; 0 keeps uniform sampling')
     parser.add_argument('--train_count_weight_max', default=8.0, type=float,
@@ -3339,6 +3392,12 @@ def sanitize_unstable_training_args(args):
             'model_recipe=vgg_apglc_nwpu_loc_repair_counthead is a count-only '
             'calibration stage and requires a trained NWPU localization-repair '
             'checkpoint via --resume and --resume_model_only.'
+        )
+    if recipe_name == 'vgg_apglc_nwpu_zip_recount' and fresh_train:
+        raise ValueError(
+            'model_recipe=vgg_apglc_nwpu_zip_recount is a spatial recounting '
+            'stage and requires a trained NWPU detector/localizer checkpoint '
+            'via --resume and --resume_model_only.'
         )
     if count_coef > 0 and fresh_train and not bool(getattr(args, 'allow_count_head_fresh_train', False)):
         print(
@@ -3609,6 +3668,7 @@ def merge_checkpoint_args(args, checkpoint):
         'no_random_scale',
         'nwpu_dense_crop_prob', 'nwpu_dense_crop_attempts',
         'nwpu_context_crop_prob', 'nwpu_context_crop_min_sigma',
+        'nwpu_random_scale_min', 'nwpu_random_scale_max',
         'train_count_weight_power', 'train_count_weight_max', 'train_sample_multiplier',
         'no_localization_metrics', 'localization_large_threshold', 'localization_small_threshold',
         'localization_protocol', 'localization_large_scale', 'localization_small_scale',
@@ -3674,6 +3734,7 @@ def merge_checkpoint_args(args, checkpoint):
             'count_head_init_cells', 'count_head_feature_grad_scale',
             'count_head_feature_grad_start_epoch', 'count_head_feature_grad_warmup_epochs',
             'train_count_head_only',
+            'train_zip_count_head_only',
             'density_map_loss_coef', 'allow_unstable_density_map_loss',
             'density_map_loss_type', 'density_map_pos_weight',
             'density_map_grad_scale',
@@ -3689,6 +3750,8 @@ def merge_checkpoint_args(args, checkpoint):
             'measure_loss_init_count', 'measure_loss_init_cells',
             'zip_count_loss_coef', 'zip_count_block_size', 'zip_count_feature_source', 'zip_count_bin_centers',
             'zip_count_zero_prior', 'zip_count_ce_coef', 'zip_count_count_coef',
+            'zip_count_loss_variant', 'zip_count_multiscale_coef',
+            'zip_count_multiscale_scales', 'train_zip_count_head_only',
             'zip_count_start_epoch', 'zip_count_end_epoch', 'zip_count_warmup_epochs',
             'zip_count_feature_grad_scale', 'eval_count_source', 'eval_count_blend_alpha',
             'eval_count_tail_threshold',
@@ -4120,6 +4183,22 @@ def set_count_head_only_trainability(model_without_ddp):
     return trainable, frozen
 
 
+def set_zip_count_head_only_trainability(model_without_ddp):
+    trainable, frozen = 0, 0
+    for name, param in model_without_ddp.named_parameters():
+        is_zip_count_head = name.startswith('zip_count_head.')
+        param.requires_grad_(is_zip_count_head)
+        if is_zip_count_head:
+            trainable += param.numel()
+        else:
+            frozen += param.numel()
+    if trainable == 0:
+        raise ValueError(
+            '--train_zip_count_head_only requires an enabled ZIP count branch'
+        )
+    return trainable, frozen
+
+
 def set_localization_repair_only_trainability(model_without_ddp):
     repair_prefixes = (
         'large_context_input_proj.',
@@ -4396,10 +4475,25 @@ def main(args):
         trainable_count, frozen_count = set_count_head_only_trainability(model_without_ddp)
         if utils.is_main_process():
             print(f'count-head-only training: trainable_params={trainable_count} frozen_params={frozen_count}')
-    if getattr(args, 'train_localization_repair_only', False):
+    if getattr(args, 'train_zip_count_head_only', False):
         if getattr(args, 'train_count_head_only', False):
             raise ValueError(
-                '--train_count_head_only and --train_localization_repair_only '
+                '--train_count_head_only and --train_zip_count_head_only '
+                'cannot be enabled together'
+            )
+        trainable_count, frozen_count = set_zip_count_head_only_trainability(model_without_ddp)
+        if utils.is_main_process():
+            print(
+                'zip-count-head-only training: '
+                f'trainable_params={trainable_count} frozen_params={frozen_count}'
+            )
+    if getattr(args, 'train_localization_repair_only', False):
+        if (
+            getattr(args, 'train_count_head_only', False)
+            or getattr(args, 'train_zip_count_head_only', False)
+        ):
+            raise ValueError(
+                'count-head-only and localization-repair-only training '
                 'cannot be enabled together'
             )
         trainable_count, frozen_count = set_localization_repair_only_trainability(model_without_ddp)

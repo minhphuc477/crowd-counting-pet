@@ -44,6 +44,8 @@ class NWPU(Dataset):
         context_crop_prob=0.0,
         context_crop_min_sigma=32.0,
         no_random_scale=False,
+        random_scale_min=0.8,
+        random_scale_max=1.2,
     ):
         self.root_path = str(data_root)
         self.data_root = Path(data_root)
@@ -63,6 +65,14 @@ class NWPU(Dataset):
         self.context_crop_prob = max(0.0, min(1.0, float(context_crop_prob)))
         self.context_crop_min_sigma = max(1.0, float(context_crop_min_sigma))
         self.no_random_scale = bool(no_random_scale)
+        self.random_scale_min = float(random_scale_min)
+        self.random_scale_max = float(random_scale_max)
+        if not 0.0 < self.random_scale_min <= self.random_scale_max:
+            raise ValueError(
+                'NWPU random scale bounds must satisfy '
+                f'0 < min <= max, got {self.random_scale_min}, '
+                f'{self.random_scale_max}'
+            )
         self.official_localization = load_official_localization_data(
             self.data_root / f'{split}_gt_loc.txt'
         )
@@ -217,7 +227,12 @@ class NWPU(Dataset):
             else:
                 point_records = points
             if not self.no_random_scale:
-                img, point_records = safe_random_scale(img, point_records, patch_size)
+                img, point_records = safe_random_scale(
+                    img,
+                    point_records,
+                    patch_size,
+                    scale_range=(self.random_scale_min, self.random_scale_max),
+                )
             use_context_crop = (
                 sigma_valid
                 and point_records.shape[0] > 0
@@ -786,6 +801,8 @@ def build(image_set, args):
             context_crop_prob=getattr(args, 'nwpu_context_crop_prob', 0.0),
             context_crop_min_sigma=getattr(args, 'nwpu_context_crop_min_sigma', 32.0),
             no_random_scale=getattr(args, 'no_random_scale', False),
+            random_scale_min=getattr(args, 'nwpu_random_scale_min', 0.8),
+            random_scale_max=getattr(args, 'nwpu_random_scale_max', 1.2),
         )
     if image_set == 'train_eval':
         return NWPU(
