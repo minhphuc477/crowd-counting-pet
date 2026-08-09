@@ -1158,6 +1158,14 @@ def evaluate(
                 'abs_error': float(mae),
                 'sq_error': float(mse_sq),
             }
+            if float(eval_count_debug.get('tile_used', 0.0)) > 0.0:
+                raw_count_head = eval_count_debug.get('tile_scalar_raw')
+            else:
+                raw_count_head = outputs.get('count_pred')
+                if torch.is_tensor(raw_count_head):
+                    raw_count_head = float(raw_count_head.detach().float().reshape(-1)[0].item())
+            if raw_count_head is not None:
+                row['count_head_pred_cnt'] = float(raw_count_head)
             row.update({
                 f'dbg_{key}': float(value)
                 for key, value in eval_count_debug.items()
