@@ -1564,6 +1564,32 @@ MODEL_RECIPES['vgg_apglc_qnrf_tail_scale_rifi'] = {
     **TRANSFERABLE_SCALE_RIFI_OVERRIDES,
 }
 
+# QNRF Native-Resolution Tiled APG+LC.
+#
+# Enables adaptive high-resolution tiled evaluation from epoch 0. Capping
+# eval_max_size to 1536 degrades resolution on QNRF's average 2013x2902 images
+# and destroys fine distant heads. Tiling evaluates tiles at native resolution
+# and merges point predictions seamlessly.
+MODEL_RECIPES['vgg_apglc_qnrf_tiled'] = {
+    **MODEL_RECIPES['vgg_apglc_qnrf_tail'],
+    'eval_max_size': 0,
+    'eval_tile_size': 1536,
+    'eval_tile_overlap': 128,
+    'eval_tile_nms_radius': 8.0,
+    'eval_tile_max_tiles': 32,
+    'eval_tile_trigger_count': 1000.0,
+    'eval_tile_trigger_area': 2000000,
+    'eval_tile_merge_mode': 'ownership',
+    'lr_scheduler': 'step',
+    'lr_drop': 1000,
+    'lr_gamma': 0.1,
+}
+
+MODEL_RECIPES['vgg_apglc_qnrf_tiled_scale_rifi'] = {
+    **MODEL_RECIPES['vgg_apglc_qnrf_tiled'],
+    **TRANSFERABLE_SCALE_RIFI_OVERRIDES,
+}
+
 # QNRF reproducibility-first Scale-RIFI.
 #
 # The PET authors' QNRF issue guidance recommends disabling scale jitter,
@@ -2164,18 +2190,18 @@ EXPERIMENTAL_MODEL_RECIPES = {
     'vgg_apglc_density_routed_ifi_nwpu',
     'vgg_apglc_nwpu_tail_rifi',
     'vgg_apglc_nwpu_loc_repair_rifi',
-    'vgg_apglc_nwpu_loc_repair_counthead',
     'vgg_apglc_nwpu_zip_recount',
     'vgg_apglc_rifi',
     'vgg_apglc_scale_rifi',
     'vgg_apglc_ebc_router_scale_rifi',
     'vgg_apglc_scale_rifi_counthead_stage2',
     'vgg_apglc_qnrf_tail_scale_rifi',
+    'vgg_apglc_qnrf_tiled',
+    'vgg_apglc_qnrf_tiled_scale_rifi',
     'vgg_apglc_qnrf_stable_scale_rifi',
     'vgg_apglc_qnrf_sae_scale_rifi',
     'vgg_apglc_jhu_tail_scale_rifi',
     'vgg_apglc_ucfcc50_scale_rifi',
-    # The remaining paths are kept for audit/reproduction only. Session runs
     # showed catastrophic drift or failed to improve on the PET/APG+LC baselines.
     'vgg_apglc_cbme_late_countreg',
     'vgg_apglc_foreground',
