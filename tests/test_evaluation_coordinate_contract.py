@@ -113,6 +113,54 @@ class EvaluationCoordinateContractTest(unittest.TestCase):
         self.assertEqual(outputs['pred_points'].shape[1], 0)
         self.assertEqual(outputs['eval_count_debug']['tile_scalar_used'], 1.0)
 
+    def test_tiled_low_count_blend_gates_after_full_image_merge(self):
+        class GatedCountModel(nn.Module):
+            eval_count_source = 'count_head_low_blend'
+            eval_count_blend_alpha = 0.5
+            eval_count_tail_threshold = 10.0
+
+            def forward(self, samples, **_kwargs):
+                model_h, model_w = samples.tensors.shape[-2:]
+                point = samples.tensors.new_tensor([
+                    100.0 / float(model_h),
+                    100.0 / float(model_w),
+                ])
+                density = samples.tensors.new_ones((1, 2, 2))
+                return {
+                    'pred_points': point.reshape(1, 1, 2),
+                    'pred_logits': samples.tensors.new_tensor([[[0.0, 1.0]]]),
+                    'count_density': density,
+                    'count_for_mae': density.flatten(1).sum(dim=1),
+                }
+
+        samples = NestedTensor(
+            torch.zeros(1, 3, 512, 512),
+            torch.zeros(1, 512, 512, dtype=torch.bool),
+        )
+        model = GatedCountModel()
+        outputs, count = _predict_count_tiled(
+            model,
+            samples,
+            [{'points': torch.empty(0, 2)}],
+            tile_size=256,
+            tile_overlap=0,
+        )
+
+        # Four merged PET points and 16 owned density cells blend to 10.
+        self.assertEqual(count, 10.0)
+        self.assertEqual(outputs['eval_count_debug']['count_head_low_used'], 1.0)
+
+        model.eval_count_tail_threshold = 2.0
+        outputs, count = _predict_count_tiled(
+            model,
+            samples,
+            [{'points': torch.empty(0, 2)}],
+            tile_size=256,
+            tile_overlap=0,
+        )
+        self.assertEqual(count, 4.0)
+        self.assertEqual(outputs['eval_count_debug']['count_head_low_used'], 0.0)
+
     def test_resized_trigger_predictions_map_back_to_original_image(self):
         source_tensors = torch.zeros(1, 3, 256, 256)
         source_mask = torch.ones(1, 256, 256, dtype=torch.bool)

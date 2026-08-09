@@ -406,7 +406,7 @@ def get_args_parser():
     parser.add_argument('--eval_foreground_gate_mode', default='suppress', choices=('suppress', 'logit_add'))
     parser.add_argument('--eval_foreground_gate_strength', default=0.75, type=float)
     parser.add_argument('--eval_count_mode', default='threshold', choices=('threshold', 'count_head_topk'))
-    parser.add_argument('--eval_count_source', default='pet', choices=('pet', 'count_head', 'zip', 'zip_pet_blend', 'zip_tail_blend'))
+    parser.add_argument('--eval_count_source', default='pet', choices=('pet', 'count_head', 'count_head_low_blend', 'zip', 'zip_pet_blend', 'zip_tail_blend'))
     parser.add_argument('--eval_count_blend_alpha', default=0.5, type=float)
     parser.add_argument('--eval_count_tail_threshold', default=1500.0, type=float)
     parser.add_argument('--eval_count_head_min_score', default=0.5, type=float)

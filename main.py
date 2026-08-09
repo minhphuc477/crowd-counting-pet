@@ -3009,12 +3009,12 @@ def get_args_parser():
                         help='foreground gate strength during evaluation')
     parser.add_argument('--eval_count_mode', default='threshold', choices=('threshold', 'count_head_topk'),
                         help='threshold keeps PET behavior; count_head_topk keeps top-K APG candidates using the separate count head')
-    parser.add_argument('--eval_count_source', default='pet', choices=('pet', 'count_head', 'zip', 'zip_pet_blend', 'zip_tail_blend'),
+    parser.add_argument('--eval_count_source', default='pet', choices=('pet', 'count_head', 'count_head_low_blend', 'zip', 'zip_pet_blend', 'zip_tail_blend'),
                         help='count used for MAE/RMSE: pet counts thresholded points; count_head uses the scalar density-sum head without changing localization points; zip sums the EBC-ZIP branch; blend modes combine ZIP and PET counts')
     parser.add_argument('--eval_count_blend_alpha', default=0.5, type=float,
-                        help='ZIP weight for --eval_count_source zip_pet_blend; 0=PET count, 1=ZIP count')
+                        help='auxiliary-head blend weight; 0=PET count, 1=count/ZIP head')
     parser.add_argument('--eval_count_tail_threshold', default=1500.0, type=float,
-                        help='PET-count threshold for --eval_count_source zip_tail_blend')
+                        help='PET-count gate for zip_tail_blend or count_head_low_blend')
     parser.add_argument('--eval_count_head_min_score', default=0.5, type=float,
                         help='minimum candidate score before count-head top-K selection')
     parser.add_argument('--eval_dense_start_epoch', default=0, type=int,
@@ -3966,7 +3966,7 @@ def model_only_allowed_missing_prefixes(args):
     needs_count_head = (
         float(getattr(args, 'count_head_loss_coef', 0.0)) > 0
         or getattr(args, 'eval_count_mode', 'threshold') == 'count_head_topk'
-        or getattr(args, 'eval_count_source', 'pet') == 'count_head'
+        or getattr(args, 'eval_count_source', 'pet') in ('count_head', 'count_head_low_blend')
         or getattr(args, 'eval_score_calibration', 'none') == 'count_head_bias'
         or getattr(args, 'eval_dense_residual_mode', 'none') == 'count_head'
     )

@@ -1482,10 +1482,14 @@ class PET(nn.Module):
             )
 
         self.eval_count_source = getattr(args, 'eval_count_source', 'pet')
-        if self.eval_count_source not in ('pet', 'count_head', 'zip', 'zip_pet_blend', 'zip_tail_blend'):
+        if self.eval_count_source not in (
+            'pet', 'count_head', 'count_head_low_blend',
+            'zip', 'zip_pet_blend', 'zip_tail_blend',
+        ):
             raise ValueError(
                 'eval_count_source must be one of "pet", "count_head", '
-                '"zip", "zip_pet_blend", or "zip_tail_blend"'
+                '"count_head_low_blend", "zip", "zip_pet_blend", or '
+                '"zip_tail_blend"'
             )
         self.eval_count_blend_alpha = float(getattr(args, 'eval_count_blend_alpha', 0.5))
         if not 0.0 <= self.eval_count_blend_alpha <= 1.0:
@@ -1781,7 +1785,7 @@ class PET(nn.Module):
             self.count_head_loss_coef > 0
             or self.density_map_loss_coef > 0
             or self.eval_count_mode == 'count_head_topk'
-            or self.eval_count_source == 'count_head'
+            or self.eval_count_source in ('count_head', 'count_head_low_blend')
             or self.eval_score_calibration == 'count_head_bias'
             or self.eval_dense_residual_mode == 'count_head'
         )
@@ -5304,6 +5308,19 @@ class PET(nn.Module):
             div_out['count_density'] = outputs['count_density']
             if self.eval_count_source == 'count_head':
                 div_out['count_for_mae'] = outputs['count_pred']
+            elif self.eval_count_source == 'count_head_low_blend':
+                pet_count = outputs['count_pred'].new_full(
+                    outputs['count_pred'].shape,
+                    float(pred_logits.shape[0]),
+                )
+                alpha = self.eval_count_blend_alpha
+                blended_count = alpha * outputs['count_pred'] + (1.0 - alpha) * pet_count
+                use_count_head = pet_count <= self.eval_count_tail_threshold
+                div_out['count_for_mae'] = torch.where(use_count_head, blended_count, pet_count)
+                if self.eval_debug_counting:
+                    div_out.setdefault('eval_count_debug', {})['count_head_low_used'] = float(
+                        use_count_head[0].detach().float().item()
+                    )
         if 'zip_count_pred' in outputs:
             div_out['zip_count_pred'] = outputs['zip_count_pred']
             if self.eval_count_source == 'zip':

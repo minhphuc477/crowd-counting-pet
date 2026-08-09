@@ -770,6 +770,22 @@ def _predict_count_tiled(
 
         point_count = float(all_pts.shape[0])
         count = owned_scalar_count if has_owned_scalar_count else point_count
+        model_config = model.module if hasattr(model, 'module') else model
+        if (
+            has_owned_scalar_count
+            and getattr(model_config, 'eval_count_source', 'pet') == 'count_head_low_blend'
+        ):
+            # The gate must be applied after all tiles are merged. Applying it
+            # independently to each tile makes every dense full image look like
+            # a collection of low-count scenes and incorrectly selects the
+            # count head on the NWPU tail.
+            alpha = float(getattr(model_config, 'eval_count_blend_alpha', 0.5))
+            threshold = float(getattr(model_config, 'eval_count_tail_threshold', 1500.0))
+            use_count_head = point_count <= threshold
+            count = (
+                alpha * owned_scalar_count + (1.0 - alpha) * point_count
+                if use_count_head else point_count
+            )
         model_h, model_w = samples.tensors.shape[-2:]
         pts_norm = all_pts / all_pts.new_tensor([float(model_h), float(model_w)]) if all_pts.numel() > 0 \
             else torch.empty((0, 2), dtype=samples.tensors.dtype, device=samples.tensors.device)
@@ -782,8 +798,14 @@ def _predict_count_tiled(
             'eval_count_debug': {
                 'tile_count': float(len(pts_parts)),
                 'tile_point_final': point_count,
+                'tile_scalar_raw': float(owned_scalar_count),
                 'tile_final': count,
                 'tile_scalar_used': float(has_owned_scalar_count),
+                'count_head_low_used': float(
+                    has_owned_scalar_count
+                    and getattr(model_config, 'eval_count_source', 'pet') == 'count_head_low_blend'
+                    and point_count <= float(getattr(model_config, 'eval_count_tail_threshold', 1500.0))
+                ),
             },
         }
         if has_owned_scalar_count:
@@ -1132,6 +1154,7 @@ def evaluate(
                 'image_path': str(target.get('image_path', '')),
                 'gt_cnt': int(gt_cnt),
                 'pred_cnt': float(predict_cnt),
+                'pet_pred_cnt': int(pred_points_abs.shape[0]),
                 'abs_error': float(mae),
                 'sq_error': float(mse_sq),
             }

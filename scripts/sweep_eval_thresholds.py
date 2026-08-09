@@ -529,7 +529,7 @@ def get_args() -> argparse.Namespace:
     parser.add_argument(
         "--eval_count_sources",
         nargs="+",
-        choices=("checkpoint", "pet", "count_head", "zip", "zip_pet_blend", "zip_tail_blend"),
+        choices=("checkpoint", "pet", "count_head", "count_head_low_blend", "zip", "zip_pet_blend", "zip_tail_blend"),
         default=["checkpoint"],
         help="count source passed to eval.py; checkpoint preserves the checkpoint args",
     )
@@ -538,14 +538,14 @@ def get_args() -> argparse.Namespace:
         nargs="+",
         type=float,
         default=[0.5],
-        help="ZIP weights for eval_count_source=zip_pet_blend; 0=PET count, 1=ZIP count",
+        help="auxiliary-head weight for count-head/ZIP blend sources; 0=PET count, 1=auxiliary count",
     )
     parser.add_argument(
         "--eval_count_tail_thresholds",
         nargs="+",
         type=float,
         default=[1500.0],
-        help="PET-count trigger thresholds for eval_count_source=zip_tail_blend",
+        help="PET-count gate thresholds for zip_tail_blend or count_head_low_blend",
     )
     parser.add_argument(
         "--eval_count_head_min_scores",
