@@ -1564,6 +1564,56 @@ MODEL_RECIPES['vgg_apglc_qnrf_tail_scale_rifi'] = {
     **TRANSFERABLE_SCALE_RIFI_OVERRIDES,
 }
 
+# ZIP-aligned spatial recounting on the strongest fixed VGG QNRF detector.
+# This branch freezes PET/Scale-RIFI and trains an isolated context ZIP head;
+# existing detector checkpoints and point-localization behavior are unchanged.
+MODEL_RECIPES['vgg_apglc_qnrf_zip_recount_scale_rifi'] = {
+    **MODEL_RECIPES['vgg_apglc_qnrf_tail_scale_rifi'],
+    'train_zip_count_head_only': True,
+    'zip_count_loss_coef': 1.0,
+    'zip_count_loss_variant': 'paper',
+    'zip_count_head_variant': 'context',
+    'zip_count_block_size': 32,
+    'zip_count_feature_source': 'fpn4x8x',
+    'zip_count_bin_centers': (
+        '1,2,3,4,5,6,7,8,9,10,11.4309850967,13.4325785098,'
+        '15.436302706,17.437926239,19.4346368253,21.8313277988,'
+        '24.849660614,27.8719289982,31.243070164,38.8572258533'
+    ),
+    'zip_count_bin_ranges': (
+        '1:1,2:2,3:3,4:4,5:5,6:6,7:7,8:8,9:9,10:10,'
+        '11:12,13:14,15:16,17:18,19:20,21:23,24:26,27:29,30:33,34:inf'
+    ),
+    'zip_count_zero_prior': 0.95,
+    'zip_count_ce_coef': 1.0,
+    'zip_count_count_coef': 1.0,
+    'zip_count_multiscale_coef': 1.0,
+    'zip_count_multiscale_scales': '1,2,4',
+    'zip_count_start_epoch': 0,
+    'zip_count_end_epoch': -1,
+    'zip_count_warmup_epochs': 5,
+    'zip_count_feature_grad_scale': 0.0,
+    'eval_count_source': 'zip',
+    'patch_size_choices': '672',
+    'crop_attempts': 1,
+    'min_crop_points': 0,
+    'train_count_weight_power': 0.0,
+    'train_count_weight_max': 1.0,
+    'qnrf_random_scale_min': 0.75,
+    'qnrf_random_scale_max': 2.0,
+    'qnrf_random_resized_crop': True,
+    'qnrf_aug_brightness': 0.15,
+    'qnrf_aug_contrast': 0.15,
+    'qnrf_aug_saturation': 0.10,
+    'qnrf_aug_saltiness': 0.001,
+    'qnrf_aug_spiciness': 0.001,
+    # The currently distributed archive contains three train JPEG/annotation
+    # pairs with grossly incompatible canvases. Keep their points in audits,
+    # but do not supervise a model with mostly off-canvas coordinates.
+    'qnrf_max_train_outside_fraction': 0.25,
+    'freeze_bn': True,
+}
+
 # QNRF Native-Resolution Tiled APG+LC.
 #
 # Enables adaptive high-resolution tiled evaluation from epoch 0. Capping
@@ -2089,6 +2139,7 @@ MODEL_RECIPES['vgg_apglc_nwpu_zip_recount'] = {
     # Official NWPU block-16 bins are 1..9 and 10-inf. The final center is
     # the count-frequency weighted mean published with ZIP.
     'zip_count_bin_centers': '1,2,3,4,5,6,7,8,9,12.1610791333',
+    'zip_count_bin_ranges': '1:1,2:2,3:3,4:4,5:5,6:6,7:7,8:8,9:9,10:inf',
     'zip_count_zero_prior': 0.9,
     'zip_count_ce_coef': 1.0,
     'zip_count_count_coef': 1.0,
@@ -2196,6 +2247,7 @@ EXPERIMENTAL_MODEL_RECIPES = {
     'vgg_apglc_ebc_router_scale_rifi',
     'vgg_apglc_scale_rifi_counthead_stage2',
     'vgg_apglc_qnrf_tail_scale_rifi',
+    'vgg_apglc_qnrf_zip_recount_scale_rifi',
     'vgg_apglc_qnrf_tiled',
     'vgg_apglc_qnrf_tiled_scale_rifi',
     'vgg_apglc_qnrf_stable_scale_rifi',
@@ -2363,6 +2415,8 @@ ARCHITECTURE_OVERRIDE_KEYS = {
     'zip_count_block_size',
     'zip_count_feature_source',
     'zip_count_bin_centers',
+    'zip_count_bin_ranges',
+    'zip_count_head_variant',
     'zip_count_zero_prior',
     'zip_count_ce_coef',
     'zip_count_count_coef',
@@ -2615,6 +2669,10 @@ def get_args_parser():
     parser.add_argument('--zip_count_bin_centers',
                         default='1,2,3,4,5,6,7,8,9,10,11.38,13.38,16.26', type=str,
                         help='comma-separated positive block-count centers used by the ZIP count branch')
+    parser.add_argument('--zip_count_bin_ranges', default='', type=str,
+                        help='comma-separated inclusive positive ZIP bins, e.g. 1:1,2:3,4:inf')
+    parser.add_argument('--zip_count_head_variant', default='lite', choices=('lite', 'context'),
+                        help='lite preserves legacy ZIP; context adds masked multi-dilation refinement')
     parser.add_argument('--zip_count_zero_prior', default=0.9, type=float,
                         help='initial structural-zero probability for the ZIP count branch')
     parser.add_argument('--zip_count_ce_coef', default=1.0, type=float,
@@ -3213,6 +3271,22 @@ def get_args_parser():
                         help='NWPU train-only lower bound for random scale jitter')
     parser.add_argument('--nwpu_random_scale_max', default=1.2, type=float,
                         help='NWPU train-only upper bound for random scale jitter')
+    parser.add_argument('--qnrf_random_scale_min', default=0.8, type=float,
+                        help='QNRF train-only lower bound for random scale jitter')
+    parser.add_argument('--qnrf_random_scale_max', default=1.2, type=float,
+                        help='QNRF train-only upper bound for random scale jitter')
+    parser.add_argument('--qnrf_random_resized_crop', action='store_true',
+                        help='QNRF train only: crop at patch_size*scale and resize back to patch_size')
+    parser.add_argument('--qnrf_aug_brightness', default=0.0, type=float,
+                        help='QNRF train-only brightness jitter magnitude')
+    parser.add_argument('--qnrf_aug_contrast', default=0.0, type=float,
+                        help='QNRF train-only contrast jitter magnitude')
+    parser.add_argument('--qnrf_aug_saturation', default=0.0, type=float,
+                        help='QNRF train-only saturation jitter magnitude')
+    parser.add_argument('--qnrf_aug_saltiness', default=0.0, type=float,
+                        help='QNRF train-only probability of replacing a normalized RGB value with white')
+    parser.add_argument('--qnrf_aug_spiciness', default=0.0, type=float,
+                        help='QNRF train-only probability of replacing a normalized RGB value with black')
     parser.add_argument('--train_count_weight_power', default=0.0, type=float,
                         help='sample training images with weight (count+1)^power; 0 keeps uniform sampling')
     parser.add_argument('--train_count_weight_max', default=8.0, type=float,
@@ -3425,6 +3499,18 @@ def sanitize_unstable_training_args(args):
             'stage and requires a trained NWPU detector/localizer checkpoint '
             'via --resume and --resume_model_only.'
         )
+    if recipe_name == 'vgg_apglc_qnrf_zip_recount_scale_rifi':
+        if fresh_train:
+            raise ValueError(
+                'model_recipe=vgg_apglc_qnrf_zip_recount_scale_rifi requires '
+                'a trained vgg_apglc_qnrf_tail_scale_rifi checkpoint via '
+                '--resume and --resume_model_only.'
+            )
+        if not bool(getattr(args, 'resume_model_only', False)):
+            raise ValueError(
+                'model_recipe=vgg_apglc_qnrf_zip_recount_scale_rifi must use '
+                '--resume_model_only because the ZIP head and optimizer are new.'
+            )
     if count_coef > 0 and fresh_train and not bool(getattr(args, 'allow_count_head_fresh_train', False)):
         print(
             'WARNING: --count_head_loss_coef was requested for fresh training but is disabled by default. '
@@ -3695,6 +3781,10 @@ def merge_checkpoint_args(args, checkpoint):
         'nwpu_dense_crop_prob', 'nwpu_dense_crop_attempts',
         'nwpu_context_crop_prob', 'nwpu_context_crop_min_sigma',
         'nwpu_random_scale_min', 'nwpu_random_scale_max',
+        'qnrf_random_scale_min', 'qnrf_random_scale_max',
+        'qnrf_random_resized_crop',
+        'qnrf_aug_brightness', 'qnrf_aug_contrast', 'qnrf_aug_saturation',
+        'qnrf_aug_saltiness', 'qnrf_aug_spiciness',
         'train_count_weight_power', 'train_count_weight_max', 'train_sample_multiplier',
         'no_localization_metrics', 'localization_large_threshold', 'localization_small_threshold',
         'localization_protocol', 'localization_large_scale', 'localization_small_scale',
@@ -3775,6 +3865,7 @@ def merge_checkpoint_args(args, checkpoint):
             'measure_loss_sinkhorn_iters', 'measure_loss_sinkhorn_epsilon',
             'measure_loss_init_count', 'measure_loss_init_cells',
             'zip_count_loss_coef', 'zip_count_block_size', 'zip_count_feature_source', 'zip_count_bin_centers',
+            'zip_count_bin_ranges', 'zip_count_head_variant',
             'zip_count_zero_prior', 'zip_count_ce_coef', 'zip_count_count_coef',
             'zip_count_loss_variant', 'zip_count_multiscale_coef',
             'zip_count_multiscale_scales', 'train_zip_count_head_only',
@@ -5248,6 +5339,10 @@ def main(args):
             args.clip_max_norm, model_ema=model_ema, model_without_ddp=model_without_ddp,
             freeze_bn=getattr(args, 'freeze_bn', False),
             localization_repair_only=getattr(args, 'train_localization_repair_only', False),
+            auxiliary_head_only=(
+                getattr(args, 'train_count_head_only', False)
+                or getattr(args, 'train_zip_count_head_only', False)
+            ),
             amp_enabled=amp_enabled,
             scaler=scaler,
             amp_dtype=amp_dtype,

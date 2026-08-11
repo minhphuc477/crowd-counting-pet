@@ -86,6 +86,53 @@ def _parse_float_list(value, default, name):
     return values
 
 
+def _parse_count_bin_ranges(value, expected_count, name):
+    """Parse inclusive positive-count intervals such as ``1:1,2:3,4:inf``."""
+    if value is None or value == '':
+        return None
+    chunks = [part.strip() for part in str(value).split(',') if part.strip()]
+    ranges = []
+    for chunk in chunks:
+        bounds = [part.strip().lower() for part in chunk.split(':')]
+        if len(bounds) != 2:
+            raise ValueError(f'{name} entries must use lower:upper, got {chunk!r}')
+        lower = float(bounds[0])
+        upper = float('inf') if bounds[1] in ('inf', 'infinity') else float(bounds[1])
+        if not math.isfinite(lower) or lower <= 0 or upper < lower:
+            raise ValueError(f'{name} contains an invalid interval {chunk!r}')
+        if ranges and lower != ranges[-1][1] + 1.0:
+            raise ValueError(f'{name} intervals must be contiguous integer counts')
+        ranges.append((lower, upper))
+    if len(ranges) != int(expected_count):
+        raise ValueError(
+            f'{name} must contain {expected_count} intervals, got {len(ranges)}'
+        )
+    if not math.isinf(ranges[-1][1]):
+        raise ValueError(f'{name} final interval must end at inf')
+    return ranges
+
+
+def _point_block_indices(
+    points,
+    block_h,
+    block_w,
+    image_h,
+    image_w,
+    pixel_block_size=None,
+):
+    """Map ``(y, x)`` points to a block grid without stretching edge blocks."""
+    if pixel_block_size is not None:
+        pixel_block_size = int(pixel_block_size)
+        if pixel_block_size <= 0:
+            raise ValueError('pixel_block_size must be positive')
+        y = torch.floor(points[:, 0] / float(pixel_block_size)).long()
+        x = torch.floor(points[:, 1] / float(pixel_block_size)).long()
+    else:
+        y = torch.floor(points[:, 0] / max(float(image_h), 1.0) * block_h).long()
+        x = torch.floor(points[:, 1] / max(float(image_w), 1.0) * block_w).long()
+    return y.clamp(0, block_h - 1), x.clamp(0, block_w - 1)
+
+
 def _valid_image_shape(samples, device=None):
     """Return [H, W] of the non-padded image area.
 
@@ -1147,6 +1194,43 @@ class MeasureDensityHead(nn.Module):
         return density, density.flatten(1).sum(dim=1)
 
 
+class _ChannelLayerNorm2d(nn.Module):
+    """Normalize channels per pixel without mixing padded and valid pixels."""
+
+    def __init__(self, channels):
+        super().__init__()
+        self.norm = nn.LayerNorm(channels)
+
+    def forward(self, x):
+        return self.norm(x.permute(0, 2, 3, 1)).permute(0, 3, 1, 2)
+
+
+class _ZIPContextBlock(nn.Module):
+    def __init__(self, channels, dilation):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Conv2d(
+                channels,
+                channels,
+                3,
+                padding=int(dilation),
+                dilation=int(dilation),
+                groups=channels,
+                bias=False,
+            ),
+            _ChannelLayerNorm2d(channels),
+            nn.GELU(),
+            nn.Conv2d(channels, channels, 1, bias=False),
+            _ChannelLayerNorm2d(channels),
+        )
+
+    def forward(self, x, valid=None):
+        x = F.gelu(x + self.net(x))
+        if valid is not None:
+            x = x * valid
+        return x
+
+
 class EBCZipCountHead(nn.Module):
     """Blockwise Zero-Inflated Poisson count head.
 
@@ -1161,8 +1245,10 @@ class EBCZipCountHead(nn.Module):
         hidden_dim,
         block_stride=2,
         count_bin_centers=(1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.38, 13.38, 16.26),
+        count_bin_ranges=None,
         zero_prior=0.9,
         use_detail=False,
+        variant='lite',
     ):
         super().__init__()
         self.block_stride = max(1, int(block_stride))
@@ -1175,21 +1261,51 @@ class EBCZipCountHead(nn.Module):
         if float(centers[0]) <= 0:
             raise ValueError('zip count bin centers must be positive')
         self.register_buffer('count_bin_centers', centers)
+        parsed_ranges = _parse_count_bin_ranges(
+            count_bin_ranges,
+            centers.numel(),
+            'zip_count_bin_ranges',
+        )
+        if parsed_ranges is None:
+            self.register_buffer('count_bin_lower', torch.empty(0, dtype=torch.float32))
+            self.register_buffer('count_bin_upper', torch.empty(0, dtype=torch.float32))
+        else:
+            self.register_buffer(
+                'count_bin_lower',
+                torch.as_tensor([bounds[0] for bounds in parsed_ranges], dtype=torch.float32),
+            )
+            self.register_buffer(
+                'count_bin_upper',
+                torch.as_tensor([bounds[1] for bounds in parsed_ranges], dtype=torch.float32),
+            )
+        self.variant = str(variant)
+        if self.variant not in ('lite', 'context'):
+            raise ValueError('ZIP count head variant must be "lite" or "context"')
 
         in_channels = hidden_dim * 2 if self.use_detail else hidden_dim
-        self.fusion = nn.Sequential(
-            nn.Conv2d(in_channels, hidden_dim, 1, bias=False),
-            _make_group_norm(hidden_dim),
-            nn.GELU(),
-        )
-        self.encoder = nn.Sequential(
-            nn.Conv2d(hidden_dim, hidden_dim, 3, padding=1, groups=hidden_dim, bias=False),
-            _make_group_norm(hidden_dim),
-            nn.GELU(),
-            nn.Conv2d(hidden_dim, hidden_dim, 1, bias=False),
-            _make_group_norm(hidden_dim),
-            nn.GELU(),
-        )
+        if self.variant == 'context':
+            self.fusion = nn.Sequential(
+                nn.Conv2d(in_channels, hidden_dim, 1, bias=False),
+                _ChannelLayerNorm2d(hidden_dim),
+                nn.GELU(),
+            )
+            self.encoder = nn.ModuleList([
+                _ZIPContextBlock(hidden_dim, dilation) for dilation in (1, 2, 4)
+            ])
+        else:
+            self.fusion = nn.Sequential(
+                nn.Conv2d(in_channels, hidden_dim, 1, bias=False),
+                _make_group_norm(hidden_dim),
+                nn.GELU(),
+            )
+            self.encoder = nn.Sequential(
+                nn.Conv2d(hidden_dim, hidden_dim, 3, padding=1, groups=hidden_dim, bias=False),
+                _make_group_norm(hidden_dim),
+                nn.GELU(),
+                nn.Conv2d(hidden_dim, hidden_dim, 1, bias=False),
+                _make_group_norm(hidden_dim),
+                nn.GELU(),
+            )
         self.lambda_head = nn.Conv2d(hidden_dim, centers.numel(), 1)
         self.zero_head = nn.Conv2d(hidden_dim, 1, 1)
 
@@ -1201,7 +1317,19 @@ class EBCZipCountHead(nn.Module):
         # Bias the positive component toward a single head per occupied block.
         self.lambda_head.bias.data[0] = 4.0
 
-    def forward(self, x, detail=None):
+    def assign_positive_bins(self, counts):
+        if self.count_bin_lower.numel() == 0:
+            centers = self.count_bin_centers.to(device=counts.device, dtype=counts.dtype)
+            return (counts.unsqueeze(1) - centers.unsqueeze(0)).abs().argmin(dim=1)
+        lower = self.count_bin_lower.to(device=counts.device, dtype=counts.dtype)
+        upper = self.count_bin_upper.to(device=counts.device, dtype=counts.dtype)
+        membership = (counts[:, None] >= lower[None]) & (counts[:, None] <= upper[None])
+        if not bool(membership.any(dim=1).all()):
+            missing = counts[~membership.any(dim=1)].detach().cpu().tolist()
+            raise ValueError(f'positive counts are outside configured ZIP intervals: {missing[:8]}')
+        return membership.to(dtype=torch.int64).argmax(dim=1)
+
+    def forward(self, x, detail=None, detail_mask=None):
         if self.use_detail:
             if detail is None:
                 raise ValueError('EBCZipCountHead with use_detail=True requires detail features')
@@ -1209,25 +1337,53 @@ class EBCZipCountHead(nn.Module):
             x = torch.cat([detail.float(), x.float()], dim=1)
         else:
             x = x.float()
+        valid = None
+        if detail_mask is not None:
+            valid = (~detail_mask).to(device=x.device, dtype=x.dtype)[:, None]
+            if valid.shape[-2:] != x.shape[-2:]:
+                valid = F.interpolate(valid, size=x.shape[-2:], mode='nearest')
+            x = x * valid
         x = self.fusion(x)
-        x = self.encoder(x.float())
+        if valid is not None:
+            x = x * valid
+        if self.variant == 'context':
+            for block_layer in self.encoder:
+                x = block_layer(x.float(), valid)
+        else:
+            x = self.encoder(x.float())
+            if valid is not None:
+                x = x * valid
         block = F.avg_pool2d(
-            x,
+            x if valid is None else x * valid,
             kernel_size=self.block_stride,
             stride=self.block_stride,
             ceil_mode=True,
             count_include_pad=False,
         )
+        valid_fraction = None
+        if valid is not None:
+            valid_fraction = F.avg_pool2d(
+                valid,
+                kernel_size=self.block_stride,
+                stride=self.block_stride,
+                ceil_mode=True,
+                count_include_pad=False,
+            ).clamp(min=0.0, max=1.0)
+            block = block / valid_fraction.clamp(min=1e-6)
+            block = block * (valid_fraction > 0).to(block.dtype)
         lambda_logits = self.lambda_head(block)
         zero_logits = self.zero_head(block).squeeze(1)
         centers = self.count_bin_centers.to(device=lambda_logits.device, dtype=lambda_logits.dtype)
         positive_rate = (lambda_logits.softmax(dim=1) * centers[None, :, None, None]).sum(dim=1)
         expected_count = (1.0 - zero_logits.sigmoid()) * positive_rate
+        if valid_fraction is not None:
+            expected_count = expected_count * valid_fraction.squeeze(1)
         return {
             'lambda_logits': lambda_logits,
             'zero_logits': zero_logits,
             'positive_rate': positive_rate,
             'expected_count': expected_count,
+            'valid_fraction': valid_fraction.squeeze(1) if valid_fraction is not None else None,
         }
 
 
@@ -1498,6 +1654,7 @@ class PET(nn.Module):
         if self.eval_count_tail_threshold < 0.0:
             raise ValueError('eval_count_tail_threshold must be non-negative')
         self.zip_count_loss_coef = max(0.0, float(getattr(args, 'zip_count_loss_coef', 0.0)))
+        self.train_zip_count_head_only = bool(getattr(args, 'train_zip_count_head_only', False))
         self.zip_count_ce_coef = max(0.0, float(getattr(args, 'zip_count_ce_coef', 1.0)))
         self.zip_count_count_coef = max(0.0, float(getattr(args, 'zip_count_count_coef', 1.0)))
         self.zip_count_loss_variant = str(getattr(args, 'zip_count_loss_variant', 'legacy'))
@@ -1519,6 +1676,7 @@ class PET(nn.Module):
         if self.zip_count_feature_source not in ('encoder8x', 'fpn4x8x'):
             raise ValueError('zip_count_feature_source must be one of "encoder8x" or "fpn4x8x"')
         zip_count_block_size = int(getattr(args, 'zip_count_block_size', 16))
+        self.zip_count_block_size = zip_count_block_size
         zip_feature_stride = 4 if self.zip_count_feature_source == 'fpn4x8x' else int(self.encode_feats[:-1])
         if zip_count_block_size < zip_feature_stride or zip_count_block_size % zip_feature_stride != 0:
             raise ValueError(
@@ -1536,8 +1694,10 @@ class PET(nn.Module):
                 (1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.38, 13.38, 16.26),
                 'zip_count_bin_centers',
             ),
+            'count_bin_ranges': getattr(args, 'zip_count_bin_ranges', ''),
             'zero_prior': getattr(args, 'zip_count_zero_prior', 0.9),
             'use_detail': self.zip_count_feature_source == 'fpn4x8x',
+            'variant': getattr(args, 'zip_count_head_variant', 'lite'),
         }
 
         # Quadtree routing.  The EBC router is an independent experimental
@@ -2194,7 +2354,13 @@ class PET(nn.Module):
             dense_targets.extend(targets[bs:])
         return sparse_targets, dense_targets
 
-    def build_local_block_targets(self, local_output, targets, samples):
+    def build_local_block_targets(
+        self,
+        local_output,
+        targets,
+        samples,
+        pixel_block_size=None,
+    ):
         expected_count = local_output['expected_count']
         bs, block_h, block_w = expected_count.shape
         counts = expected_count.new_zeros((bs, block_h, block_w), dtype=torch.float32)
@@ -2203,13 +2369,21 @@ class PET(nn.Module):
             points = target['points'].to(device=counts.device, dtype=counts.dtype)
             if points.numel() == 0:
                 continue
-            y = torch.clamp((points[:, 0] / max(float(img_h), 1.0) * block_h).long(), 0, block_h - 1)
-            x = torch.clamp((points[:, 1] / max(float(img_w), 1.0) * block_w).long(), 0, block_w - 1)
+            y, x = _point_block_indices(
+                points,
+                block_h,
+                block_w,
+                img_h,
+                img_w,
+                pixel_block_size=pixel_block_size,
+            )
             linear = y * block_w + x
             flat = counts[batch_idx].view(-1)
             flat.scatter_add_(0, linear, torch.ones_like(linear, dtype=flat.dtype))
 
-        if samples.mask is None:
+        if local_output.get('valid_fraction') is not None:
+            valid = local_output['valid_fraction'].to(device=counts.device) > 0
+        elif samples.mask is None:
             valid = torch.ones_like(counts, dtype=torch.bool)
         else:
             invalid = F.adaptive_max_pool2d(
@@ -2294,7 +2468,12 @@ class PET(nn.Module):
                 'loss_zip_msmae': zero,
             }
 
-        counts, valid = self.build_local_block_targets(zip_output, targets, samples)
+        counts, valid = self.build_local_block_targets(
+            zip_output,
+            targets,
+            samples,
+            pixel_block_size=self.zip_count_block_size,
+        )
         lambda_logits = zip_output['lambda_logits'].float()
         zero_logits = zip_output['zero_logits'].float()
         positive_rate = zip_output['positive_rate'].float().clamp(min=1e-4, max=1e4)
@@ -2319,26 +2498,7 @@ class PET(nn.Module):
 
         positive = valid & (counts > 0)
         if positive.any():
-            centers = self.zip_count_head.count_bin_centers.to(device=counts.device, dtype=counts.dtype)
-            exact_prefix = torch.arange(
-                1,
-                centers.numel(),
-                device=centers.device,
-                dtype=centers.dtype,
-            )
-            if (
-                self.zip_count_loss_variant == 'paper'
-                and torch.allclose(centers[:-1], exact_prefix)
-            ):
-                # NWPU block-16 bins are 1,2,...,9,10-inf. Nearest-center
-                # assignment would incorrectly map count=10 to center 9.
-                bin_target = (counts[positive].round().long() - 1).clamp(
-                    min=0, max=centers.numel() - 1
-                )
-            else:
-                bin_target = (
-                    counts[positive].unsqueeze(1) - centers.unsqueeze(0)
-                ).abs().argmin(dim=1)
+            bin_target = self.zip_count_head.assign_positive_bins(counts[positive])
             positive_logits = lambda_logits.permute(0, 2, 3, 1)[positive]
             positive_ce = F.cross_entropy(positive_logits, bin_target, reduction='none')
             if self.zip_count_loss_variant == 'paper':
@@ -5182,8 +5342,16 @@ class PET(nn.Module):
                     zip_detail = zip_detail.detach().float()
                 else:
                     zip_detail = (zip_detail.detach() + scale * (zip_detail - zip_detail.detach())).float()
-            zip_count_output = self.zip_count_head(self.zip_count_features(encode_src), detail=zip_detail)
-            zip_valid = self.build_block_valid_mask(zip_count_output['expected_count'], samples)
+            zip_detail_mask = features['4x'].mask if zip_detail is not None else mask
+            zip_count_output = self.zip_count_head(
+                self.zip_count_features(encode_src),
+                detail=zip_detail,
+                detail_mask=zip_detail_mask,
+            )
+            if zip_count_output.get('valid_fraction') is not None:
+                zip_valid = zip_count_output['valid_fraction'] > 0
+            else:
+                zip_valid = self.build_block_valid_mask(zip_count_output['expected_count'], samples)
             zip_count_output['valid'] = zip_valid
             zip_count_pred = (zip_count_output['expected_count'].float() * zip_valid).flatten(1).sum(dim=1)
             outputs['zip_count'] = zip_count_output
@@ -5197,12 +5365,68 @@ class PET(nn.Module):
         return outputs
     
     def train_forward(self, samples, features, pos, **kwargs):
+        if self.train_zip_count_head_only:
+            return self.train_zip_count_head_forward(samples, features, pos, **kwargs)
         outputs = self.pet_forward(samples, features, pos, **kwargs)
 
         # compute loss
         criterion, targets, epoch = kwargs['criterion'], kwargs['targets'], kwargs['epoch']
         losses = self.compute_loss(outputs, criterion, targets, epoch, samples)
         return losses
+
+    def train_zip_count_head_forward(self, samples, features, pos, **kwargs):
+        """Train the detached spatial recount head without running PET decoders."""
+        if self.zip_count_head is None:
+            raise RuntimeError('ZIP-head-only forward requires an enabled ZIP count head')
+        src, mask = features[self.encode_feats].decompose()
+        src_pos_embed = pos[self.encode_feats]
+        if mask is None:
+            raise ValueError('ZIP-head-only forward requires a feature padding mask')
+        encode_src = self.context_encoder(src, src_pos_embed, mask)
+        encode_src = self.perspective_mixer(encode_src)
+        encode_src = self.quad_context_mixer(encode_src)
+
+        zip_detail = features['4x'].tensors if self.zip_count_feature_source == 'fpn4x8x' else None
+        zip_detail_mask = features['4x'].mask if zip_detail is not None else mask
+        zip_output = self.zip_count_head(
+            self.zip_count_features(encode_src),
+            detail=zip_detail,
+            detail_mask=zip_detail_mask,
+        )
+        zip_output['valid'] = (
+            zip_output['valid_fraction'] > 0
+            if zip_output.get('valid_fraction') is not None
+            else self.build_block_valid_mask(zip_output['expected_count'], samples)
+        )
+        outputs = {
+            'zip_count': zip_output,
+            'zip_count_pred': (
+                zip_output['expected_count'].float() * zip_output['valid']
+            ).flatten(1).sum(dim=1),
+        }
+        epoch = int(kwargs['epoch'])
+        zip_losses = self.compute_zip_count_losses(
+            outputs,
+            kwargs['targets'],
+            samples,
+        )
+        active = epoch >= self.zip_count_start_epoch and (
+            self.zip_count_end_epoch < 0 or epoch <= self.zip_count_end_epoch
+        )
+        weight = self.schedule_weight(
+            epoch,
+            self.zip_count_start_epoch,
+            self.zip_count_warmup_epochs,
+            self.zip_count_loss_coef,
+        ) if active else 0.0
+        weights = {
+            'loss_zip_nll': weight,
+            'loss_zip_ce': weight * self.zip_count_ce_coef,
+            'loss_zip_count': weight * self.zip_count_count_coef,
+            'loss_zip_msmae': weight * self.zip_count_multiscale_coef,
+        }
+        losses = sum(zip_losses[name] * weights[name] for name in zip_losses)
+        return {'loss_dict': zip_losses, 'weight_dict': weights, 'losses': losses}
     
     def test_forward(self, samples, features, pos, **kwargs):
         outputs = self.pet_forward(samples, features, pos, **kwargs)

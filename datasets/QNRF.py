@@ -6,13 +6,66 @@ import random
 import numpy as np
 import scipy.io as io
 import torch
+import torch.nn.functional as F
 import torchvision.transforms as standard_transforms
+import torchvision.transforms.functional as transform_functional
 from PIL import Image
 from torch.utils.data import Dataset
 
 from .image_io import load_rgb_image
 from .SHA import IMAGE_EXTENSIONS, random_crop_with_retries, safe_random_scale
 from .SHA import _parse_patch_size_choices
+
+
+def random_resized_square_crop(img, points, output_size, scale_range):
+    """ZIP-style square crop at ``output_size * scale``, resized to output size."""
+    output_size = int(output_size)
+    if output_size <= 0:
+        raise ValueError('random resized crop output_size must be positive')
+    points = points.copy()
+    scale = random.uniform(*scale_range)
+    crop_size = max(1, int(output_size * scale))
+    height, width = img.shape[-2:]
+    if crop_size > height or crop_size > width:
+        ratio = max(crop_size / max(height, 1), crop_size / max(width, 1))
+        new_height = max(crop_size, int(height * ratio) + 1)
+        new_width = max(crop_size, int(width * ratio) + 1)
+        img = F.interpolate(
+            img[None],
+            size=(new_height, new_width),
+            mode='bicubic',
+            align_corners=False,
+            antialias=True,
+        )[0]
+        if points.shape[0] > 0:
+            points[:, 0] *= new_height / max(float(height), 1.0)
+            points[:, 1] *= new_width / max(float(width), 1.0)
+        height, width = new_height, new_width
+
+    top = random.randint(0, height - crop_size)
+    left = random.randint(0, width - crop_size)
+    img = img[:, top:top + crop_size, left:left + crop_size]
+    if points.shape[0] > 0:
+        keep = (
+            (points[:, 0] >= top)
+            & (points[:, 0] < top + crop_size)
+            & (points[:, 1] >= left)
+            & (points[:, 1] < left + crop_size)
+        )
+        points = points[keep].copy()
+        points[:, 0] -= top
+        points[:, 1] -= left
+    if crop_size != output_size:
+        img = F.interpolate(
+            img[None],
+            size=(output_size, output_size),
+            mode='bicubic',
+            align_corners=False,
+            antialias=True,
+        )[0]
+        if points.shape[0] > 0:
+            points *= output_size / float(crop_size)
+    return img, points
 
 
 def _file_sha256(path):
@@ -36,6 +89,14 @@ class QNRF(Dataset):
         min_crop_points=0,
         eval_max_size=1536,
         no_random_scale=False,
+        random_scale_min=0.8,
+        random_scale_max=1.2,
+        random_resized_crop=False,
+        aug_brightness=0.0,
+        aug_contrast=0.0,
+        aug_saturation=0.0,
+        aug_saltiness=0.0,
+        aug_spiciness=0.0,
         annotation_override_dir='',
         max_train_outside_fraction=1.0,
     ):
@@ -200,7 +261,51 @@ class QNRF(Dataset):
         self.min_crop_points = max(0, int(min_crop_points))
         self.eval_max_size = int(eval_max_size) if eval_max_size is not None else 1536
         self.no_random_scale = bool(no_random_scale)
+        self.random_scale_min = float(random_scale_min)
+        self.random_scale_max = float(random_scale_max)
+        if not 0.0 < self.random_scale_min <= self.random_scale_max:
+            raise ValueError(
+                'QNRF random scale range must satisfy 0 < min <= max, got '
+                f'{self.random_scale_min}, {self.random_scale_max}'
+            )
+        self.random_resized_crop = bool(random_resized_crop)
+        self.aug_brightness = max(0.0, float(aug_brightness))
+        self.aug_contrast = max(0.0, float(aug_contrast))
+        self.aug_saturation = max(0.0, float(aug_saturation))
+        self.aug_saltiness = float(aug_saltiness)
+        self.aug_spiciness = float(aug_spiciness)
+        if not 0.0 <= self.aug_saltiness <= 1.0 or not 0.0 <= self.aug_spiciness <= 1.0:
+            raise ValueError('QNRF salt/pepper probabilities must be in [0, 1]')
         self.sample_counts = None
+
+    def apply_photometric_augmentation(self, img):
+        if not any((
+            self.aug_brightness,
+            self.aug_contrast,
+            self.aug_saturation,
+            self.aug_saltiness,
+            self.aug_spiciness,
+        )):
+            return img
+        mean = img.new_tensor([0.485, 0.456, 0.406])[:, None, None]
+        std = img.new_tensor([0.229, 0.224, 0.225])[:, None, None]
+        img = (img * std + mean).clamp(0.0, 1.0)
+        operations = []
+        if self.aug_brightness > 0:
+            operations.append(('brightness', random.uniform(1 - self.aug_brightness, 1 + self.aug_brightness)))
+        if self.aug_contrast > 0:
+            operations.append(('contrast', random.uniform(1 - self.aug_contrast, 1 + self.aug_contrast)))
+        if self.aug_saturation > 0:
+            operations.append(('saturation', random.uniform(1 - self.aug_saturation, 1 + self.aug_saturation)))
+        random.shuffle(operations)
+        for name, factor in operations:
+            adjust = getattr(transform_functional, f'adjust_{name}')
+            img = adjust(img, factor)
+        if self.aug_saltiness > 0 or self.aug_spiciness > 0:
+            noise = torch.rand_like(img)
+            img = torch.where(noise < self.aug_saltiness, 1.0, img)
+            img = torch.where(noise > 1.0 - self.aug_spiciness, 0.0, img)
+        return (img.clamp(0.0, 1.0) - mean) / std
 
     def compute_density(self, points):
         points_tensor = torch.from_numpy(points.copy())
@@ -241,21 +346,36 @@ class QNRF(Dataset):
         patch_size = random.choice(self.patch_size_choices) if self.train else int(self.patch_size)
 
         if self.train:
-            if not self.no_random_scale:
-                img, points = safe_random_scale(img, points, patch_size)
+            if self.random_resized_crop:
+                img, points = random_resized_square_crop(
+                    img,
+                    points,
+                    patch_size,
+                    (self.random_scale_min, self.random_scale_max),
+                )
+            elif not self.no_random_scale:
+                img, points = safe_random_scale(
+                    img,
+                    points,
+                    patch_size,
+                    scale_range=(self.random_scale_min, self.random_scale_max),
+                )
 
-            img, points = random_crop_with_retries(
-                img,
-                points,
-                patch_size=patch_size,
-                attempts=self.crop_attempts,
-                min_points=self.min_crop_points,
-            )
+            if not self.random_resized_crop:
+                img, points = random_crop_with_retries(
+                    img,
+                    points,
+                    patch_size=patch_size,
+                    attempts=self.crop_attempts,
+                    min_points=self.min_crop_points,
+                )
 
         if random.random() > 0.5 and self.train and self.flip:
             img = torch.flip(img, dims=[2])
             if points.shape[0] > 0:
                 points[:, 1] = (img.shape[2] - 1) - points[:, 1]
+        if self.train:
+            img = self.apply_photometric_augmentation(img)
 
         target = {
             'points': torch.as_tensor(points, dtype=torch.float32),
@@ -458,6 +578,14 @@ def build(image_set, args):
             min_crop_points=getattr(args, 'min_crop_points', 0),
             eval_max_size=eval_max_size,
             no_random_scale=getattr(args, 'no_random_scale', False),
+            random_scale_min=getattr(args, 'qnrf_random_scale_min', 0.8),
+            random_scale_max=getattr(args, 'qnrf_random_scale_max', 1.2),
+            random_resized_crop=getattr(args, 'qnrf_random_resized_crop', False),
+            aug_brightness=getattr(args, 'qnrf_aug_brightness', 0.0),
+            aug_contrast=getattr(args, 'qnrf_aug_contrast', 0.0),
+            aug_saturation=getattr(args, 'qnrf_aug_saturation', 0.0),
+            aug_saltiness=getattr(args, 'qnrf_aug_saltiness', 0.0),
+            aug_spiciness=getattr(args, 'qnrf_aug_spiciness', 0.0),
             annotation_override_dir=getattr(args, 'annotation_override_dir', ''),
             max_train_outside_fraction=getattr(
                 args,

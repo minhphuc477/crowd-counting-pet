@@ -112,6 +112,7 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
                     device: torch.device, epoch: int, max_norm: float = 0,
                     model_ema=None, model_without_ddp=None, freeze_bn: bool = False,
                     localization_repair_only: bool = False,
+                    auxiliary_head_only: bool = False,
                     amp_enabled: bool = False, scaler=None, accum_iter: int = 1,
                     amp_dtype=None):
     model.train()
@@ -127,6 +128,15 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
         repair_model.large_context_input_proj.train()
         repair_model.quadtree_sparse.large_context_score_adapter.train()
         repair_model.quadtree_dense.large_context_score_adapter.train()
+    elif auxiliary_head_only:
+        # Frozen PET features must match checkpoint inference. In particular,
+        # leaving Transformer dropout active makes head-only targets stochastic.
+        model.eval()
+        head_model = model_without_ddp if model_without_ddp is not None else model
+        if getattr(head_model, 'count_head', None) is not None:
+            head_model.count_head.train()
+        if getattr(head_model, 'zip_count_head', None) is not None:
+            head_model.zip_count_head.train()
     elif freeze_bn:
         for module in model.modules():
             if isinstance(module, torch.nn.modules.batchnorm._BatchNorm):
