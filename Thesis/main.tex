@@ -1,0 +1,144 @@
+\documentclass[oneside,a4paper,12pt]{extreport}
+
+% Luận văn sử dụng XeLaTeX để hiển thị tiếng Việt ổn định.
+\usepackage{fontspec}
+\setmainfont{Times New Roman}
+\setsansfont{Arial}
+\setmonofont{Consolas}
+
+\usepackage[
+  a4paper,
+  portrait,
+  top=30mm,
+  bottom=25mm,
+  left=35mm,
+  right=20mm,
+  headheight=15pt,
+  footskip=15mm
+]{geometry}
+\usepackage{setspace}
+\onehalfspacing
+\usepackage{indentfirst}
+\setlength{\parindent}{1.27cm}
+\setlength{\parskip}{0pt}
+
+\usepackage{amsmath,amssymb}
+\usepackage{graphicx}
+\graphicspath{{./}}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{enumitem}
+\usepackage{microtype}
+\setlength{\emergencystretch}{1.5em}
+\usepackage{tikz}
+\usetikzlibrary{calc}
+\usepackage{eso-pic}
+\usepackage{titlesec}
+\usepackage{fancyhdr}
+\usepackage{xurl}
+\usepackage[unicode,hidelinks]{hyperref}
+\usepackage[numbers,sort&compress]{natbib}
+
+% Thông tin luận văn. Thay các giá trị còn để trong ngoặc vuông trước khi nộp.
+\newcommand{\ThesisAuthor}{NGUYỄN VĂN A}
+\newcommand{\StudentID}{[MÃ SỐ HỌC VIÊN]}
+\newcommand{\Supervisor}{TS. LÊ VIẾT TUẤN}
+\newcommand{\Major}{CÔNG NGHỆ THÔNG TIN}
+\newcommand{\MajorCode}{[MÃ NGÀNH]}
+\newcommand{\ThesisTitle}{CẢI TIẾN MÔ HÌNH TRUY VẤN ĐIỂM\\PHÂN CẤP CHO BÀI TOÁN ĐẾM\\VÀ ĐỊNH VỊ ĐÁM ĐÔNG}
+\newcommand{\ThesisTitleEn}{IMPROVING HIERARCHICAL POINT-QUERY MODELS\\FOR CROWD COUNTING AND LOCALIZATION}
+\newcommand{\ThesisYear}{2026}
+
+\renewcommand{\chaptername}{Chương}
+\renewcommand{\contentsname}{MỤC LỤC}
+\renewcommand{\listfigurename}{DANH MỤC HÌNH}
+\renewcommand{\listtablename}{DANH MỤC BẢNG}
+\renewcommand{\figurename}{Hình}
+\renewcommand{\tablename}{Bảng}
+\renewcommand{\bibname}{TÀI LIỆU THAM KHẢO}
+\renewcommand{\appendixname}{Phụ lục}
+
+\titleformat{\chapter}[display]
+  {\normalfont\bfseries\centering\Large}
+  {\MakeUppercase{\chaptername}\ \thechapter}
+  {8pt}
+  {\MakeUppercase}
+\titlespacing*{\chapter}{0pt}{10pt}{24pt}
+\titleformat{\section}{\normalfont\bfseries\large}{\thesection}{0.8em}{}
+\titleformat{\subsection}{\normalfont\bfseries\normalsize}{\thesubsection}{0.8em}{}
+
+\pagestyle{fancy}
+\fancyhf{}
+\fancyfoot[C]{\thepage}
+\renewcommand{\headrulewidth}{0pt}
+\fancypagestyle{plain}{
+  \fancyhf{}
+  \fancyfoot[C]{\thepage}
+  \renewcommand{\headrulewidth}{0pt}
+}
+
+\hypersetup{
+  pdftitle={Cải tiến mô hình truy vấn điểm phân cấp cho bài toán đếm và định vị đám đông},
+  pdfauthor={\ThesisAuthor},
+  pdfsubject={Luận văn thạc sĩ Công nghệ thông tin},
+  pdfkeywords={crowd counting, crowd localization, PET, APG, IFI}
+}
+
+\begin{document}
+
+\input{adviser}
+
+\pagenumbering{roman}
+\setcounter{page}{1}
+
+\chapter*{LỜI CAM ĐOAN}
+\addcontentsline{toc}{chapter}{LỜI CAM ĐOAN}
+Tôi cam đoan nội dung luận văn là kết quả nghiên cứu của bản thân dưới sự hướng dẫn của giảng viên hướng dẫn. Các phương pháp, số liệu và kết quả của công trình khác được trích dẫn rõ nguồn. Những kết quả thực nghiệm của luận văn sẽ được báo cáo kèm cấu hình, hạt giống ngẫu nhiên, phân hoạch dữ liệu và tệp kết quả tương ứng để có thể kiểm tra lại.
+
+\input{thanks}
+
+\chapter*{TÓM TẮT}
+\addcontentsline{toc}{chapter}{TÓM TẮT}
+Luận văn nghiên cứu bài toán đếm đồng thời định vị từng cá thể trong ảnh đám đông từ chú thích điểm. Nghiên cứu lấy Point quEry Transformer (PET) làm mô hình nền và khảo sát cách tăng độ ổn định của biểu diễn cũng như quá trình ghép cặp giữa truy vấn và điểm thật trong các cảnh có mật độ, độ phân giải và tỉ lệ đầu người thay đổi mạnh. Hướng tiếp cận giữ lại hai nhánh truy vấn thưa/đặc và cơ chế phân rã quadtree của PET, sau đó tích hợp tín hiệu Auxiliary Point Guidance, nội suy đặc trưng ngầm theo đường dư đa tỉ lệ và ràng buộc ghép cặp/hồi quy có nhận biết tỉ lệ. Phạm vi đánh giá chính gồm ShanghaiTech Part A, ShanghaiTech Part B, UCF-QNRF và NWPU-Crowd; các chỉ số đếm và định vị được báo cáo dưới một quy trình lựa chọn mô hình có kiểm soát. Chương 1 trình bày bối cảnh, khoảng trống nghiên cứu, mục tiêu, phạm vi và các đóng góp của luận văn.
+
+\noindent\textbf{Từ khóa:} đếm đám đông, định vị đám đông, truy vấn điểm, quadtree, APG, nội suy đặc trưng ngầm.
+
+\chapter*{ABSTRACT}
+\addcontentsline{toc}{chapter}{ABSTRACT}
+This thesis studies joint crowd counting and individual localization from point annotations. Point quEry Transformer (PET) is adopted as the base model. The research investigates how to stabilize feature representation and query-to-target assignment under large variations in crowd density, image resolution, and head scale. The proposed direction preserves PET's sparse/dense query branches and quadtree decomposition while introducing auxiliary point guidance, residual multi-scale implicit feature interpolation, and scale-aware matching and point regression. The main experimental scope comprises ShanghaiTech Part A, ShanghaiTech Part B, UCF-QNRF, and NWPU-Crowd, with counting and localization evaluated under a controlled model-selection protocol. Chapter 1 establishes the research context, gap, objectives, scope, and contributions.
+
+\noindent\textbf{Keywords:} crowd counting, crowd localization, point query, quadtree, auxiliary point guidance, implicit feature interpolation.
+
+\clearpage
+\phantomsection
+\addcontentsline{toc}{chapter}{MỤC LỤC}
+\tableofcontents
+
+\clearpage
+\phantomsection
+\addcontentsline{toc}{chapter}{DANH MỤC HÌNH}
+\listoffigures
+
+\clearpage
+\phantomsection
+\addcontentsline{toc}{chapter}{DANH MỤC BẢNG}
+\listoftables
+
+\clearpage
+\pagenumbering{arabic}
+\setcounter{page}{1}
+
+\include{chapter1}
+\include{chapter2}
+\include{chapter3}
+\include{chapter4}
+
+\clearpage
+\phantomsection
+\addcontentsline{toc}{chapter}{TÀI LIỆU THAM KHẢO}
+\bibliographystyle{unsrtnat}
+\bibliography{references}
+
+\input{publication}
+
+\end{document}

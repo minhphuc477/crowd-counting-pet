@@ -1,0 +1,106 @@
+\begin{thebibliography}{12}
+\providecommand{\natexlab}[1]{#1}
+\providecommand{\url}[1]{\texttt{#1}}
+\expandafter\ifx\csname urlstyle\endcsname\relax
+  \providecommand{\doi}[1]{doi: #1}\else
+  \providecommand{\doi}{doi: \begingroup \urlstyle{rm}\Url}\fi
+
+\bibitem[Zhang et~al.(2016)Zhang, Zhou, Chen, Gao, and Ma]{zhang2016mcnn}
+Yingying Zhang, Desen Zhou, Siqin Chen, Shenghua Gao, and Yi~Ma.
+\newblock Single-image crowd counting via multi-column convolutional neural
+  network.
+\newblock In \emph{Proceedings of the IEEE Conference on Computer Vision and
+  Pattern Recognition}, pages 589--597, 2016.
+\newblock \doi{10.1109/CVPR.2016.70}.
+
+\bibitem[Sam et~al.(2021)Sam, Peri, Sundararaman, Kamath, and
+  Babu]{sam2021lsccnn}
+Deepak~Babu Sam, Skand~Vishwanath Peri, Mukuntha~Narayanan Sundararaman, Amogh
+  Kamath, and R.~Venkatesh Babu.
+\newblock Locate, size and count: Accurately resolving people in dense crowds
+  via detection.
+\newblock \emph{IEEE Transactions on Pattern Analysis and Machine
+  Intelligence}, 43\penalty0 (8):\penalty0 2739--2751, 2021.
+\newblock \doi{10.1109/TPAMI.2020.2974830}.
+
+\bibitem[Song et~al.(2021)Song, Wang, Jiang, Wang, Tai, Wang, Li, Huang, and
+  Wu]{song2021p2pnet}
+Qingyu Song, Changan Wang, Zhengkai Jiang, Yabiao Wang, Ying Tai, Chengjie
+  Wang, Jilin Li, Feiyue Huang, and Yang Wu.
+\newblock Rethinking counting and localization in crowds: A purely point-based
+  framework.
+\newblock In \emph{Proceedings of the IEEE/CVF International Conference on
+  Computer Vision}, pages 3365--3374, 2021.
+\newblock \doi{10.1109/ICCV48922.2021.00335}.
+
+\bibitem[Liu et~al.(2023)Liu, Lu, Cao, and Liu]{liu2023pet}
+Chengxin Liu, Hao Lu, Zhiguo Cao, and Tongliang Liu.
+\newblock Point-query quadtree for crowd counting, localization, and more.
+\newblock In \emph{Proceedings of the IEEE/CVF International Conference on
+  Computer Vision}, pages 1676--1685, 2023.
+\newblock \doi{10.1109/ICCV51070.2023.00161}.
+
+\bibitem[Chen et~al.(2024)Chen, Chen, Liu, Yang, and Kuo]{chen2024apgcc}
+I-Hsiang Chen, Wei-Ting Chen, Yu-Wei Liu, Ming-Hsuan Yang, and Sy-Yen Kuo.
+\newblock Improving point-based crowd counting and localization based on
+  auxiliary point guidance.
+\newblock In \emph{Computer Vision -- ECCV 2024}, pages 428--444. Springer
+  Nature Switzerland, 2024.
+\newblock \doi{10.1007/978-3-031-72691-0_24}.
+\newblock URL \url{https://arxiv.org/abs/2405.10589}.
+
+\bibitem[Nguyen and Ngo(2020)]{nguyen2020survey}
+Vy~Nguyen and Thanh~Duc Ngo.
+\newblock Single-image crowd counting: A comparative survey on deep
+  learning-based approaches.
+\newblock \emph{International Journal of Multimedia Information Retrieval},
+  9\penalty0 (2):\penalty0 63--80, 2020.
+\newblock \doi{10.1007/s13735-019-00181-y}.
+
+\bibitem[Li et~al.(2018)Li, Zhang, and Chen]{li2018csrnet}
+Yuhong Li, Xiaofan Zhang, and Deming Chen.
+\newblock {CSRNet}: Dilated convolutional neural networks for understanding the
+  highly congested scenes.
+\newblock In \emph{Proceedings of the IEEE Conference on Computer Vision and
+  Pattern Recognition}, pages 1091--1100, 2018.
+\newblock \doi{10.1109/CVPR.2018.00120}.
+
+\bibitem[Ma et~al.(2019)Ma, Wei, Hong, and Gong]{ma2019bayesian}
+Zhiheng Ma, Xing Wei, Xiaopeng Hong, and Yihong Gong.
+\newblock Bayesian loss for crowd count estimation with point supervision.
+\newblock In \emph{Proceedings of the IEEE/CVF International Conference on
+  Computer Vision}, pages 6142--6151, 2019.
+\newblock \doi{10.1109/ICCV.2019.00624}.
+
+\bibitem[Wang et~al.(2020)Wang, Liu, Samaras, and Nguyen]{wang2020dmcount}
+Boyu Wang, Huidong Liu, Dimitris Samaras, and Minh~Hoai Nguyen.
+\newblock Distribution matching for crowd counting.
+\newblock In \emph{Advances in Neural Information Processing Systems},
+  volume~33, pages 1595--1607, 2020.
+\newblock URL
+  \url{https://proceedings.neurips.cc/paper/2020/hash/118bd558033a1016fcc82560c65cca5f-Abstract.html}.
+
+\bibitem[Abousamra et~al.(2021)Abousamra, Hoai, Samaras, and
+  Chen]{abousamra2021topocount}
+Shahira Abousamra, Minh Hoai, Dimitris Samaras, and Chao Chen.
+\newblock Localization in the crowd with topological constraints.
+\newblock In \emph{Proceedings of the AAAI Conference on Artificial
+  Intelligence}, volume~35, pages 872--881, 2021.
+\newblock \doi{10.1609/aaai.v35i2.16170}.
+
+\bibitem[Liang et~al.(2022)Liang, Xu, and Bai]{liang2022cltr}
+Dingkang Liang, Wei Xu, and Xiang Bai.
+\newblock An end-to-end transformer model for crowd localization.
+\newblock In \emph{Computer Vision -- ECCV 2022}, pages 38--54. Springer Nature
+  Switzerland, 2022.
+\newblock \doi{10.1007/978-3-031-19769-7_3}.
+
+\bibitem[Nguyen et~al.(2023)Nguyen, Dinh, Nguyen, and
+  Truong]{nguyen2023yolocrowd}
+Ba~Duy Nguyen, Thanh~Nhan Dinh, Thanh~Bach Nguyen, and Quoc~Dinh Truong.
+\newblock Detection of crowd concentrations with {YOLO V3}.
+\newblock \emph{CTU Journal of Innovation and Sustainable Development},
+  15\penalty0 (Special Issue: ISDS):\penalty0 56--61, 2023.
+\newblock \doi{10.22144/ctujoisd.2023.035}.
+
+\end{thebibliography}

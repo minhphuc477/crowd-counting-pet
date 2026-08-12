@@ -1,0 +1,191 @@
+\chapter{CÁC CÔNG TRÌNH LIÊN QUAN}
+\label{chap:related-work}
+
+\section{Khái quát}
+
+Các phương pháp đếm đám đông dựa trên học sâu có thể được phân loại theo dạng biểu diễn đầu ra thành ba nhóm chính: hồi quy bản đồ mật độ, phát hiện hoặc định vị qua bản đồ, và dự đoán trực tiếp tập điểm. Cách phân loại này phản ánh sự chuyển dịch từ mục tiêu chỉ ước lượng tổng số sang mục tiêu đồng thời xác định vị trí từng cá thể. Mỗi nhóm có ưu điểm riêng về tín hiệu huấn luyện, khả năng xử lý mật độ cao và mức độ diễn giải của đầu ra.
+
+Chương này phân tích các công trình tiêu biểu theo bốn khía cạnh: biểu diễn đầu vào và đầu ra; cơ chế học từ chú thích điểm; phương thức xử lý biến thiên mật độ và tỉ lệ; và những hạn chế liên quan đến mục tiêu đếm--định vị trực tiếp. Trọng tâm của phần tổng quan là tiến trình phát triển từ MCNN, CSRNet đến P2PNet, CLTR, PET và APGCC. Các nghiên cứu được lựa chọn đã được đối chiếu với bản toàn văn, ngoại trừ công trình khảo sát của Nguyen và Ngo được kiểm tra theo thông tin xuất bản chính thức do toàn văn thuộc phạm vi truy cập thuê bao.
+
+\section{Phương pháp hồi quy bản đồ mật độ}
+
+\subsection{MCNN và biểu diễn đa tỉ lệ}
+
+MCNN là một trong những công trình đặt nền tảng cho phương pháp đếm bằng bản đồ mật độ. Từ tập chú thích điểm $Y=\{\mathbf y_i\}_{i=1}^{N}$, bản đồ mật độ đích thường được xây dựng theo
+\begin{equation}
+    D^{\mathrm{gt}}(\mathbf p)
+    =\sum_{i=1}^{N}\mathcal K_{\sigma_i}(\mathbf p-\mathbf y_i),
+    \label{eq:density-target}
+\end{equation}
+trong đó $\mathcal K_{\sigma_i}$ là nhân Gaussian tại vị trí $\mathbf y_i$. Tích phân của $D^{\mathrm{gt}}$ trên toàn miền ảnh bằng số chú thích $N$.
+
+MCNN sử dụng ba nhánh mạng tích chập với kích thước bộ lọc khác nhau để mô hình hóa sự biến thiên kích thước đầu người. Độ lệch chuẩn $\sigma_i$ của nhân Gaussian được xác định thích nghi từ khoảng cách đến các điểm lân cận, qua đó phản ánh mật độ cục bộ và ảnh hưởng của phối cảnh \cite{zhang2016mcnn}. Ưu điểm của phương pháp là không cần hộp bao và tạo được tín hiệu giám sát dày từ chú thích điểm. Tuy nhiên, các mức tỉ lệ được biểu diễn bằng những nhánh rời rạc, làm tăng độ phức tạp kiến trúc; đồng thời, tọa độ cá thể không phải là đầu ra trực tiếp.
+
+\subsection{CSRNet và tích chập giãn}
+
+CSRNet sử dụng phần đầu của VGG-16 để trích xuất đặc trưng và một phần sau gồm các lớp tích chập giãn. Tích chập giãn mở rộng trường tiếp nhận mà không cần thêm phép gộp, nhờ đó duy trì độ phân giải không gian tốt hơn khi ước lượng bản đồ mật độ \cite{li2018csrnet}. So với MCNN, CSRNet có kiến trúc tuyến tính và thuận lợi hơn cho việc học đặc trưng ngữ cảnh trong vùng đông.
+
+CSRNet tập trung tối ưu sai khác giữa bản đồ mật độ dự đoán và bản đồ mật độ đích. Kết quả đếm được tính bằng tổng giá trị trên bản đồ dự đoán. Cách tiếp cận này phù hợp với cảnh có mức che khuất lớn, nhưng chất lượng tọa độ sau khi tìm cực đại hoặc phân ngưỡng còn phụ thuộc vào độ phân giải bản đồ và thuật toán hậu xử lý.
+
+\subsection{Bayesian Loss}
+
+Bayesian Loss thay đổi cách sử dụng chú thích điểm thay vì thay đổi kiến trúc dự đoán. Phương pháp xây dựng xác suất mỗi vị trí ảnh đóng góp vào từng chú thích và tối ưu kỳ vọng số đếm tương ứng \cite{ma2019bayesian}. Cách xây dựng này tránh xem bản đồ Gaussian được tạo thủ công là nhãn duy nhất đúng, qua đó giảm sự phụ thuộc vào lựa chọn độ rộng nhân.
+
+Đóng góp quan trọng của Bayesian Loss là chuyển trọng tâm từ hồi quy từng pixel sang giám sát xác suất tại cấp độ chú thích. Tuy vậy, mô hình vẫn sinh bản đồ mật độ, nên việc thu được tập tọa độ cá thể vẫn cần một bước chuyển đổi bổ sung.
+
+\subsection{DM-Count}
+
+DM-Count xem bản đồ mật độ dự đoán và tập điểm chú thích như hai phân phối có tổng khối lượng tương ứng với số người. Hàm mục tiêu kết hợp ba thành phần: sai số số đếm, khoảng cách vận chuyển tối ưu và Total Variation \cite{wang2020dmcount}. Thành phần vận chuyển tối ưu cung cấp tín hiệu hình học toàn cục, trong khi Total Variation hỗ trợ ổn định quá trình tối ưu khi so sánh hai phân phối.
+
+So với mất mát bình phương trên bản đồ Gaussian, DM-Count sử dụng trực tiếp cấu trúc phân phối của chú thích điểm và giảm phụ thuộc vào tham số nhân. Tuy nhiên, đầu ra vẫn là bản đồ mật độ. Phương pháp vì vậy phù hợp với đánh giá số đếm hơn là định vị điểm theo quy trình đầu-cuối.
+
+\subsection{Nhận xét về nhóm hồi quy mật độ}
+
+Các phương pháp dựa trên mật độ có ưu thế khi đối tượng nhỏ, che khuất nhiều và khó xác định hộp bao. Bản đồ mật độ tạo tín hiệu học dày và cho phép suy ra tổng số bằng phép tích phân. Hạn chế cơ bản là sự khác biệt giữa đầu ra tối ưu và đầu ra định vị: hai bản đồ có tổng bằng nhau vẫn có thể phân bố khối lượng rất khác nhau. Do đó, MAE hoặc RMSE thấp không đủ để kết luận mô hình xác định đúng vị trí từng người.
+
+\section{Phương pháp phát hiện và định vị qua bản đồ}
+
+\subsection{LSC-CNN}
+
+LSC-CNN tiếp cận bài toán dưới dạng phát hiện đầu người. Mô hình sử dụng kiến trúc nhiều cột, điều biến đặc trưng từ trên xuống và các đầu dự đoán ở nhiều độ phân giải. Trong trường hợp chỉ có chú thích điểm, kích thước đầu được ước lượng để xây dựng mục tiêu hộp bao phục vụ huấn luyện \cite{sam2021lsccnn}. Số người được suy ra từ số hộp phát hiện, còn vị trí và kích thước đối tượng được biểu diễn trực tiếp qua hộp bao.
+
+Phương pháp cung cấp thông tin ở cấp độ cá thể phong phú hơn bản đồ mật độ. Tuy nhiên, kích thước hộp không có sẵn trong phần lớn bộ dữ liệu đếm đám đông và phải được ước lượng từ quan hệ lân cận. Sai số của kích thước giả định có thể ảnh hưởng đến quá trình học, đặc biệt tại vùng có phối cảnh mạnh hoặc mật độ rất cao.
+
+\subsection{TopoCount}
+
+TopoCount mô hình hóa định vị đám đông bằng một bản đồ khả năng có cấu trúc tô-pô. Hàm mất mát persistence dựa trên persistent homology điều khiển số mode nổi bật trong từng vùng, nhằm hạn chế hiện tượng nhiều cá thể bị gộp thành một đáp ứng hoặc một cá thể tạo ra nhiều đáp ứng giả \cite{abousamra2021topocount}. Khi suy luận, bản đồ khả năng được phân ngưỡng và tâm của từng thành phần liên thông được lấy làm tọa độ dự đoán.
+
+Khác với thao tác đơn thuần tìm cực đại cục bộ, TopoCount đưa cấu trúc liên thông vào quá trình học. Dù vậy, tọa độ cuối vẫn phụ thuộc vào ngưỡng nhị phân hóa và bước xác định thành phần liên thông. Đây là nguồn biến thiên cần được kiểm soát khi so sánh chất lượng định vị.
+
+\section{Phương pháp dự đoán trực tiếp tập điểm}
+
+\subsection{P2PNet}
+
+P2PNet biểu diễn mỗi người bằng một điểm và dự đoán trực tiếp tập tọa độ từ ảnh. Tại mỗi vị trí trên bản đồ đặc trưng, mô hình tạo một số điểm ứng viên, sau đó dự đoán độ tin cậy người--nền và độ lệch tọa độ. Thuật toán Hungarian xác định phép ghép một-một giữa tập dự đoán và tập chú thích sao cho tổng chi phí là nhỏ nhất \cite{song2021p2pnet}. Các điểm không được ghép được huấn luyện về lớp nền.
+
+Khi suy luận, các điểm có độ tin cậy vượt ngưỡng tạo thành kết quả định vị và số lượng điểm chính là số đếm. Nhờ đó, chú thích, đầu ra và chỉ số định vị được thống nhất trong cùng một biểu diễn. P2PNet cũng giới thiệu density Normalized Average Precision để đánh giá sai số vị trí có xét đến biến thiên kích thước đầu \cite{song2021p2pnet}.
+
+Hạn chế của P2PNet là số điểm ứng viên được tạo theo lưới cố định. Cấu hình đủ dày cho vùng đông có thể gây dư thừa ở vùng thưa, tăng chi phí tính toán và làm phép ghép cặp trở nên mơ hồ khi nhiều điểm ứng viên cùng cạnh tranh cho một chú thích.
+
+\subsection{CLTR}
+
+CLTR mô hình hóa định vị đám đông như bài toán dự đoán tập hợp bằng Transformer. Mạng tích chập tạo bản đồ đặc trưng; Transformer encoder mã hóa ngữ cảnh; Transformer decoder nhận các truy vấn học được và hai đầu ra dự đoán tọa độ cùng độ tin cậy \cite{liang2022cltr}. Trong cấu hình được công bố, mô hình sử dụng 500 truy vấn và ngưỡng độ tin cậy 0,35 khi suy luận.
+
+Để giảm sự mơ hồ của phép ghép cặp trong vùng đông, K-nearest-neighbor Matching Objective bổ sung thông tin khoảng cách đến các điểm lân cận vào chi phí Hungarian \cite{liang2022cltr}. Thành phần này giúp phép ghép phản ánh cấu trúc cục bộ của tập điểm. Tuy nhiên, ngân sách truy vấn vẫn được cố định cho mọi ảnh và không thay đổi theo phân bố mật độ từng vùng.
+
+\subsection{Đặc điểm chung của phương pháp dự đoán điểm}
+
+Ưu điểm quan trọng của phương pháp dự đoán điểm là sự thống nhất giữa dạng chú thích và dạng đầu ra. Sai số phân loại ảnh hưởng trực tiếp đến số đếm, còn sai số hồi quy quyết định chất lượng định vị. Mối liên hệ này cũng tạo ra một yêu cầu đánh giá nghiêm ngặt: cải thiện tọa độ nhưng làm tăng số điểm dương giả vẫn có thể khiến MAE và F1 suy giảm. Vì vậy, các chỉ số đếm và định vị phải được báo cáo đồng thời dưới cùng ngưỡng suy luận.
+
+\section{PET và cơ chế truy vấn điểm phân cấp}
+
+PET phát biểu đếm đám đông như một quá trình truy vấn điểm có khả năng phân rã. Mỗi truy vấn được phân loại để xác định có tương ứng với một người hay không và được hồi quy tọa độ. Bộ phân tách cây tứ phân quyết định một truy vấn có cần chia thành bốn truy vấn con tại vùng mật độ cao hay không \cite{liu2023pet}. Nhờ đó, vùng thưa được xử lý bằng truy vấn thưa, trong khi vùng đông nhận mật độ truy vấn cao hơn.
+
+Kiến trúc tổng thể của PET được trình bày trong Hình~\ref{fig:pet-architecture}. Mạng CNN trích xuất đặc trưng ảnh; Transformer encoder với cửa sổ chữ nhật tăng dần mã hóa ngữ cảnh; cây tứ phân tạo các điểm truy vấn thích nghi; Transformer decoder và đầu dự đoán sinh độ tin cậy cùng tọa độ cuối.
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=\textwidth]{figures/pet_architecture_source_liu2023.png}
+    \caption{Kiến trúc tổng thể của PET. Nguồn: trích từ Hình 2 của Liu và cộng sự \cite{liu2023pet}.}
+    \label{fig:pet-architecture}
+\end{figure}
+
+PET còn sử dụng progressive rectangle window attention để giới hạn phạm vi tương tác giữa truy vấn và đặc trưng, qua đó giảm chi phí so với attention toàn cục trên ảnh độ phân giải cao. Phụ lục của công trình khảo sát ảnh hưởng của khoảng cách lưới $K$ khi không dùng cây tứ phân trên ShanghaiTech Part A. MAE tương ứng với $K=16,10,8,4$ lần lượt là 62,19; 55,03; 53,59 và 54,16. Kết quả cho thấy việc tăng mật độ truy vấn đến một mức nhất định giúp cải thiện độ chính xác, nhưng lưới quá dày không tiếp tục đem lại lợi ích do sự cạnh tranh giữa các truy vấn tương tự trong phép ghép cặp \cite{liu2023pet}.
+
+PET tạo được sự cân bằng giữa khả năng biểu diễn vùng đông và chi phí tính toán. Tuy nhiên, đặc trưng của truy vấn vẫn gắn với các vị trí rời rạc trên bản đồ đặc trưng; ngoài ra, sai số ghép cặp và hồi quy chưa trực tiếp xét đến sự thay đổi tỉ lệ của đối tượng. Đây là hai khía cạnh được luận văn tiếp tục nghiên cứu.
+
+\section{APGCC và nội suy đặc trưng ẩn}
+
+\subsection{Cơ chế điểm phụ trợ}
+
+APGCC phân tích sự không ổn định của phép ghép giữa điểm dự đoán và điểm chú thích trong quá trình huấn luyện. Với mỗi điểm thật, phương pháp lấy mẫu $k_{\mathrm{pos}}$ điểm phụ trợ dương ở vùng gần và $k_{\mathrm{neg}}$ điểm phụ trợ âm ở vùng xa hơn. Điểm dương được tối ưu với độ tin cậy cao và độ lệch hướng về điểm thật; điểm âm được tối ưu về lớp nền với độ lệch gần bằng không \cite{chen2024apgcc}. Trong cấu hình công bố, $k_{\mathrm{pos}}=k_{\mathrm{neg}}=2$.
+
+Các điểm phụ trợ chỉ được sử dụng để bổ sung tín hiệu giám sát trong giai đoạn huấn luyện; quá trình suy luận vẫn dựa trên các điểm dự đoán chính. Nhờ tạo thêm quan sát quanh chú thích, cơ chế này làm rõ sự khác biệt giữa vùng gần và vùng nền, qua đó cải thiện tính ổn định của quá trình tối ưu \cite{chen2024apgcc}.
+
+\subsection{Implicit Feature Interpolation}
+
+Các điểm phụ trợ có tọa độ liên tục và không nhất thiết trùng với ô trên bản đồ đặc trưng. IFI lấy bốn đặc trưng lân cận $Z_i^*$, độ lệch tương đối $\delta_i^*$ và mã hóa vị trí $\phi(\delta_i^*)$. Một mạng perceptron nhiều lớp $f_\theta$ biến đổi từng bộ thông tin, sau đó các kết quả được tổng hợp theo trọng số diện tích:
+\begin{equation}
+ F_{\mathrm{IFI}}(x,y)
+ =\sum_{i=1}^{4}\frac{S_i}{S}
+ f_{\theta}\!\left(Z_i^*,\delta_i^*,\phi(\delta_i^*)\right).
+ \label{eq:ifi}
+\end{equation}
+
+IFI khác với phép lấy mẫu lân cận gần nhất hoặc nội suy song tuyến tính thuần túy vì hàm nội suy được học và có sử dụng thông tin vị trí tương đối \cite{chen2024apgcc}. Thí nghiệm loại trừ của APGCC so sánh các phương án lấy mẫu khác nhau và cho thấy IFI đầy đủ có đóng góp tích cực trong kiến trúc của công trình này.
+
+Kết quả của APGCC không đồng nghĩa với việc thay thế trực tiếp toàn bộ đặc trưng truy vấn của PET bằng IFI sẽ luôn cải thiện hiệu năng. Luận văn vì vậy xem xét cấu trúc đường dư
+\begin{equation}
+    \mathbf z
+    =\mathbf z_{\mathrm{PET}}
+     +\alpha\,\psi(\mathbf z_{\mathrm{IFI}}),
+    \label{eq:residual-ifi-concept}
+\end{equation}
+trong đó $\psi$ là phép biến đổi đặc trưng và $\alpha$ là hệ số điều chỉnh đóng góp của nhánh IFI. Cấu trúc này duy trì đường truyền của đặc trưng PET và cho phép mô hình học dần phần thông tin bổ sung tại tọa độ liên tục. Phương trình~\eqref{eq:residual-ifi-concept} là định hướng thiết kế của luận văn, không phải thành phần nguyên bản của PET hoặc APGCC.
+
+\section{Các nghiên cứu trong bối cảnh Việt Nam}
+
+Nguyen và Ngo công bố một khảo sát về các phương pháp học sâu cho bài toán đếm đám đông trong ảnh đơn. Công trình hệ thống hóa các nhóm phương pháp theo thách thức mà chúng xử lý, bao gồm biến thiên tỉ lệ, phối cảnh, che khuất và nền phức tạp \cite{nguyen2020survey}. Nghiên cứu cung cấp cơ sở tổng quan hữu ích cho việc xác định đặc điểm của bài toán và xu hướng phát triển của phương pháp đếm dựa trên học sâu.
+
+Nguyen và cộng sự xây dựng một hệ thống sử dụng YOLOv3 trên khung hình camera giám sát để phát hiện người, đếm và cảnh báo khu vực tập trung. Nghiên cứu sử dụng 200 ảnh ngoài trời từ STCrowd và SmartCity cùng dữ liệu camera tự thu thập. Các tác giả ghi nhận hạn chế khi người có kích thước nhỏ, ở xa máy ảnh hoặc bị che khuất \cite{nguyen2023yolocrowd}. Phương pháp phù hợp với bối cảnh giám sát có thể quan sát rõ đối tượng, nhưng đầu ra hộp bao và điều kiện mật độ khác với bài toán định vị điểm trong ảnh đám đông rất dày.
+
+Các công trình trên cho thấy nghiên cứu trong nước đã quan tâm cả phương diện tổng quan học thuật và ứng dụng giám sát. Tuy nhiên, trong phạm vi tài liệu được khảo sát, chưa có nghiên cứu đánh giá sự kết hợp giữa truy vấn điểm phân cấp, IFI theo đường dư và hồi quy tọa độ nhận biết tỉ lệ.
+
+\section{So sánh các phương pháp liên quan}
+
+Bảng~\ref{tab:related-methods} tổng hợp dạng đầu ra, cơ chế chính và hạn chế của các phương pháp đối với mục tiêu đếm--định vị trực tiếp. Nhận xét trong cột cuối được giới hạn theo phạm vi bài toán của luận văn và không được hiểu là đánh giá toàn diện chất lượng của từng công trình.
+
+\begin{table}[p]
+\centering
+\caption{So sánh các phương pháp liên quan theo đầu ra và cơ chế chính}
+\label{tab:related-methods}
+\begingroup
+\small\singlespacing
+\setlength{\tabcolsep}{3pt}
+\renewcommand{\arraystretch}{1.12}
+\begin{tabular}{>{\raggedright\arraybackslash}p{2.25cm}>{\raggedright\arraybackslash}p{2.0cm}>{\raggedright\arraybackslash}p{4.0cm}>{\raggedright\arraybackslash}p{4.35cm}}
+\toprule
+\textbf{Phương pháp} & \textbf{Đầu ra} & \textbf{Cơ chế chính} & \textbf{Hạn chế đối với bài toán nghiên cứu} \\
+\midrule
+MCNN \cite{zhang2016mcnn} & Bản đồ mật độ & Ba nhánh CNN; nhân Gaussian thích nghi hình học. & Không trả về tập tọa độ trực tiếp. \\
+CSRNet \cite{li2018csrnet} & Bản đồ mật độ & VGG-16 và tích chập giãn. & Tập trung vào mật độ và số đếm. \\
+Bayesian Loss \cite{ma2019bayesian} & Bản đồ mật độ & Giám sát kỳ vọng đóng góp tại chú thích. & Cải thiện hàm mất mát nhưng không thay đổi dạng đầu ra. \\
+DM-Count \cite{wang2020dmcount} & Bản đồ mật độ & Vận chuyển tối ưu, mất mát số đếm và Total Variation. & Không dự đoán trực tiếp tập tọa độ. \\
+LSC-CNN \cite{sam2021lsccnn} & Hộp đầu người & Kích thước giả lập từ chú thích điểm; phát hiện đa độ phân giải. & Phụ thuộc vào chất lượng ước lượng kích thước hộp. \\
+\bottomrule
+\end{tabular}
+\endgroup
+\end{table}
+
+\begin{table}[p]
+\centering
+\caption{So sánh các phương pháp liên quan theo đầu ra và cơ chế chính (tiếp theo)}
+\begingroup
+\small\singlespacing
+\setlength{\tabcolsep}{3pt}
+\renewcommand{\arraystretch}{1.12}
+\begin{tabular}{>{\raggedright\arraybackslash}p{2.25cm}>{\raggedright\arraybackslash}p{2.0cm}>{\raggedright\arraybackslash}p{4.0cm}>{\raggedright\arraybackslash}p{4.35cm}}
+\toprule
+\textbf{Phương pháp} & \textbf{Đầu ra} & \textbf{Cơ chế chính} & \textbf{Hạn chế đối với bài toán nghiên cứu} \\
+\midrule
+TopoCount \cite{abousamra2021topocount} & Bản đồ tô-pô & Persistence loss; phân ngưỡng và thành phần liên thông. & Cần bản đồ trung gian và hậu xử lý để tạo tọa độ. \\
+P2PNet \cite{song2021p2pnet} & Tập điểm & Điểm ứng viên và phép ghép Hungarian một-một. & Số điểm ứng viên được phân bổ theo lưới cố định. \\
+CLTR \cite{liang2022cltr} & Tập điểm & Transformer và phép ghép có thông tin lân cận. & Ngân sách truy vấn cố định, không thích nghi theo vùng ảnh. \\
+PET \cite{liu2023pet} & Tập điểm & Cây tứ phân truy vấn điểm phụ thuộc dữ liệu. & Đặc trưng truy vấn gắn với vị trí rời rạc; chưa xét tỉ lệ trong hồi quy. \\
+APGCC \cite{chen2024apgcc} & Tập điểm & Điểm phụ trợ và IFI tại tọa độ liên tục. & Hiệu quả được kiểm chứng trong kiến trúc APGCC, chưa được đánh giá khi tích hợp vào PET. \\
+\bottomrule
+\end{tabular}
+\endgroup
+\end{table}
+
+Nhóm hồi quy mật độ thuận lợi cho việc ước lượng tổng số nhưng không cung cấp tập điểm một cách tự nhiên. Nhóm phát hiện hoặc định vị qua bản đồ tạo được thông tin vị trí, song cần kích thước hộp giả định hoặc hậu xử lý. Nhóm dự đoán điểm thống nhất chú thích với đầu ra, nhưng phụ thuộc vào chiến lược phân bổ truy vấn, phép ghép cặp và hiệu chuẩn độ tin cậy. PET giải quyết bài toán phân bổ truy vấn bằng cây tứ phân; APGCC cung cấp cơ chế khai thác đặc trưng tại tọa độ liên tục. Đây là cơ sở lý thuyết để xây dựng phương pháp của luận văn.
+
+\section{Khoảng trống nghiên cứu}
+
+Tổng quan các công trình liên quan cho thấy ba vấn đề còn cần được nghiên cứu. Thứ nhất, PET phân bổ truy vấn thích nghi theo mật độ nhưng đặc trưng tại mỗi truy vấn vẫn chịu ràng buộc của lưới đặc trưng rời rạc. Thứ hai, IFI cho phép lấy đặc trưng ở tọa độ liên tục, nhưng chưa có bằng chứng cho thấy việc tích hợp trực tiếp vào PET sẽ duy trì ổn định biểu diễn và độ tin cậy của mô hình. Thứ ba, phép ghép cặp và hồi quy tọa độ thường dựa trên khoảng cách tuyệt đối, chưa phản ánh đầy đủ sự biến thiên kích thước đầu do phối cảnh.
+
+Từ các khoảng trống trên, luận văn tập trung vào hai thành phần: IFI đa tỉ lệ theo cấu trúc đường dư và phép ghép cặp, hồi quy tọa độ nhận biết tỉ lệ. Phương pháp được đánh giá theo quy trình thí nghiệm loại trừ, trong đó mỗi thành phần chỉ được chấp nhận khi tạo ra cải thiện nhất quán và không làm suy giảm đáng kể chất lượng định vị. Cách đánh giá này giúp phân biệt đóng góp của luận văn với các thành phần đã được công bố trong PET, P2PNet và APGCC.
+
+\section{Kết chương}
+
+Chương này đã phân tích quá trình phát triển của các phương pháp đếm đám đông từ hồi quy bản đồ mật độ đến dự đoán trực tiếp tập điểm. MCNN và CSRNet khai thác đặc trưng đa tỉ lệ trong bản đồ mật độ; Bayesian Loss và DM-Count cải thiện cách học từ chú thích điểm; LSC-CNN và TopoCount bổ sung khả năng định vị qua hộp hoặc bản đồ; P2PNet và CLTR thống nhất đầu ra dưới dạng tập điểm; PET phân bổ truy vấn thích nghi bằng cây tứ phân; APGCC khai thác điểm phụ trợ và nội suy đặc trưng tại tọa độ liên tục. Trên cơ sở đó, luận văn xác định khoảng trống nghiên cứu và hình thành định hướng cải tiến PET bằng IFI theo đường dư kết hợp thông tin tỉ lệ. Chương 3 sẽ trình bày chi tiết kiến trúc và hàm mục tiêu của phương pháp đề xuất.

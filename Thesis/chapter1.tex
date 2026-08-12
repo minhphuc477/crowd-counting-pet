@@ -1,0 +1,126 @@
+\chapter{GIỚI THIỆU}
+\label{chap:introduction}
+
+\section{Bối cảnh và lý do chọn đề tài}
+
+Đếm đám đông từ ảnh là bài toán ước lượng số người xuất hiện trong một cảnh quan sát. Bên cạnh giá trị đếm tổng thể, thông tin vị trí của từng cá thể còn cho phép phân tích sự phân bố không gian, xác định khu vực tập trung và hỗ trợ các hệ thống giám sát an toàn. Bài toán có ý nghĩa thực tiễn trong quản lý sự kiện, điều tiết giao thông hành khách, giám sát không gian công cộng và phân tích hành vi đám đông.
+
+Mặc dù đã đạt được nhiều tiến bộ, đếm và định vị đám đông vẫn là bài toán khó do sự thay đổi lớn về mật độ, phối cảnh, kích thước đối tượng, mức độ che khuất, điều kiện chiếu sáng và độ phân giải ảnh. Trong cùng một ảnh, kích thước biểu kiến của đầu người có thể khác nhau đáng kể giữa vùng gần và vùng xa máy ảnh. Ở khu vực mật độ cao, nhiều cá thể chỉ chiếm một số ít điểm ảnh và bị che khuất phần lớn. Những đặc điểm này làm suy giảm độ chính xác của cả phương pháp phát hiện đối tượng lẫn phương pháp hồi quy mật độ \cite{nguyen2020survey}.
+
+Đếm và định vị có quan hệ chặt chẽ nhưng không hoàn toàn tương đương. Một mô hình có thể ước lượng đúng tổng số người trong khi phân bố đáp ứng sai vị trí; ngược lại, mô hình có thể định vị được phần lớn cá thể nhưng tạo điểm trùng hoặc bỏ sót, dẫn đến sai lệch số đếm. Vì vậy, luận văn tiếp cận bài toán dưới dạng dự đoán trực tiếp tập điểm, trong đó mỗi điểm biểu diễn vị trí của một người và số lượng điểm hợp lệ xác định kết quả đếm.
+
+Các phương pháp dựa trên truy vấn điểm tạo ra một khuôn khổ thống nhất cho hai nhiệm vụ trên. P2PNet dự đoán trực tiếp các điểm ứng viên và sử dụng phép gán Hungarian trong quá trình huấn luyện \cite{song2021p2pnet}. PET phát triển cách tiếp cận này bằng cây tứ phân truy vấn điểm, cho phép tăng số truy vấn tại các vùng có mật độ cao thay vì sử dụng một lưới đồng nhất trên toàn ảnh \cite{liu2023pet}. Trong khi đó, APGCC khai thác các điểm phụ trợ và phép nội suy đặc trưng ẩn để cải thiện quá trình học đặc trưng tại những tọa độ không trùng với lưới đặc trưng \cite{chen2024apgcc}. Sự bổ sung về mặt nguyên lý giữa PET và IFI là cơ sở để luận văn nghiên cứu một phương án tích hợp có kiểm soát, hướng đến việc nâng cao đồng thời độ chính xác đếm và định vị.
+
+\section{Phát biểu bài toán}
+
+Cho ảnh đầu vào $I\in\mathbb{R}^{H\times W\times 3}$ và tập chú thích tâm đầu
+\begin{equation}
+    Y=\{\mathbf y_i\}_{i=1}^{N},
+    \qquad \mathbf y_i=(x_i,y_i),
+\end{equation}
+trong đó $N$ là số người có trong ảnh và $\mathbf y_i$ là tọa độ tâm đầu của người thứ $i$. Mô hình $f_{\theta}$ dự đoán tập
+\begin{equation}
+    \widehat{Y}=\{(\widehat{\mathbf y}_j,s_j)\}_{j=1}^{M},
+\end{equation}
+với $\widehat{\mathbf y}_j$ là tọa độ dự đoán và $s_j$ là độ tin cậy của truy vấn thứ $j$. Khi ngưỡng quyết định $\tau$ được xác lập trước, số người dự đoán được tính bởi
+\begin{equation}
+    \widehat N=\sum_{j=1}^{M}\mathbb I(s_j\geq\tau).
+\end{equation}
+
+Bài toán đặt ra hai yêu cầu đồng thời. Thứ nhất, $\widehat N$ phải gần với $N$, được đánh giá bằng sai số tuyệt đối trung bình (Mean Absolute Error, MAE) và căn bậc hai của sai số bình phương trung bình (Root Mean Squared Error, RMSE). Thứ hai, các điểm dự đoán phải tương ứng đúng với vị trí chú thích, được đánh giá bằng precision, recall và F1 theo một ngưỡng khoảng cách xác định trước. Do số đếm được suy ra trực tiếp từ các truy vấn vượt ngưỡng, độ tin cậy phân loại và độ chính xác tọa độ cần được tối ưu và đánh giá trong cùng một khuôn khổ.
+
+Luận văn lựa chọn PET làm mô hình cơ sở và nghiên cứu hai nhóm cải tiến. Nhóm thứ nhất bổ sung IFI theo cấu trúc đường dư nhằm khai thác đặc trưng tại tọa độ liên tục mà vẫn duy trì biểu diễn ban đầu của truy vấn PET. Nhóm thứ hai đưa thông tin tỉ lệ đối tượng vào chi phí ghép cặp và hàm mất mát hồi quy tọa độ. Mỗi thành phần được đánh giá độc lập trước khi xem xét mô hình kết hợp.
+
+\section{Tổng quan các hướng giải quyết}
+
+\subsection{Hồi quy bản đồ mật độ}
+
+Các phương pháp hồi quy mật độ chuyển chú thích điểm thành bản đồ mật độ liên tục, sau đó lấy tích phân trên toàn ảnh để suy ra số người. MCNN sử dụng ba nhánh tích chập có trường tiếp nhận khác nhau và xây dựng bản đồ mật độ đích bằng nhân Gaussian thích nghi hình học \cite{zhang2016mcnn}. CSRNet kết hợp phần trích xuất đặc trưng của VGG-16 với các lớp tích chập giãn nhằm mở rộng trường tiếp nhận mà không làm giảm thêm độ phân giải không gian \cite{li2018csrnet}.
+
+Bayesian Loss và DM-Count tiếp tục cải thiện cách khai thác chú thích điểm. Bayesian Loss mô hình hóa xác suất đóng góp của từng vị trí ảnh đối với mỗi chú thích và tối ưu kỳ vọng số đếm \cite{ma2019bayesian}. DM-Count sử dụng khoảng cách vận chuyển tối ưu giữa phân phối điểm thật và bản đồ mật độ dự đoán, kết hợp mất mát số đếm và Total Variation \cite{wang2020dmcount}. Các phương pháp này tạo tín hiệu huấn luyện dày và đạt kết quả tốt về số đếm, nhưng tọa độ cá thể không phải là đầu ra trực tiếp.
+
+\subsection{Phát hiện và định vị qua bản đồ}
+
+LSC-CNN chuyển chú thích điểm thành mục tiêu phát hiện có kích thước ước lượng, đồng thời sử dụng kiến trúc đa độ phân giải để dự đoán hộp đầu người \cite{sam2021lsccnn}. TopoCount dự đoán bản đồ khả năng và sử dụng ràng buộc tô-pô để kiểm soát số thành phần liên thông; tọa độ cuối được xác định từ tâm của các thành phần sau bước phân ngưỡng \cite{abousamra2021topocount}. Hai hướng này cung cấp thông tin vị trí, nhưng vẫn phụ thuộc vào kích thước hộp giả định hoặc bước hậu xử lý bản đồ.
+
+\subsection{Dự đoán trực tiếp tập điểm}
+
+P2PNet loại bỏ bản đồ mật độ trung gian bằng cách dự đoán trực tiếp một tập điểm ứng viên, đồng thời thực hiện phân loại người--nền và hồi quy độ lệch tọa độ \cite{song2021p2pnet}. CLTR mô hình hóa định vị đám đông như bài toán dự đoán tập hợp bằng Transformer; hàm mục tiêu K-nearest-neighbor Matching Objective bổ sung cấu trúc lân cận vào chi phí ghép cặp \cite{liang2022cltr}. Các phương pháp này thống nhất dạng biểu diễn giữa chú thích và đầu ra, song chất lượng kết quả phụ thuộc đáng kể vào số lượng truy vấn, phép ghép cặp và hiệu chuẩn độ tin cậy.
+
+PET sử dụng cây tứ phân để phân bổ truy vấn theo nội dung ảnh. Một truy vấn ở vùng đông có thể được phân tách thành bốn truy vấn con, trong khi vùng thưa tiếp tục sử dụng truy vấn ở mức hiện tại \cite{liu2023pet}. Nhờ đó, số lượng và mật độ truy vấn thích nghi với phân bố đám đông. APGCC bổ sung các điểm phụ trợ dương và âm quanh chú thích, đồng thời sử dụng IFI để lấy đặc trưng tại tọa độ tùy ý \cite{chen2024apgcc}. Hai công trình giải quyết những khía cạnh khác nhau của phương pháp dự đoán điểm: PET tập trung vào phân bổ truy vấn, còn APGCC tập trung vào tín hiệu học và biểu diễn đặc trưng tại vị trí liên tục.
+
+\section{Hạn chế của các hướng tiếp cận hiện có}
+
+Từ tổng quan tài liệu, luận văn xác định bốn hạn chế liên quan trực tiếp đến bài toán nghiên cứu.
+
+\begin{enumerate}[label=\arabic*)]
+    \item \textbf{Sự không thống nhất giữa biểu diễn huấn luyện và đầu ra định vị.} Bản đồ mật độ thuận lợi cho việc ước lượng tổng số nhưng cần thêm bước xử lý để thu được tọa độ cá thể. Sai số đếm thấp vì vậy không bảo đảm chất lượng định vị cao.
+
+    \item \textbf{Phân bổ truy vấn chưa thích nghi ở nhiều phương pháp dự đoán điểm.} Một lưới truy vấn cố định có thể dư thừa tại vùng thưa nhưng không đủ chi tiết tại vùng đông. PET khắc phục một phần hạn chế này bằng cây tứ phân, tuy nhiên hiệu quả vẫn phụ thuộc vào chất lượng biểu diễn của từng truy vấn \cite{liu2023pet}.
+
+    \item \textbf{Đặc trưng tại tọa độ liên tục chưa được khai thác đầy đủ.} Các điểm cần dự đoán không nhất thiết trùng với vị trí rời rạc trên bản đồ đặc trưng. IFI cung cấp cơ chế nội suy học được tại tọa độ tùy ý \cite{chen2024apgcc}, nhưng việc tích hợp cơ chế này vào PET cần bảo toàn thông tin của biểu diễn truy vấn ban đầu.
+
+    \item \textbf{Sai số tọa độ chưa phản ánh đầy đủ sự thay đổi tỉ lệ.} Cùng một độ lệch theo pixel có thể là nhỏ đối với đầu người kích thước lớn nhưng đáng kể đối với đầu người kích thước nhỏ. Vì vậy, chi phí ghép cặp và hồi quy tọa độ cần xem xét thông tin tỉ lệ cục bộ.
+\end{enumerate}
+
+Khoảng trống nghiên cứu được xác định là chưa có đánh giá có hệ thống về việc kết hợp cơ chế phân bổ truy vấn phân cấp của PET với IFI theo đường dư và phép ghép cặp nhận biết tỉ lệ trong cùng một mô hình đếm--định vị. Việc kết hợp này không mặc nhiên bảo đảm cải thiện; hiệu quả của từng thành phần phải được kiểm chứng bằng thí nghiệm loại trừ dưới cùng điều kiện dữ liệu và suy luận.
+
+\section{Mục tiêu và câu hỏi nghiên cứu}
+
+\subsection{Mục tiêu tổng quát}
+
+Mục tiêu của luận văn là xây dựng và đánh giá một phương pháp cải tiến trên nền tảng PET nhằm nâng cao chất lượng đếm và định vị đám đông trong điều kiện mật độ và tỉ lệ đối tượng thay đổi.
+
+\subsection{Mục tiêu cụ thể}
+
+\begin{enumerate}[label=\arabic*)]
+    \item Xây dựng mô hình cơ sở dựa trên PET và thiết lập giao thức đánh giá thống nhất cho nhiệm vụ đếm và định vị.
+    \item Tích hợp IFI theo cấu trúc đường dư trên các đặc trưng đa tỉ lệ, đồng thời duy trì đường truyền đặc trưng ban đầu của PET.
+    \item Xây dựng chi phí ghép cặp và hàm mất mát hồi quy tọa độ có xét đến tỉ lệ đối tượng.
+    \item Đánh giá riêng từng thành phần và mô hình kết hợp bằng MAE, RMSE, precision, recall và F1.
+    \item Khảo sát khả năng khái quát của phương pháp trên các bộ dữ liệu có phân bố mật độ khác nhau.
+\end{enumerate}
+
+Các câu hỏi nghiên cứu được đặt ra như sau:
+
+\begin{description}[style=nextline,leftmargin=1.7cm,labelindent=0cm]
+    \item[RQ1.] IFI theo cấu trúc đường dư có cải thiện kết quả của mô hình PET cơ sở hay không?
+    \item[RQ2.] Phép ghép cặp và hồi quy tọa độ nhận biết tỉ lệ có tạo ra cải thiện bổ sung hay không?
+    \item[RQ3.] Mức cải thiện có được duy trì trên các bộ dữ liệu với mật độ và phối cảnh khác nhau hay không?
+    \item[RQ4.] Sự cải thiện về số đếm có đồng thời duy trì hoặc nâng cao chất lượng định vị hay không?
+\end{description}
+
+\section{Đối tượng và phạm vi nghiên cứu}
+
+Đối tượng nghiên cứu là mô hình học sâu dự đoán điểm cho bài toán đếm và định vị người trong ảnh tĩnh được chú thích bằng tâm đầu. Trọng tâm kỹ thuật gồm cây tứ phân truy vấn điểm, nội suy đặc trưng ẩn đa tỉ lệ, phép ghép cặp Hungarian và hồi quy tọa độ nhận biết tỉ lệ.
+
+Phạm vi dữ liệu chính gồm ShanghaiTech Part A và ShanghaiTech Part B. UCF-QNRF được sử dụng để khảo sát khả năng khái quát trên cảnh có mật độ cao; NWPU-Crowd được đánh giá trên tập validation chính thức. Luận văn không xem xét bài toán theo dõi qua video, nhận dạng danh tính, ước lượng tư thế hoặc phát hiện hành vi bất thường.
+
+Các thí nghiệm sử dụng cùng kiến trúc nền, quy trình tiền xử lý, phân hoạch dữ liệu và thiết lập suy luận khi so sánh các thành phần. Kết quả công bố của các nghiên cứu liên quan chỉ được dùng để tham khảo khi giao thức đánh giá khác với thiết lập thực nghiệm của luận văn.
+
+\section{Phương pháp nghiên cứu}
+
+Nghiên cứu được thực hiện theo phương pháp thực nghiệm định lượng. Trước hết, mô hình PET cơ sở được tái lập và đánh giá để hình thành mốc so sánh. Tiếp theo, IFI theo đường dư và thành phần nhận biết tỉ lệ được bổ sung lần lượt; mỗi thay đổi tạo thành một thí nghiệm loại trừ độc lập. Cuối cùng, các thành phần có hiệu quả được kết hợp và đánh giá trên nhiều bộ dữ liệu.
+
+Việc lựa chọn mô hình được thực hiện trên tập validation hoặc phần holdout tách từ tập huấn luyện. Ngưỡng độ tin cậy, thời điểm dừng và siêu tham số được xác lập trước khi đánh giá trên tập kiểm tra. Các thí nghiệm chính sử dụng hạt giống ngẫu nhiên cố định và lưu lại cấu hình, trọng số mô hình cùng kết quả theo từng ảnh để bảo đảm khả năng kiểm tra và tái lập.
+
+\section{Đóng góp dự kiến của luận văn}
+
+Các đóng góp của luận văn được xác định như sau:
+
+\begin{enumerate}[label=\arabic*)]
+    \item Đề xuất cơ chế tích hợp IFI đa tỉ lệ theo đường dư vào PET nhằm khai thác đặc trưng tại tọa độ liên tục mà không loại bỏ biểu diễn truy vấn ban đầu.
+    \item Đề xuất thành phần ghép cặp và hồi quy tọa độ nhận biết tỉ lệ cho bài toán dự đoán điểm trong ảnh đám đông.
+    \item Xây dựng quy trình thí nghiệm loại trừ để đánh giá riêng ảnh hưởng của từng thành phần đối với cả số đếm và chất lượng định vị.
+    \item Cung cấp kết quả thực nghiệm và phân tích lỗi trên các bộ dữ liệu có mức mật độ khác nhau, qua đó làm rõ điều kiện mà phương pháp phát huy hiệu quả hoặc còn hạn chế.
+\end{enumerate}
+
+Các đóng góp trên sẽ được xác nhận bằng kết quả thực nghiệm ở Chương 4. Các thành phần kế thừa, gồm phép ghép cặp Hungarian, cây tứ phân của PET và IFI của APGCC, được trình bày với trích dẫn tương ứng \cite{song2021p2pnet,liu2023pet,chen2024apgcc}.
+
+\section{Bố cục luận văn}
+
+Ngoài phần mở đầu, kết luận và tài liệu tham khảo, luận văn gồm bốn chương. Chương 1 trình bày bối cảnh, bài toán, mục tiêu, phạm vi và đóng góp dự kiến. Chương 2 phân tích các công trình liên quan và xác định khoảng trống nghiên cứu. Chương 3 trình bày phương pháp đề xuất, kiến trúc mô hình và hàm mục tiêu. Chương 4 mô tả thiết lập thực nghiệm, phân tích kết quả, thảo luận hạn chế và rút ra kết luận.
+
+\section{Kết chương}
+
+Chương này đã trình bày bối cảnh và ý nghĩa của bài toán đếm--định vị đám đông, phát biểu bài toán dưới dạng dự đoán tập điểm và phân tích khái quát các hướng tiếp cận hiện có. Trên cơ sở các hạn chế được nhận diện, luận văn xác định mục tiêu nghiên cứu là cải tiến PET bằng IFI theo đường dư và thành phần nhận biết tỉ lệ, đồng thời đánh giá phương pháp trên cả hai phương diện đếm và định vị. Chương tiếp theo trình bày chi tiết các công trình liên quan và cơ sở hình thành phương pháp đề xuất.
