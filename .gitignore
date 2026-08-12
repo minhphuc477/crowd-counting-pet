@@ -123,6 +123,8 @@ work_dirs/
 data/
 tmp/
 pretrained/
+paper/
+Thesis/
 
 # Markdown notes and documentation
 *.md
