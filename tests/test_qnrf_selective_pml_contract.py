@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+
 import torch
 
 import main
@@ -85,6 +87,89 @@ def test_qnrf_selective_pml_finetune_does_not_restart_converged_auxiliaries():
     assert recipe['scale_selection_loss_coef'] > 0.0
     assert recipe['measure_loss_coef'] > 0.0
     assert recipe['freeze_bn'] is True
+
+
+def test_qnrf_selective_pml_finetune_clears_zip_checkpoint_training_mode():
+    argv = [
+        '--dataset_file', 'QNRF',
+        '--data_path', 'unused',
+        '--model_recipe',
+        'vgg_apglc_qnrf_selective_pml_scale_rifi_finetune',
+        '--allow_experimental_model_recipe',
+        '--resume', 'zip_checkpoint.pth',
+        '--resume_model_only',
+        '--resume_allow_arch_change',
+    ]
+    requested = main.get_args_parser().parse_args(argv)
+    requested._explicit_args = main.get_explicit_arg_names(argv)
+    checkpoint = {
+        'args': {
+            'train_zip_count_head_only': True,
+            'zip_count_loss_coef': 1.0,
+            'eval_count_source': 'zip',
+        }
+    }
+
+    merged = main.merge_checkpoint_args(requested, checkpoint)
+    main.apply_model_recipe(merged)
+    main.sanitize_unstable_training_args(merged)
+
+    assert merged.train_zip_count_head_only is False
+    assert merged.zip_count_loss_coef == 0.0
+    assert merged.train_count_head_only is False
+    assert merged.count_head_loss_coef == 0.0
+    assert merged.eval_count_source == 'pet'
+
+
+def test_qnrf_selective_pml_finetune_rejects_explicit_zip_only_mode():
+    argv = [
+        '--dataset_file', 'QNRF',
+        '--data_path', 'unused',
+        '--model_recipe',
+        'vgg_apglc_qnrf_selective_pml_scale_rifi_finetune',
+        '--allow_experimental_model_recipe',
+        '--resume', 'zip_checkpoint.pth',
+        '--resume_model_only',
+        '--resume_allow_arch_change',
+        '--train_zip_count_head_only',
+    ]
+    args = main.get_args_parser().parse_args(argv)
+    args._explicit_args = main.get_explicit_arg_names(argv)
+    main.apply_model_recipe(args)
+
+    try:
+        main.sanitize_unstable_training_args(args)
+    except ValueError as error:
+        assert 'cannot run in ZIP/count-head training mode' in str(error)
+    else:
+        raise AssertionError('ZIP-only contamination must be rejected')
+
+
+def test_architecture_resume_only_drops_the_declared_zip_head():
+    compatible = SimpleNamespace(
+        missing_keys=['scale_fusion.selector.0.weight', 'measure_head.net.0.weight'],
+        unexpected_keys=['zip_count_head.count_bin_lower'],
+    )
+    main.validate_model_only_incompatible(
+        compatible,
+        ('scale_fusion.', 'measure_head.'),
+        ('zip_count_head.',),
+    )
+
+    incompatible = SimpleNamespace(
+        missing_keys=['scale_fusion.selector.0.weight'],
+        unexpected_keys=['backbone.0.body.conv1.weight'],
+    )
+    try:
+        main.validate_model_only_incompatible(
+            incompatible,
+            ('scale_fusion.', 'measure_head.'),
+            ('zip_count_head.',),
+        )
+    except RuntimeError as error:
+        assert 'backbone.0.body.conv1.weight' in str(error)
+    else:
+        raise AssertionError('unrelated checkpoint mismatches must be rejected')
 
 
 def test_qnrf_selective_pml_recipe_parses_without_hidden_overrides():

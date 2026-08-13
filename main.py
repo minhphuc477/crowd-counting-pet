@@ -1613,6 +1613,13 @@ MODEL_RECIPES['vgg_apglc_qnrf_selective_pml_scale_rifi'] = {
 # selective/PML objectives while preserving VGG batch-normalization statistics.
 MODEL_RECIPES['vgg_apglc_qnrf_selective_pml_scale_rifi_finetune'] = {
     **MODEL_RECIPES['vgg_apglc_qnrf_selective_pml_scale_rifi'],
+    # A ZIP/count-head checkpoint is an accepted source because those stages
+    # froze the detector, but none of their head-only state may leak into this
+    # representation fine-tune.
+    'train_zip_count_head_only': False,
+    'zip_count_loss_coef': 0.0,
+    'train_count_head_only': False,
+    'count_head_loss_coef': 0.0,
     'apg_loss_coef': 0.0,
     'ifi_loss_coef': 0.0,
     'scale_point_loss_coef': 0.0,
@@ -3594,6 +3601,27 @@ def sanitize_unstable_training_args(args):
                 'model_recipe=vgg_apglc_qnrf_zip_recount_scale_rifi must use '
                 '--resume_model_only because the ZIP head and optimizer are new.'
             )
+    if recipe_name == 'vgg_apglc_qnrf_selective_pml_scale_rifi_finetune':
+        if fresh_train:
+            raise ValueError(
+                'model_recipe=vgg_apglc_qnrf_selective_pml_scale_rifi_finetune '
+                'requires a converged QNRF Scale-RIFI detector checkpoint.'
+            )
+        if not bool(getattr(args, 'resume_model_only', False)):
+            raise ValueError(
+                'QNRF selective/PML fine-tuning must use --resume_model_only '
+                'because the fusion and measure modules are new.'
+            )
+        if (
+            bool(getattr(args, 'train_zip_count_head_only', False))
+            or bool(getattr(args, 'train_count_head_only', False))
+            or float(getattr(args, 'zip_count_loss_coef', 0.0)) > 0.0
+            or float(getattr(args, 'count_head_loss_coef', 0.0)) > 0.0
+        ):
+            raise ValueError(
+                'QNRF selective/PML fine-tuning cannot run in ZIP/count-head '
+                'training mode; checkpoint head-only state was not cleared.'
+            )
     if count_coef > 0 and fresh_train and not bool(getattr(args, 'allow_count_head_fresh_train', False)):
         print(
             'WARNING: --count_head_loss_coef was requested for fresh training but is disabled by default. '
@@ -4288,23 +4316,33 @@ def model_only_allowed_missing_prefixes(args):
     return tuple(prefixes)
 
 
-def validate_model_only_incompatible(incompatible, allowed_missing_prefixes):
+def validate_model_only_incompatible(
+    incompatible,
+    allowed_missing_prefixes,
+    allowed_unexpected_prefixes=(),
+):
     missing = list(getattr(incompatible, 'missing_keys', []))
     unexpected = list(getattr(incompatible, 'unexpected_keys', []))
     bad_missing = [
         key for key in missing
         if not any(key.startswith(prefix) for prefix in allowed_missing_prefixes)
     ]
-    if bad_missing or unexpected:
+    bad_unexpected = [
+        key for key in unexpected
+        if not any(key.startswith(prefix) for prefix in allowed_unexpected_prefixes)
+    ]
+    if bad_missing or bad_unexpected:
         details = []
         if bad_missing:
             details.append(f"unexpected missing keys: {bad_missing[:20]}")
-        if unexpected:
-            details.append(f"unexpected checkpoint keys: {unexpected[:20]}")
+        if bad_unexpected:
+            details.append(f"unexpected checkpoint keys: {bad_unexpected[:20]}")
         allowed_text = ', '.join(allowed_missing_prefixes) or 'none'
+        allowed_unexpected_text = ', '.join(allowed_unexpected_prefixes) or 'none'
         raise RuntimeError(
             'Unsafe non-strict model-only resume; '
             f'allowed missing prefixes: {allowed_text}; '
+            f'allowed unexpected prefixes: {allowed_unexpected_text}; '
             + '; '.join(details)
         )
 
@@ -5021,7 +5059,16 @@ def main(args):
         )
         resume_model_state = utils.upgrade_legacy_pet_state_dict(checkpoint[model_key])
         incompatible = model_without_ddp.load_state_dict(resume_model_state, strict=strict_load)
-        if auto_non_strict_model_only and not getattr(args, 'resume_allow_arch_change', False):
+        if (
+            getattr(args, 'model_recipe', '')
+            == 'vgg_apglc_qnrf_selective_pml_scale_rifi_finetune'
+        ):
+            validate_model_only_incompatible(
+                incompatible,
+                allowed_missing_prefixes,
+                allowed_unexpected_prefixes=('zip_count_head.',),
+            )
+        elif auto_non_strict_model_only and not getattr(args, 'resume_allow_arch_change', False):
             validate_model_only_incompatible(incompatible, allowed_missing_prefixes)
         if not strict_load and utils.is_main_process():
             missing = getattr(incompatible, 'missing_keys', [])
