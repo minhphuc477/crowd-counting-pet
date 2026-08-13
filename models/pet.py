@@ -1267,16 +1267,26 @@ class EBCZipCountHead(nn.Module):
             'zip_count_bin_ranges',
         )
         if parsed_ranges is None:
-            self.register_buffer('count_bin_lower', torch.empty(0, dtype=torch.float32))
-            self.register_buffer('count_bin_upper', torch.empty(0, dtype=torch.float32))
+            self.register_buffer(
+                'count_bin_lower',
+                torch.empty(0, dtype=torch.float32),
+                persistent=False,
+            )
+            self.register_buffer(
+                'count_bin_upper',
+                torch.empty(0, dtype=torch.float32),
+                persistent=False,
+            )
         else:
             self.register_buffer(
                 'count_bin_lower',
                 torch.as_tensor([bounds[0] for bounds in parsed_ranges], dtype=torch.float32),
+                persistent=False,
             )
             self.register_buffer(
                 'count_bin_upper',
                 torch.as_tensor([bounds[1] for bounds in parsed_ranges], dtype=torch.float32),
+                persistent=False,
             )
         self.variant = str(variant)
         if self.variant not in ('lite', 'context'):

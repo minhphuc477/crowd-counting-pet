@@ -6,6 +6,7 @@ import torch
 import main
 from datasets.QNRF import random_resized_square_crop
 from models.pet import EBCZipCountHead, _point_block_indices
+from util.misc import upgrade_legacy_pet_state_dict
 
 
 QNRF_CENTERS = (
@@ -28,6 +29,30 @@ def test_qnrf_zip_uses_exact_published_intervals():
     )
     counts = torch.tensor([1.0, 10.0, 11.0, 12.0, 13.0, 33.0, 34.0, 200.0])
     assert head.assign_positive_bins(counts).tolist() == [0, 9, 10, 10, 11, 18, 19, 19]
+
+
+def test_zip_interval_metadata_is_rebuilt_instead_of_checkpointed():
+    head = EBCZipCountHead(
+        16,
+        block_stride=8,
+        count_bin_centers=QNRF_CENTERS,
+        count_bin_ranges=QNRF_RANGES,
+    )
+    state = head.state_dict()
+    assert 'count_bin_centers' in state
+    assert 'count_bin_lower' not in state
+    assert 'count_bin_upper' not in state
+    head.load_state_dict(state, strict=True)
+
+    legacy = {
+        'zip_count_head.count_bin_centers': state['count_bin_centers'],
+        'zip_count_head.count_bin_lower': head.count_bin_lower.clone(),
+        'zip_count_head.count_bin_upper': head.count_bin_upper.clone(),
+    }
+    upgraded = upgrade_legacy_pet_state_dict(legacy)
+    assert 'zip_count_head.count_bin_centers' in upgraded
+    assert 'zip_count_head.count_bin_lower' not in upgraded
+    assert 'zip_count_head.count_bin_upper' not in upgraded
 
 
 def test_context_zip_excludes_padding_and_retains_boundary_blocks():

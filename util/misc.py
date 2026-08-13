@@ -501,13 +501,24 @@ def upgrade_legacy_pet_state_dict(state_dict):
         'quadtree_splitter.1.weight': 'quadtree_splitter.net.1.weight',
         'quadtree_splitter.1.bias': 'quadtree_splitter.net.1.bias',
     }
-    if not any(old in state_dict and new not in state_dict for old, new in replacements.items()):
+    derived_zip_metadata = (
+        'zip_count_head.count_bin_lower',
+        'zip_count_head.count_bin_upper',
+    )
+    needs_name_upgrade = any(
+        old in state_dict and new not in state_dict
+        for old, new in replacements.items()
+    )
+    needs_metadata_cleanup = any(key in state_dict for key in derived_zip_metadata)
+    if not needs_name_upgrade and not needs_metadata_cleanup:
         return state_dict
 
     upgraded = state_dict.copy()
     for old, new in replacements.items():
         if old in upgraded and new not in upgraded:
             upgraded[new] = upgraded.pop(old)
+    for key in derived_zip_metadata:
+        upgraded.pop(key, None)
     if hasattr(state_dict, '_metadata'):
         upgraded._metadata = state_dict._metadata
     return upgraded
