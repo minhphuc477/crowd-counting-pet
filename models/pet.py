@@ -1028,6 +1028,71 @@ class BidirectionalScaleFusion(nn.Module):
         return detail_4x + detail_update, context_8x + context_update
 
 
+class SelectiveContextToDetailFusion(nn.Module):
+    """Selectively inherit coarse context into PET's high-resolution stream.
+
+    STEERER showed that unconditional multi-resolution fusion can corrupt the
+    scale-specific evidence needed by a counting head.  PET has the same risk:
+    its 4x stream carries localization detail while its 8x stream carries
+    broader context.  This module predicts one selector per 8x location and
+    only sends the selected context to the 4x stream.  The residual projection
+    is zero initialized, so loading an existing PET checkpoint leaves its
+    predictions exactly unchanged before fine-tuning.
+    """
+
+    def __init__(self, hidden_dim, activation='gelu'):
+        super().__init__()
+        if activation == 'gelu':
+            act_factory = nn.GELU
+        elif activation == 'relu':
+            act_factory = lambda: nn.ReLU(inplace=True)
+        else:
+            raise ValueError(
+                f'Unsupported selective fusion activation: {activation}. '
+                'Use "gelu" or "relu".'
+            )
+
+        mid_dim = max(16, hidden_dim // 4)
+        self.detail_summary = nn.Sequential(
+            nn.Conv2d(hidden_dim, hidden_dim, 3, padding=1, groups=hidden_dim, bias=False),
+            _make_group_norm(hidden_dim),
+            act_factory(),
+        )
+        self.context_value = nn.Sequential(
+            nn.Conv2d(hidden_dim, hidden_dim, 3, padding=1, groups=hidden_dim, bias=False),
+            _make_group_norm(hidden_dim),
+            act_factory(),
+            nn.Conv2d(hidden_dim, hidden_dim, 1, bias=False),
+        )
+        self.selector = nn.Sequential(
+            nn.Conv2d(hidden_dim * 2, mid_dim, 1, bias=False),
+            _make_group_norm(mid_dim),
+            act_factory(),
+            nn.Conv2d(mid_dim, 1, 1),
+        )
+        self.out_detail = nn.Conv2d(hidden_dim, hidden_dim, 1)
+        nn.init.zeros_(self.out_detail.weight)
+        nn.init.zeros_(self.out_detail.bias)
+
+    def forward(self, detail_4x, context_8x):
+        detail_at_context = F.adaptive_avg_pool2d(
+            self.detail_summary(detail_4x),
+            context_8x.shape[-2:],
+        )
+        context_value = self.context_value(context_8x)
+        selector_logits = self.selector(
+            torch.cat([detail_at_context, context_value], dim=1)
+        )
+        selected_context = context_value * selector_logits.sigmoid().to(context_value.dtype)
+        detail_update = F.interpolate(
+            self.out_detail(selected_context),
+            size=detail_4x.shape[-2:],
+            mode='bilinear',
+            align_corners=False,
+        )
+        return detail_4x + detail_update, context_8x, selector_logits
+
+
 class EncoderContextFusion(nn.Module):
     """Inject 4x detail into PET's 8x encoder context with zero-init residual.
 
@@ -1192,6 +1257,127 @@ class MeasureDensityHead(nn.Module):
     def forward(self, x, mask=None):
         density = self.predict_density(x, mask)
         return density, density.flatten(1).sum(dim=1)
+
+
+def proximal_mapping_measure_loss(
+    pred_density,
+    targets,
+    valid,
+    image_size,
+    radius=32.0,
+    chunk_size=4096,
+):
+    """Memory-bounded Proximal Mapping Loss for point-supervised density.
+
+    Each valid density cell belongs to its nearest annotation (a discrete
+    Voronoi partition).  The count term constrains the mass assigned to every
+    annotation to one, while the spatial term moves mass toward the annotation
+    relative to the current mass-independent partition.  Nearest-neighbor
+    construction is detached, matching the optimization target in PML.
+
+    Coordinates in this repository are ``(y, x)``.  The returned terms are
+    normalized per annotated point so their scale remains stable across QNRF's
+    very different crop densities.
+    """
+    if pred_density.ndim != 3:
+        raise ValueError('pred_density must have shape [batch, height, width]')
+    if valid.shape != pred_density.shape:
+        raise ValueError('valid mask must have the same shape as pred_density')
+    if len(targets) != pred_density.shape[0]:
+        raise ValueError('targets length must match pred_density batch size')
+
+    batch_size, map_h, map_w = pred_density.shape
+    image_h, image_w = image_size
+    image_h = max(float(image_h), 1.0)
+    image_w = max(float(image_w), 1.0)
+    radius = max(float(radius), 1e-6)
+    chunk_size = max(int(chunk_size), 1)
+
+    work_density = pred_density.float()
+    yy = (torch.arange(map_h, device=pred_density.device, dtype=torch.float32) + 0.5)
+    xx = (torch.arange(map_w, device=pred_density.device, dtype=torch.float32) + 0.5)
+    yy = yy * (image_h / max(float(map_h), 1.0))
+    xx = xx * (image_w / max(float(map_w), 1.0))
+    grid_y, grid_x = torch.meshgrid(yy, xx, indexing='ij')
+    grid = torch.stack([grid_y, grid_x], dim=-1).reshape(-1, 2)
+
+    spatial_losses = []
+    count_losses = []
+    for batch_idx in range(batch_size):
+        valid_flat = valid[batch_idx].reshape(-1).bool()
+        density = work_density[batch_idx].reshape(-1)[valid_flat]
+        coordinates = grid[valid_flat]
+        points = targets[batch_idx]['points'].to(
+            device=pred_density.device,
+            dtype=torch.float32,
+        )
+        if points.ndim != 2 or points.shape[-1] < 2:
+            raise ValueError('target points must have shape [count, >=2]')
+        points = points[:, :2]
+        finite = torch.isfinite(points).all(dim=1)
+        points = points[finite]
+
+        if density.numel() == 0:
+            zero = work_density[batch_idx].sum() * 0.0
+            spatial_losses.append(zero)
+            count_losses.append(zero if points.numel() == 0 else zero + 1.0)
+            continue
+        if points.numel() == 0:
+            predicted_mass = density.sum()
+            spatial_losses.append(predicted_mass)
+            count_losses.append(predicted_mass)
+            continue
+        if density.sum().detach() <= 1.0:
+            spatial_losses.append(density.sum() * 0.0)
+            count_losses.append(
+                (density.sum() - float(points.shape[0])).abs()
+                / float(max(points.shape[0], 1))
+            )
+            continue
+
+        with torch.no_grad():
+            nearest_dist_parts = []
+            nearest_index_parts = []
+            for start in range(0, coordinates.shape[0], chunk_size):
+                distances = torch.cdist(
+                    coordinates[start:start + chunk_size],
+                    points,
+                    p=2,
+                )
+                nearest_dist, nearest_index = distances.min(dim=1)
+                nearest_dist_parts.append(nearest_dist)
+                nearest_index_parts.append(nearest_index)
+            nearest_dist = torch.cat(nearest_dist_parts, dim=0)
+            nearest_index = torch.cat(nearest_index_parts, dim=0)
+
+            point_count = points.shape[0]
+            max_distance = nearest_dist.new_zeros(point_count)
+            max_distance.scatter_reduce_(
+                0,
+                nearest_index,
+                nearest_dist,
+                reduce='amax',
+                include_self=True,
+            )
+            normalizer = max_distance[nearest_index].clamp_min(radius)
+            proximal_cost = torch.exp(nearest_dist / normalizer) - 1.0
+            group_cost = proximal_cost.new_zeros(point_count)
+            group_cells = proximal_cost.new_zeros(point_count)
+            group_cost.scatter_add_(0, nearest_index, proximal_cost)
+            group_cells.scatter_add_(0, nearest_index, torch.ones_like(proximal_cost))
+            group_mean = group_cost / group_cells.clamp_min(1.0)
+            centered_cost = proximal_cost - group_mean[nearest_index]
+
+        assigned_mass = density.new_zeros(points.shape[0])
+        assigned_mass.scatter_add_(0, nearest_index, density)
+        point_normalizer = float(max(points.shape[0], 1))
+        spatial_losses.append((density * centered_cost).sum() / point_normalizer)
+        count_losses.append((assigned_mass - 1.0).abs().sum() / point_normalizer)
+
+    return {
+        'spatial': torch.stack(spatial_losses).mean(),
+        'count': torch.stack(count_losses).mean(),
+    }
 
 
 class _ChannelLayerNorm2d(nn.Module):
@@ -1551,9 +1737,15 @@ class PET(nn.Module):
                 hidden_dim,
                 activation=getattr(args, 'scale_fusion_activation', 'gelu'),
             )
+        elif scale_fusion == 'selective_context_to_detail':
+            self.scale_fusion = SelectiveContextToDetailFusion(
+                hidden_dim,
+                activation=getattr(args, 'scale_fusion_activation', 'gelu'),
+            )
         else:
             raise ValueError(
-                f'Unsupported scale_fusion: {scale_fusion}. Use "none" or "bidirectional".'
+                f'Unsupported scale_fusion: {scale_fusion}. Use "none", '
+                '"bidirectional", or "selective_context_to_detail".'
             )
         encoder_context_fusion = getattr(args, 'encoder_context_fusion', 'none')
         if encoder_context_fusion == 'none':
@@ -1923,6 +2115,12 @@ class PET(nn.Module):
         self.density_map_start_epoch = int(getattr(args, 'density_map_start_epoch', 0))
         self.density_map_end_epoch = int(getattr(args, 'density_map_end_epoch', -1))
         self.measure_loss_coef = float(getattr(args, 'measure_loss_coef', 0.0))
+        self.measure_loss_mode = getattr(args, 'measure_loss_mode', 'normalized')
+        if self.measure_loss_mode not in ('normalized', 'pml'):
+            raise ValueError('measure_loss_mode must be one of "normalized" or "pml"')
+        self.measure_feature_source = getattr(args, 'measure_feature_source', 'context8x')
+        if self.measure_feature_source not in ('context8x', 'detail4x'):
+            raise ValueError('measure_feature_source must be one of "context8x" or "detail4x"')
         self.measure_loss_distribution_coef = float(getattr(args, 'measure_loss_distribution_coef', 1.0))
         self.measure_loss_count_coef = float(getattr(args, 'measure_loss_count_coef', 0.25))
         self.measure_loss_transport_coef = float(getattr(args, 'measure_loss_transport_coef', 0.0))
@@ -1937,6 +2135,8 @@ class PET(nn.Module):
         )
         self.measure_loss_sinkhorn_iters = max(1, int(getattr(args, 'measure_loss_sinkhorn_iters', 20)))
         self.measure_loss_sinkhorn_epsilon = max(1e-4, float(getattr(args, 'measure_loss_sinkhorn_epsilon', 0.05)))
+        self.measure_pml_radius = max(1e-6, float(getattr(args, 'measure_pml_radius', 32.0)))
+        self.measure_pml_chunk_size = max(1, int(getattr(args, 'measure_pml_chunk_size', 4096)))
         self.measure_loss_init_count = float(getattr(args, 'measure_loss_init_count', self.count_head_init_count))
         self.measure_loss_init_cells = float(getattr(args, 'measure_loss_init_cells', self.count_head_init_cells))
         if self.measure_loss_feature_grad_scale < 0.0:
@@ -2148,6 +2348,13 @@ class PET(nn.Module):
         self.inheritance_gate = getattr(args, 'inheritance_gate', 'gt_count')
         if self.inheritance_gate not in ('gt_count', 'split_map'):
             raise ValueError('inheritance_gate must be one of "gt_count" or "split_map"')
+        self.scale_selection_loss_coef = float(getattr(args, 'scale_selection_loss_coef', 0.0))
+        self.scale_selection_start_epoch = int(getattr(args, 'scale_selection_start_epoch', 0))
+        self.scale_selection_end_epoch = int(getattr(args, 'scale_selection_end_epoch', -1))
+        self.scale_selection_warmup_epochs = max(
+            0,
+            int(getattr(args, 'scale_selection_warmup_epochs', 0)),
+        )
         self.sparse_dec_win_size = _parse_size_pair(
             getattr(args, 'sparse_dec_win_size', ''),
             (16, 8),
@@ -3219,6 +3426,23 @@ class PET(nn.Module):
             loss_dict['loss_inheritance'] = loss_inheritance
             weight_dict['loss_inheritance'] = self.inheritance_loss_coef
             losses += loss_inheritance * self.inheritance_loss_coef
+        if self.scale_selection_loss_coef > 0:
+            selection_active = epoch >= self.scale_selection_start_epoch and (
+                self.scale_selection_end_epoch < 0 or epoch <= self.scale_selection_end_epoch
+            )
+            selection_weight = self.schedule_weight(
+                epoch,
+                self.scale_selection_start_epoch,
+                self.scale_selection_warmup_epochs,
+                self.scale_selection_loss_coef,
+            ) if selection_active else 0.0
+            if selection_active:
+                loss_scale_selection = self.compute_scale_selection_loss(outputs, targets)
+            else:
+                loss_scale_selection = output_sparse['pred_logits'].sum() * 0.0
+            loss_dict['loss_scale_selection'] = loss_scale_selection
+            weight_dict['loss_scale_selection'] = selection_weight
+            losses += loss_scale_selection * selection_weight
 
         if self.split_loss_variant == 'none':
             return {'loss_dict': loss_dict, 'weight_dict': weight_dict, 'losses': losses}
@@ -4294,6 +4518,39 @@ class PET(nn.Module):
             ).sum() / (sparse_weight.sum() + 1e-6)
         return loss
 
+    def compute_scale_selection_loss(self, outputs, targets):
+        """Supervise the selective 8x-to-4x inheritance gate locally.
+
+        A context cell is selected when its PET sparse cell contains at least
+        ``split_count_threshold`` annotations.  Positive and negative terms are
+        averaged independently so the overwhelmingly sparse QNRF background
+        cannot collapse the selector to zero.
+        """
+        selector_logits = outputs.get('scale_selection_logits')
+        if selector_logits is None:
+            return outputs['split_map_raw'].sum() * 0.0
+        if selector_logits.ndim != 4 or selector_logits.shape[1] != 1:
+            raise ValueError('scale_selection_logits must have shape [batch, 1, height, width]')
+
+        logits = selector_logits[:, 0].float()
+        sp_h, sp_w = logits.shape[-2:]
+        target_counts = self.build_sparse_cell_counts(
+            targets,
+            outputs['sparse'],
+            sp_h,
+            sp_w,
+        ).float()
+        target_dense = target_counts >= self.split_count_threshold
+        positive = F.softplus(-logits[target_dense])
+        negative = F.softplus(logits[~target_dense])
+        if positive.numel() > 0 and negative.numel() > 0:
+            return 0.5 * (positive.mean() + negative.mean())
+        if positive.numel() > 0:
+            return positive.mean()
+        if negative.numel() > 0:
+            return negative.mean()
+        return logits.sum() * 0.0
+
     def compute_count_loss(self, outputs, targets):
         output_sparse, output_dense = outputs['sparse'], outputs['dense']
         device = output_sparse['pred_logits'].device
@@ -4614,7 +4871,33 @@ class PET(nn.Module):
                 'loss_measure_count': outputs['split_map_raw'].sum() * 0.0,
                 'loss_measure_transport': outputs['split_map_raw'].sum() * 0.0,
             }
-        pred_density = outputs['measure_density'].to(dtype=outputs['split_map_raw'].dtype)
+        # Keep density mass and per-Voronoi reductions in FP32 under AMP.  QNRF
+        # crops can contain thousands of points, where FP16 summation no longer
+        # has unit resolution.
+        pred_density = outputs['measure_density'].float()
+        if self.measure_loss_mode == 'pml':
+            if samples.mask is None:
+                valid = torch.ones_like(pred_density, dtype=torch.bool)
+            else:
+                valid = ~F.interpolate(
+                    samples.mask[:, None].float(),
+                    size=pred_density.shape[-2:],
+                    mode='nearest',
+                ).to(device=pred_density.device).squeeze(1).bool()
+            proximal = proximal_mapping_measure_loss(
+                pred_density,
+                targets,
+                valid,
+                outputs['sparse']['img_shape'],
+                radius=self.measure_pml_radius,
+                chunk_size=self.measure_pml_chunk_size,
+            )
+            return {
+                'loss_measure_dist': proximal['spatial'],
+                'loss_measure_count': proximal['count'],
+                'loss_measure_transport': pred_density.sum() * 0.0,
+            }
+
         target_density, valid = self.build_measure_targets(outputs, targets, samples)
         valid_f = valid.to(device=pred_density.device, dtype=pred_density.dtype)
         pred_density = pred_density * valid_f
@@ -4881,13 +5164,20 @@ class PET(nn.Module):
                 self.large_context_input_proj(features['16x'].tensors),
                 features['16x'].mask,
             )
+        scale_selection_logits = None
         if self.scale_fusion is not None:
-            fused_4x, fused_8x = self.scale_fusion(features['4x'].tensors, features['8x'].tensors)
+            fusion_output = self.scale_fusion(features['4x'].tensors, features['8x'].tensors)
+            if len(fusion_output) == 3:
+                fused_4x, fused_8x, scale_selection_logits = fusion_output
+            else:
+                fused_4x, fused_8x = fusion_output
             features['4x'] = NestedTensor(fused_4x, features['4x'].mask)
             features['8x'] = NestedTensor(fused_8x, features['8x'].mask)
         if self.encoder_context_fusion is not None:
             fused_8x = self.encoder_context_fusion(features['4x'].tensors, features['8x'].tensors)
             features['8x'] = NestedTensor(fused_8x, features['8x'].mask)
+        if scale_selection_logits is not None:
+            kwargs['scale_selection_logits'] = scale_selection_logits
 
         # forward
         if 'train' in kwargs:
@@ -5325,6 +5615,8 @@ class PET(nn.Module):
         outputs['split_mask_dense'] = split_mask_dense
         outputs['split_threshold'] = split_threshold.detach()
         outputs['query_prune_threshold'] = split_map.new_tensor(self.query_prune_threshold).detach()
+        if 'scale_selection_logits' in kwargs:
+            outputs['scale_selection_logits'] = kwargs['scale_selection_logits']
         if ebc_router_output is not None and 'train' in kwargs:
             outputs['ebc_router'] = ebc_router_output
         if local_density_output is not None and 'train' in kwargs:
@@ -5334,11 +5626,17 @@ class PET(nn.Module):
             count_density = self.count_head.predict_density(self.count_head_features(encode_src, count_epoch), mask)
             outputs['count_density'] = count_density
             outputs['count_pred'] = count_density.flatten(1).sum(dim=1)
-        if self.measure_head is not None:
+        if self.measure_head is not None and 'train' in kwargs:
             measure_epoch = int(kwargs.get('epoch', 0))
+            if self.measure_feature_source == 'detail4x':
+                measure_source = features['4x'].tensors
+                measure_mask = features['4x'].mask
+            else:
+                measure_source = encode_src
+                measure_mask = mask
             measure_density, measure_count = self.measure_head(
-                self.measure_head_features(encode_src, measure_epoch),
-                mask,
+                self.measure_head_features(measure_source, measure_epoch),
+                measure_mask,
             )
             outputs['measure_density'] = measure_density
             outputs['measure_count'] = measure_count

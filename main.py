@@ -1564,6 +1564,61 @@ MODEL_RECIPES['vgg_apglc_qnrf_tail_scale_rifi'] = {
     **TRANSFERABLE_SCALE_RIFI_OVERRIDES,
 }
 
+# QNRF selective scale inheritance.  Unlike the existing bidirectional scale
+# fusion, this only transfers 8x context into the 4x localization stream where
+# a locally supervised selector predicts that dense-scale processing is useful.
+MODEL_RECIPES['vgg_apglc_qnrf_selective_scale_rifi'] = {
+    **MODEL_RECIPES['vgg_apglc_qnrf_tail_scale_rifi'],
+    # The official archive preserves three train image/annotation pairs whose
+    # points are mostly outside the decoded JPEG canvas.  Exclude only those
+    # grossly incompatible pairs and record them in the run manifest; test
+    # images and their annotations are never filtered.
+    'qnrf_max_train_outside_fraction': 0.25,
+    'scale_fusion': 'selective_context_to_detail',
+    'scale_fusion_activation': 'gelu',
+    'scale_selection_loss_coef': 0.02,
+    'scale_selection_start_epoch': 0,
+    'scale_selection_end_epoch': -1,
+    'scale_selection_warmup_epochs': 20,
+}
+
+# Full QNRF representation branch: selective scale inheritance plus an
+# auxiliary Proximal Mapping density objective.  PML is training-only; PET
+# point queries remain the sole count and localization output at evaluation.
+MODEL_RECIPES['vgg_apglc_qnrf_selective_pml_scale_rifi'] = {
+    **MODEL_RECIPES['vgg_apglc_qnrf_selective_scale_rifi'],
+    'measure_loss_coef': 0.05,
+    'measure_loss_mode': 'pml',
+    'measure_feature_source': 'detail4x',
+    'measure_loss_distribution_coef': 1.0,
+    'measure_loss_count_coef': 1.0,
+    'measure_loss_transport_coef': 0.0,
+    'measure_loss_start_epoch': 0,
+    'measure_loss_end_epoch': -1,
+    'measure_loss_warmup_epochs': 20,
+    'measure_loss_feature_grad_scale': 0.10,
+    'measure_loss_feature_grad_start_epoch': 25,
+    'measure_loss_feature_grad_warmup_epochs': 50,
+    'measure_pml_radius': 32.0,
+    'measure_pml_chunk_size': 4096,
+    'measure_loss_init_count': 40.0,
+    'measure_loss_init_cells': 4096.0,
+}
+
+# Checkpoint adaptation schedule for the converged QNRF Scale-RIFI detector.
+# A model-only resume restarts the local epoch counter at zero; without these
+# overrides it would incorrectly reactivate APG/IFI/scale auxiliaries that had
+# already completed their original schedules.  Keep their learned modules and
+# inference behavior, but optimize the PET objective plus only the two new
+# selective/PML objectives while preserving VGG batch-normalization statistics.
+MODEL_RECIPES['vgg_apglc_qnrf_selective_pml_scale_rifi_finetune'] = {
+    **MODEL_RECIPES['vgg_apglc_qnrf_selective_pml_scale_rifi'],
+    'apg_loss_coef': 0.0,
+    'ifi_loss_coef': 0.0,
+    'scale_point_loss_coef': 0.0,
+    'freeze_bn': True,
+}
+
 # ZIP-aligned spatial recounting on the strongest fixed VGG QNRF detector.
 # This branch freezes PET/Scale-RIFI and trains an isolated context ZIP head;
 # existing detector checkpoints and point-localization behavior are unchanged.
@@ -2247,6 +2302,9 @@ EXPERIMENTAL_MODEL_RECIPES = {
     'vgg_apglc_ebc_router_scale_rifi',
     'vgg_apglc_scale_rifi_counthead_stage2',
     'vgg_apglc_qnrf_tail_scale_rifi',
+    'vgg_apglc_qnrf_selective_scale_rifi',
+    'vgg_apglc_qnrf_selective_pml_scale_rifi',
+    'vgg_apglc_qnrf_selective_pml_scale_rifi_finetune',
     'vgg_apglc_qnrf_zip_recount_scale_rifi',
     'vgg_apglc_qnrf_tiled',
     'vgg_apglc_qnrf_tiled_scale_rifi',
@@ -2395,6 +2453,8 @@ ARCHITECTURE_OVERRIDE_KEYS = {
     'fusion_mhf_output_activation',
     'foreground_loss_coef',
     'measure_loss_coef',
+    'measure_loss_mode',
+    'measure_feature_source',
     'measure_loss_distribution_coef',
     'measure_loss_count_coef',
     'measure_loss_transport_coef',
@@ -2406,8 +2466,14 @@ ARCHITECTURE_OVERRIDE_KEYS = {
     'measure_loss_feature_grad_warmup_epochs',
     'measure_loss_sinkhorn_iters',
     'measure_loss_sinkhorn_epsilon',
+    'measure_pml_radius',
+    'measure_pml_chunk_size',
     'measure_loss_init_count',
     'measure_loss_init_cells',
+    'scale_selection_loss_coef',
+    'scale_selection_start_epoch',
+    'scale_selection_end_epoch',
+    'scale_selection_warmup_epochs',
     'foreground_sigma',
     'foreground_neg_shrink',
     'foreground_init_prior',
@@ -2550,7 +2616,8 @@ def get_args_parser():
                         help='adapter used to map timm features into PET 4x/8x features')
     parser.add_argument('--timm_output_norm', default='gn', choices=('gn', 'none'),
                         help='normalization after timm feature adapter; gn preserves old timm behavior, none is VGG-like')
-    parser.add_argument('--scale_fusion', default='none', choices=('none', 'bidirectional'),
+    parser.add_argument('--scale_fusion', default='none',
+                        choices=('none', 'bidirectional', 'selective_context_to_detail'),
                         help='identity-initialized exchange between PET 4x detail and 8x context features')
     parser.add_argument('--scale_fusion_activation', default='gelu', choices=('relu', 'gelu'),
                         help='activation used by bidirectional scale fusion')
@@ -2839,6 +2906,10 @@ def get_args_parser():
                         help='epoch after which density-map auxiliary turns off; negative keeps it on')
     parser.add_argument('--measure_loss_coef', default=0.0, type=float,
                         help='auxiliary point-measure density branch weight; 0 disables it')
+    parser.add_argument('--measure_loss_mode', default='normalized', choices=('normalized', 'pml'),
+                        help='point-measure objective: normalized density or proximal mapping')
+    parser.add_argument('--measure_feature_source', default='context8x', choices=('context8x', 'detail4x'),
+                        help='feature resolution supervised by the point-measure objective')
     parser.add_argument('--measure_loss_distribution_coef', default=1.0, type=float,
                         help='normalized spatial-measure loss multiplier inside --measure_loss_coef')
     parser.add_argument('--measure_loss_count_coef', default=0.25, type=float,
@@ -2861,6 +2932,10 @@ def get_args_parser():
                         help='Sinkhorn iterations when --measure_loss_transport_coef > 0')
     parser.add_argument('--measure_loss_sinkhorn_epsilon', default=0.05, type=float,
                         help='Sinkhorn entropy epsilon for point-measure transport loss')
+    parser.add_argument('--measure_pml_radius', default=32.0, type=float,
+                        help='minimum image-pixel Voronoi radius used by proximal mapping loss')
+    parser.add_argument('--measure_pml_chunk_size', default=4096, type=int,
+                        help='maximum density cells per point-distance chunk in proximal mapping loss')
     parser.add_argument('--measure_loss_init_count', default=40.0, type=float,
                         help='initial count prior for point-measure density head')
     parser.add_argument('--measure_loss_init_cells', default=1024.0, type=float,
@@ -3100,6 +3175,14 @@ def get_args_parser():
                         help='epoch after which selective inheritance turns off; negative keeps it on')
     parser.add_argument('--inheritance_gate', default='gt_count', choices=('gt_count', 'split_map'),
                         help='scale-selection teacher for selective inheritance')
+    parser.add_argument('--scale_selection_loss_coef', default=0.0, type=float,
+                        help='local supervision weight for selective context-to-detail fusion')
+    parser.add_argument('--scale_selection_start_epoch', default=0, type=int,
+                        help='epoch when selective scale-gate supervision starts')
+    parser.add_argument('--scale_selection_end_epoch', default=-1, type=int,
+                        help='epoch after which selective scale-gate supervision turns off')
+    parser.add_argument('--scale_selection_warmup_epochs', default=0, type=int,
+                        help='linearly ramp selective scale-gate supervision')
     parser.add_argument('--eos_coef', default=0.5, type=float,
                         help="Relative classification weight of the no-object class")
     parser.add_argument('--pet_loss_variant', default='paper', choices=('paper', 'balanced'),
@@ -3855,7 +3938,8 @@ def merge_checkpoint_args(args, checkpoint):
             'density_map_loss_type', 'density_map_pos_weight',
             'density_map_grad_scale',
             'density_map_start_epoch', 'density_map_end_epoch',
-            'measure_loss_coef', 'measure_loss_distribution_coef',
+            'measure_loss_coef', 'measure_loss_mode', 'measure_feature_source',
+            'measure_loss_distribution_coef',
             'measure_loss_count_coef', 'measure_loss_transport_coef',
             'measure_loss_start_epoch', 'measure_loss_end_epoch',
             'measure_loss_warmup_epochs',
@@ -3863,6 +3947,7 @@ def merge_checkpoint_args(args, checkpoint):
             'measure_loss_feature_grad_start_epoch',
             'measure_loss_feature_grad_warmup_epochs',
             'measure_loss_sinkhorn_iters', 'measure_loss_sinkhorn_epsilon',
+            'measure_pml_radius', 'measure_pml_chunk_size',
             'measure_loss_init_count', 'measure_loss_init_cells',
             'zip_count_loss_coef', 'zip_count_block_size', 'zip_count_feature_source', 'zip_count_bin_centers',
             'zip_count_bin_ranges', 'zip_count_head_variant',
@@ -3923,6 +4008,8 @@ def merge_checkpoint_args(args, checkpoint):
             'inheritance_loss_coef', 'inheritance_sparse_coef', 'inheritance_dense_coef',
             'inheritance_consistency_coef', 'inheritance_start_epoch', 'inheritance_end_epoch',
             'inheritance_gate',
+            'scale_selection_loss_coef', 'scale_selection_start_epoch',
+            'scale_selection_end_epoch', 'scale_selection_warmup_epochs',
             'split_loss_variant',
         }
         runtime_keys.update(key for key in aux_resume_keys if key in explicit_args)
