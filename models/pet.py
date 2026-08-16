@@ -1259,6 +1259,79 @@ class MeasureDensityHead(nn.Module):
         return density, density.flatten(1).sum(dim=1)
 
 
+class DirectPMLDensityHead(nn.Module):
+    """Stride-2 density decoder used as an actual inference head.
+
+    The earlier measure head was deliberately training-only and therefore
+    could not improve MAE directly.  This decoder follows the VGG-PML design:
+    fuse the final two FPN resolutions, decode a non-negative stride-2
+    measure, and integrate that measure for the image count.  It remains
+    separate from PET's point-query features so density supervision does not
+    overwrite the representations consumed by the localization decoder.
+    """
+
+    def __init__(self, in_channels, hidden_dim, activation='relu'):
+        super().__init__()
+        if activation == 'gelu':
+            act_factory = nn.GELU
+        elif activation == 'relu':
+            act_factory = lambda: nn.ReLU(inplace=True)
+        else:
+            raise ValueError('direct PML activation must be "gelu" or "relu"')
+
+        self.detail = nn.Sequential(
+            nn.Conv2d(in_channels, hidden_dim, 1, bias=False),
+            _make_group_norm(hidden_dim),
+            act_factory(),
+        )
+        self.context = nn.Sequential(
+            nn.Conv2d(in_channels, hidden_dim, 1, bias=False),
+            _make_group_norm(hidden_dim),
+            act_factory(),
+        )
+        self.fuse = nn.Sequential(
+            nn.Conv2d(hidden_dim * 2, hidden_dim, 1, bias=False),
+            _make_group_norm(hidden_dim),
+            act_factory(),
+            nn.Conv2d(hidden_dim, hidden_dim, 3, padding=1, bias=False),
+            _make_group_norm(hidden_dim),
+            act_factory(),
+        )
+        mid_dim = max(hidden_dim // 2, 32)
+        self.decoder = nn.Sequential(
+            nn.Conv2d(hidden_dim, mid_dim, 3, padding=1, bias=False),
+            _make_group_norm(mid_dim),
+            act_factory(),
+            nn.Conv2d(mid_dim, 4, 1),
+            nn.PixelShuffle(2),
+        )
+        # PML's reference decoder starts close to zero but not exactly at
+        # zero.  Exact zero initialization followed by ReLU has no gradient.
+        nn.init.normal_(self.decoder[-2].weight, mean=0.0, std=1e-3)
+        nn.init.zeros_(self.decoder[-2].bias)
+
+    def forward(self, detail_4x, context_8x, detail_mask=None):
+        detail = self.detail(detail_4x.float())
+        context = self.context(context_8x.float())
+        context = F.interpolate(
+            context,
+            size=detail.shape[-2:],
+            mode='bilinear',
+            align_corners=False,
+        )
+        density = F.relu(self.decoder(self.fuse(torch.cat((detail, context), dim=1))))
+        if detail_mask is not None:
+            valid = ~F.interpolate(
+                detail_mask[:, None].float(),
+                size=density.shape[-2:],
+                mode='nearest',
+            ).squeeze(1).bool()
+            density = density.squeeze(1) * valid.to(dtype=density.dtype)
+        else:
+            density = density.squeeze(1)
+        return density, density.flatten(1).sum(dim=1)
+
+
 def proximal_mapping_measure_loss(
     pred_density,
     targets,
@@ -1266,6 +1339,7 @@ def proximal_mapping_measure_loss(
     image_size,
     radius=32.0,
     chunk_size=4096,
+    normalization='points',
 ):
     """Memory-bounded Proximal Mapping Loss for point-supervised density.
 
@@ -1275,9 +1349,10 @@ def proximal_mapping_measure_loss(
     relative to the current mass-independent partition.  Nearest-neighbor
     construction is detached, matching the optimization target in PML.
 
-    Coordinates in this repository are ``(y, x)``.  The returned terms are
-    normalized per annotated point so their scale remains stable across QNRF's
-    very different crop densities.
+    Coordinates in this repository are ``(y, x)``.  ``points`` normalization
+    preserves the legacy auxiliary-loss scale.  ``batch`` preserves PML's
+    published sum-over-points, mean-over-images reduction for a direct density
+    counter.
     """
     if pred_density.ndim != 3:
         raise ValueError('pred_density must have shape [batch, height, width]')
@@ -1290,6 +1365,8 @@ def proximal_mapping_measure_loss(
     image_h, image_w = image_size
     image_h = max(float(image_h), 1.0)
     image_w = max(float(image_w), 1.0)
+    if normalization not in ('points', 'batch'):
+        raise ValueError('PML normalization must be "points" or "batch"')
     radius = max(float(radius), 1e-6)
     chunk_size = max(int(chunk_size), 1)
 
@@ -1320,7 +1397,12 @@ def proximal_mapping_measure_loss(
         if density.numel() == 0:
             zero = work_density[batch_idx].sum() * 0.0
             spatial_losses.append(zero)
-            count_losses.append(zero if points.numel() == 0 else zero + 1.0)
+            missing_mass = (
+                1.0
+                if normalization == 'points'
+                else float(points.shape[0])
+            )
+            count_losses.append(zero if points.numel() == 0 else zero + missing_mass)
             continue
         if points.numel() == 0:
             predicted_mass = density.sum()
@@ -1329,9 +1411,14 @@ def proximal_mapping_measure_loss(
             continue
         if density.sum().detach() <= 1.0:
             spatial_losses.append(density.sum() * 0.0)
+            low_mass_normalizer = (
+                float(max(points.shape[0], 1))
+                if normalization == 'points'
+                else 1.0
+            )
             count_losses.append(
                 (density.sum() - float(points.shape[0])).abs()
-                / float(max(points.shape[0], 1))
+                / low_mass_normalizer
             )
             continue
 
@@ -1370,7 +1457,11 @@ def proximal_mapping_measure_loss(
 
         assigned_mass = density.new_zeros(points.shape[0])
         assigned_mass.scatter_add_(0, nearest_index, density)
-        point_normalizer = float(max(points.shape[0], 1))
+        point_normalizer = (
+            float(max(points.shape[0], 1))
+            if normalization == 'points'
+            else 1.0
+        )
         spatial_losses.append((density * centered_cost).sum() / point_normalizer)
         count_losses.append((assigned_mass - 1.0).abs().sum() / point_normalizer)
 
@@ -1842,12 +1933,12 @@ class PET(nn.Module):
         self.eval_count_source = getattr(args, 'eval_count_source', 'pet')
         if self.eval_count_source not in (
             'pet', 'count_head', 'count_head_low_blend',
-            'zip', 'zip_pet_blend', 'zip_tail_blend',
+            'zip', 'zip_pet_blend', 'zip_tail_blend', 'measure',
         ):
             raise ValueError(
                 'eval_count_source must be one of "pet", "count_head", '
                 '"count_head_low_blend", "zip", "zip_pet_blend", or '
-                '"zip_tail_blend"'
+                '"zip_tail_blend", or "measure"'
             )
         self.eval_count_blend_alpha = float(getattr(args, 'eval_count_blend_alpha', 0.5))
         if not 0.0 <= self.eval_count_blend_alpha <= 1.0:
@@ -2121,6 +2212,13 @@ class PET(nn.Module):
         self.measure_feature_source = getattr(args, 'measure_feature_source', 'context8x')
         if self.measure_feature_source not in ('context8x', 'detail4x'):
             raise ValueError('measure_feature_source must be one of "context8x" or "detail4x"')
+        self.measure_head_variant = getattr(args, 'measure_head_variant', 'simple')
+        if self.measure_head_variant not in ('simple', 'direct_fpn'):
+            raise ValueError('measure_head_variant must be one of "simple" or "direct_fpn"')
+        self.measure_head_activation = getattr(args, 'measure_head_activation', 'gelu')
+        self.measure_pml_normalization = getattr(args, 'measure_pml_normalization', 'points')
+        if self.measure_pml_normalization not in ('points', 'batch'):
+            raise ValueError('measure_pml_normalization must be one of "points" or "batch"')
         self.measure_loss_distribution_coef = float(getattr(args, 'measure_loss_distribution_coef', 1.0))
         self.measure_loss_count_coef = float(getattr(args, 'measure_loss_count_coef', 0.25))
         self.measure_loss_transport_coef = float(getattr(args, 'measure_loss_transport_coef', 0.0))
@@ -2174,14 +2272,21 @@ class PET(nn.Module):
             GlobalCountHead(hidden_dim, init_count=self.count_head_init_count, init_cells=self.count_head_init_cells)
             if needs_count_head else None
         )
-        self.measure_head = (
-            MeasureDensityHead(
+        needs_measure_head = self.measure_loss_coef > 0 or self.eval_count_source == 'measure'
+        if needs_measure_head and self.measure_head_variant == 'direct_fpn':
+            self.measure_head = DirectPMLDensityHead(
+                hidden_dim,
+                hidden_dim,
+                activation=self.measure_head_activation,
+            )
+        elif needs_measure_head:
+            self.measure_head = MeasureDensityHead(
                 hidden_dim,
                 init_count=self.measure_loss_init_count,
                 init_cells=self.measure_loss_init_cells,
             )
-            if self.measure_loss_coef > 0 else None
-        )
+        else:
+            self.measure_head = None
         needs_zip_count_head = self.zip_count_loss_coef > 0 or self.eval_count_source in ('zip', 'zip_pet_blend', 'zip_tail_blend')
         self.zip_count_head = (
             EBCZipCountHead(**self._zip_count_config)
@@ -4891,6 +4996,7 @@ class PET(nn.Module):
                 outputs['sparse']['img_shape'],
                 radius=self.measure_pml_radius,
                 chunk_size=self.measure_pml_chunk_size,
+                normalization=self.measure_pml_normalization,
             )
             return {
                 'loss_measure_dist': proximal['spatial'],
@@ -5626,18 +5732,35 @@ class PET(nn.Module):
             count_density = self.count_head.predict_density(self.count_head_features(encode_src, count_epoch), mask)
             outputs['count_density'] = count_density
             outputs['count_pred'] = count_density.flatten(1).sum(dim=1)
-        if self.measure_head is not None and 'train' in kwargs:
+        if self.measure_head is not None and (
+            'train' in kwargs or self.eval_count_source == 'measure'
+        ):
             measure_epoch = int(kwargs.get('epoch', 0))
-            if self.measure_feature_source == 'detail4x':
+            if self.measure_head_variant == 'direct_fpn':
+                detail_source = self.measure_head_features(
+                    features['4x'].tensors,
+                    measure_epoch,
+                )
+                context_source = self.measure_head_features(
+                    features['8x'].tensors,
+                    measure_epoch,
+                )
+                measure_density, measure_count = self.measure_head(
+                    detail_source,
+                    context_source,
+                    features['4x'].mask,
+                )
+            elif self.measure_feature_source == 'detail4x':
                 measure_source = features['4x'].tensors
                 measure_mask = features['4x'].mask
             else:
                 measure_source = encode_src
                 measure_mask = mask
-            measure_density, measure_count = self.measure_head(
-                self.measure_head_features(measure_source, measure_epoch),
-                measure_mask,
-            )
+            if self.measure_head_variant != 'direct_fpn':
+                measure_density, measure_count = self.measure_head(
+                    self.measure_head_features(measure_source, measure_epoch),
+                    measure_mask,
+                )
             outputs['measure_density'] = measure_density
             outputs['measure_count'] = measure_count
         if self.zip_count_head is not None:
@@ -5951,6 +6074,15 @@ class PET(nn.Module):
                         )
                 else:
                     div_out['count_for_mae'] = blended_count
+        if 'measure_count' in outputs:
+            div_out['measure_count'] = outputs['measure_count']
+            div_out['measure_density'] = outputs['measure_density']
+            if self.eval_count_source == 'measure':
+                div_out['count_for_mae'] = outputs['measure_count']
+                # Tiled evaluation partitions spatial count outputs by cell
+                # ownership.  Expose the actual stride-2 measure, not only its
+                # scalar integral, so overlap is never counted twice.
+                div_out['count_density'] = outputs['measure_density']
         return div_out
 
     def format_custom_query_output(

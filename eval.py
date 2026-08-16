@@ -88,6 +88,14 @@ ARCHITECTURE_OVERRIDE_KEYS = {
     'fusion_mhf_norm',
     'fusion_mhf_spatial_kernel',
     'fusion_mhf_output_activation',
+    'measure_loss_coef',
+    'measure_loss_mode',
+    'measure_feature_source',
+    'measure_head_variant',
+    'measure_head_activation',
+    'measure_pml_normalization',
+    'measure_pml_radius',
+    'measure_pml_chunk_size',
     'foreground_loss_coef',
     'foreground_sigma',
     'foreground_neg_shrink',
@@ -263,6 +271,11 @@ def get_args_parser():
     parser.add_argument('--density_map_start_epoch', default=0, type=int)
     parser.add_argument('--density_map_end_epoch', default=-1, type=int)
     parser.add_argument('--measure_loss_coef', default=0.0, type=float)
+    parser.add_argument('--measure_loss_mode', default='normalized', choices=('normalized', 'pml'))
+    parser.add_argument('--measure_feature_source', default='context8x', choices=('context8x', 'detail4x'))
+    parser.add_argument('--measure_head_variant', default='simple', choices=('simple', 'direct_fpn'))
+    parser.add_argument('--measure_head_activation', default='gelu', choices=('relu', 'gelu'))
+    parser.add_argument('--measure_pml_normalization', default='points', choices=('points', 'batch'))
     parser.add_argument('--measure_loss_distribution_coef', default=1.0, type=float)
     parser.add_argument('--measure_loss_count_coef', default=0.25, type=float)
     parser.add_argument('--measure_loss_transport_coef', default=0.0, type=float)
@@ -274,6 +287,8 @@ def get_args_parser():
     parser.add_argument('--measure_loss_feature_grad_warmup_epochs', default=0, type=int)
     parser.add_argument('--measure_loss_sinkhorn_iters', default=20, type=int)
     parser.add_argument('--measure_loss_sinkhorn_epsilon', default=0.05, type=float)
+    parser.add_argument('--measure_pml_radius', default=32.0, type=float)
+    parser.add_argument('--measure_pml_chunk_size', default=4096, type=int)
     parser.add_argument('--measure_loss_init_count', default=40.0, type=float)
     parser.add_argument('--measure_loss_init_cells', default=1024.0, type=float)
     parser.add_argument('--foreground_loss_coef', default=0.0, type=float)
@@ -406,7 +421,7 @@ def get_args_parser():
     parser.add_argument('--eval_foreground_gate_mode', default='suppress', choices=('suppress', 'logit_add'))
     parser.add_argument('--eval_foreground_gate_strength', default=0.75, type=float)
     parser.add_argument('--eval_count_mode', default='threshold', choices=('threshold', 'count_head_topk'))
-    parser.add_argument('--eval_count_source', default='pet', choices=('pet', 'count_head', 'count_head_low_blend', 'zip', 'zip_pet_blend', 'zip_tail_blend'))
+    parser.add_argument('--eval_count_source', default='pet', choices=('pet', 'count_head', 'count_head_low_blend', 'zip', 'zip_pet_blend', 'zip_tail_blend', 'measure'))
     parser.add_argument('--eval_count_blend_alpha', default=0.5, type=float)
     parser.add_argument('--eval_count_tail_threshold', default=1500.0, type=float)
     parser.add_argument('--eval_count_head_min_score', default=0.5, type=float)

@@ -1605,6 +1605,49 @@ MODEL_RECIPES['vgg_apglc_qnrf_selective_pml_scale_rifi'] = {
     'measure_loss_init_cells': 4096.0,
 }
 
+# Direct-PML PET is a separate scratch architecture, not another auxiliary on
+# the failed selective-PML path.  Its stride-2 non-negative density is the
+# primary count output at inference, while APG+LC/Scale-RIFI point queries
+# retain PET's localization output.  The data schedule follows the official
+# PML 512-pixel random-resized crop contract; only the shared-backbone gradient
+# is attenuated so the two tasks cannot overwrite one another early in a run.
+MODEL_RECIPES['vgg_apglc_qnrf_direct_pml_scale_rifi'] = {
+    **MODEL_RECIPES['vgg_apglc_qnrf_tail_scale_rifi'],
+    'qnrf_max_train_outside_fraction': 0.25,
+    'measure_loss_coef': 1.0,
+    'measure_loss_mode': 'pml',
+    'measure_feature_source': 'detail4x',
+    'measure_head_variant': 'direct_fpn',
+    'measure_head_activation': 'relu',
+    'measure_pml_normalization': 'batch',
+    'measure_loss_distribution_coef': 1.0,
+    'measure_loss_count_coef': 1.0,
+    'measure_loss_transport_coef': 0.0,
+    'measure_loss_start_epoch': 0,
+    'measure_loss_end_epoch': -1,
+    'measure_loss_warmup_epochs': 5,
+    'measure_loss_feature_grad_scale': 0.25,
+    'measure_loss_feature_grad_start_epoch': 0,
+    'measure_loss_feature_grad_warmup_epochs': 20,
+    'lr_measure_head': 3e-5,
+    'measure_pml_radius': 32.0,
+    'measure_pml_chunk_size': 4096,
+    'eval_count_source': 'measure',
+    # Gradient accumulation does not accumulate BatchNorm statistics.  Freeze
+    # ImageNet VGG-BN statistics because 512 crops fit only four images per
+    # physical batch on the target 16 GB GPU.
+    'freeze_bn': True,
+    'patch_size_choices': '512',
+    'crop_attempts': 1,
+    'min_crop_points': 0,
+    'train_count_weight_power': 0.0,
+    'train_count_weight_max': 1.0,
+    'qnrf_random_scale_min': 0.5,
+    'qnrf_random_scale_max': 1.5,
+    'qnrf_random_resized_crop': True,
+    'eval_max_size': 1536,
+}
+
 # Checkpoint adaptation schedule for the converged QNRF Scale-RIFI detector.
 # A model-only resume restarts the local epoch counter at zero; without these
 # overrides it would incorrectly reactivate APG/IFI/scale auxiliaries that had
@@ -2312,6 +2355,7 @@ EXPERIMENTAL_MODEL_RECIPES = {
     'vgg_apglc_qnrf_selective_scale_rifi',
     'vgg_apglc_qnrf_selective_pml_scale_rifi',
     'vgg_apglc_qnrf_selective_pml_scale_rifi_finetune',
+    'vgg_apglc_qnrf_direct_pml_scale_rifi',
     'vgg_apglc_qnrf_zip_recount_scale_rifi',
     'vgg_apglc_qnrf_tiled',
     'vgg_apglc_qnrf_tiled_scale_rifi',
@@ -2462,6 +2506,9 @@ ARCHITECTURE_OVERRIDE_KEYS = {
     'measure_loss_coef',
     'measure_loss_mode',
     'measure_feature_source',
+    'measure_head_variant',
+    'measure_head_activation',
+    'measure_pml_normalization',
     'measure_loss_distribution_coef',
     'measure_loss_count_coef',
     'measure_loss_transport_coef',
@@ -2550,6 +2597,8 @@ def get_args_parser():
     parser.add_argument('--lr_backbone', default=1e-5, type=float)
     parser.add_argument('--lr_backbone_adapter', default=-1.0, type=float,
                         help='learning rate for randomly initialized backbone adapters/FPN; negative uses --lr')
+    parser.add_argument('--lr_measure_head', default=-1.0, type=float,
+                        help='learning rate for the direct PML density decoder; negative uses --lr')
     parser.add_argument('--vgg_fpn_main_lr', action='store_true',
                         help='train the VGG FPN fusion block at --lr; disabled keeps original PET optimizer grouping')
     parser.add_argument('--freeze_backbone_epochs', default=0, type=int,
@@ -2917,6 +2966,12 @@ def get_args_parser():
                         help='point-measure objective: normalized density or proximal mapping')
     parser.add_argument('--measure_feature_source', default='context8x', choices=('context8x', 'detail4x'),
                         help='feature resolution supervised by the point-measure objective')
+    parser.add_argument('--measure_head_variant', default='simple', choices=('simple', 'direct_fpn'),
+                        help='simple is auxiliary-only; direct_fpn fuses 4x/8x and emits a stride-2 inference density')
+    parser.add_argument('--measure_head_activation', default='gelu', choices=('relu', 'gelu'),
+                        help='activation used by the direct point-measure decoder')
+    parser.add_argument('--measure_pml_normalization', default='points', choices=('points', 'batch'),
+                        help='points preserves legacy scaling; batch matches the published PML batch reduction')
     parser.add_argument('--measure_loss_distribution_coef', default=1.0, type=float,
                         help='normalized spatial-measure loss multiplier inside --measure_loss_coef')
     parser.add_argument('--measure_loss_count_coef', default=0.25, type=float,
@@ -3232,8 +3287,8 @@ def get_args_parser():
                         help='foreground gate strength during evaluation')
     parser.add_argument('--eval_count_mode', default='threshold', choices=('threshold', 'count_head_topk'),
                         help='threshold keeps PET behavior; count_head_topk keeps top-K APG candidates using the separate count head')
-    parser.add_argument('--eval_count_source', default='pet', choices=('pet', 'count_head', 'count_head_low_blend', 'zip', 'zip_pet_blend', 'zip_tail_blend'),
-                        help='count used for MAE/RMSE: pet counts thresholded points; count_head uses the scalar density-sum head without changing localization points; zip sums the EBC-ZIP branch; blend modes combine ZIP and PET counts')
+    parser.add_argument('--eval_count_source', default='pet', choices=('pet', 'count_head', 'count_head_low_blend', 'zip', 'zip_pet_blend', 'zip_tail_blend', 'measure'),
+                        help='count used for MAE/RMSE: pet counts thresholded points; measure integrates the direct stride-2 PML density; other heads preserve their existing behavior')
     parser.add_argument('--eval_count_blend_alpha', default=0.5, type=float,
                         help='auxiliary-head blend weight; 0=PET count, 1=count/ZIP head')
     parser.add_argument('--eval_count_tail_threshold', default=1500.0, type=float,
@@ -3930,7 +3985,7 @@ def merge_checkpoint_args(args, checkpoint):
     }
     if getattr(args, 'resume_model_only', False):
         runtime_keys.update({
-            'lr', 'lr_backbone', 'lr_backbone_adapter', 'weight_decay',
+            'lr', 'lr_backbone', 'lr_backbone_adapter', 'lr_measure_head', 'weight_decay',
             'freeze_backbone_epochs', 'clip_max_norm',
             'lr_scheduler', 'lr_drop', 'lr_gamma', 'warmup_epochs', 'hold_epochs',
             'min_lr', 'ema_decay',
@@ -3967,6 +4022,8 @@ def merge_checkpoint_args(args, checkpoint):
             'density_map_grad_scale',
             'density_map_start_epoch', 'density_map_end_epoch',
             'measure_loss_coef', 'measure_loss_mode', 'measure_feature_source',
+            'measure_head_variant', 'measure_head_activation',
+            'measure_pml_normalization',
             'measure_loss_distribution_coef',
             'measure_loss_count_coef', 'measure_loss_transport_coef',
             'measure_loss_start_epoch', 'measure_loss_end_epoch',
@@ -4275,7 +4332,10 @@ def model_only_allowed_missing_prefixes(args):
         prefixes.append('zip_count_head.')
     if getattr(args, 'quadtree_router', 'pet') == 'ebc':
         prefixes.append('ebc_router.')
-    if float(getattr(args, 'measure_loss_coef', 0.0)) > 0:
+    if (
+        float(getattr(args, 'measure_loss_coef', 0.0)) > 0
+        or getattr(args, 'eval_count_source', 'pet') == 'measure'
+    ):
         prefixes.append('measure_head.')
     needs_foreground_head = (
         float(getattr(args, 'foreground_loss_coef', 0.0)) > 0
@@ -4364,11 +4424,13 @@ def build_optimizer_param_groups(model_without_ddp, args):
         adapter_prefixes.append('backbone.0.fpn.')  # VGG Joiner -> Backbone_VGG -> FeatsFusion
     adapter_lr = float(getattr(args, 'lr_backbone_adapter', -1.0))
 
-    main_params, adapter_params, backbone_params = [], [], []
+    main_params, measure_params, adapter_params, backbone_params = [], [], [], []
     for name, param in model_without_ddp.named_parameters():
         if not param.requires_grad:
             continue
-        if use_timm and name.startswith(timm_feature_prefix):
+        if name.startswith('measure_head.'):
+            measure_params.append(param)
+        elif use_timm and name.startswith(timm_feature_prefix):
             backbone_params.append(param)
         elif any(name.startswith(prefix) for prefix in adapter_prefixes):
             adapter_params.append(param)
@@ -4382,6 +4444,14 @@ def build_optimizer_param_groups(model_without_ddp, args):
     if main_params:
         param_groups.append({'params': main_params})
         group_summary.append(('main', len(main_params), sum(p.numel() for p in main_params), args.lr))
+    if measure_params:
+        measure_lr = float(getattr(args, 'lr_measure_head', -1.0))
+        measure_group = {'params': measure_params}
+        effective_measure_lr = args.lr if measure_lr < 0 else measure_lr
+        if measure_lr >= 0:
+            measure_group['lr'] = measure_lr
+        param_groups.append(measure_group)
+        group_summary.append(('measure_head', len(measure_params), sum(p.numel() for p in measure_params), effective_measure_lr))
     if adapter_params:
         adapter_group = {'params': adapter_params}
         effective_adapter_lr = args.lr if adapter_lr < 0 else adapter_lr
