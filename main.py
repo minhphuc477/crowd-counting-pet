@@ -1613,7 +1613,11 @@ MODEL_RECIPES['vgg_apglc_qnrf_selective_pml_scale_rifi'] = {
 # is attenuated so the two tasks cannot overwrite one another early in a run.
 MODEL_RECIPES['vgg_apglc_qnrf_direct_pml_scale_rifi'] = {
     **MODEL_RECIPES['vgg_apglc_qnrf_tail_scale_rifi'],
-    'qnrf_max_train_outside_fraction': 0.25,
+    # Keep the official 1,201-image training split for the primary result.
+    # The 0.25 corruption filter is useful only as a separately reported
+    # clean-data ablation; PET's released QNRF preprocessing does not exclude
+    # image/annotation pairs based on off-canvas point fractions.
+    'qnrf_max_train_outside_fraction': 1.0,
     'measure_loss_coef': 1.0,
     'measure_loss_mode': 'pml',
     'measure_feature_source': 'detail4x',
@@ -1642,6 +1646,10 @@ MODEL_RECIPES['vgg_apglc_qnrf_direct_pml_scale_rifi'] = {
     'min_crop_points': 0,
     'train_count_weight_power': 0.0,
     'train_count_weight_max': 1.0,
+    # Do not inherit PET's automatic replacement compensation for the
+    # dropped abnormal dense item.  PML must see every retained image exactly
+    # once per epoch; duplicate replacement draws change its data objective.
+    'train_sample_multiplier': 1.0,
     'qnrf_random_scale_min': 0.5,
     'qnrf_random_scale_max': 1.5,
     'qnrf_random_resized_crop': True,

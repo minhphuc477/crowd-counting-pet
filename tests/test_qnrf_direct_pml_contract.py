@@ -91,6 +91,8 @@ def test_direct_pml_recipe_is_a_primary_counter_not_selective_auxiliary():
     assert recipe['patch_size_choices'] == '512'
     assert recipe['qnrf_random_scale_min'] == 0.5
     assert recipe['qnrf_random_scale_max'] == 1.5
+    assert recipe['train_sample_multiplier'] == 1.0
+    assert recipe['qnrf_max_train_outside_fraction'] == 1.0
 
 
 def test_direct_pml_optimizer_uses_a_dedicated_reference_lr():
