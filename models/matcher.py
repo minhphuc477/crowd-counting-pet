@@ -169,9 +169,27 @@ class HungarianMatcher(nn.Module):
             pred_logits = outputs["pred_logits"].detach().float()
             pred_points = outputs["pred_points"].detach().float()
             if not torch.isfinite(pred_logits).all():
-                raise ValueError('HungarianMatcher received non-finite pred_logits')
+                bad = ~torch.isfinite(pred_logits).flatten(1).all(dim=1)
+                bad_indices = torch.nonzero(bad, as_tuple=False).flatten().tolist()
+                bad_images = [
+                    str(targets[index].get('image_path', '<unknown>'))
+                    for index in bad_indices
+                ]
+                raise ValueError(
+                    'HungarianMatcher received non-finite pred_logits '
+                    f'for batch indices {bad_indices}, images={bad_images}'
+                )
             if not torch.isfinite(pred_points).all():
-                raise ValueError('HungarianMatcher received non-finite pred_points')
+                bad = ~torch.isfinite(pred_points).flatten(1).all(dim=1)
+                bad_indices = torch.nonzero(bad, as_tuple=False).flatten().tolist()
+                bad_images = [
+                    str(targets[index].get('image_path', '<unknown>'))
+                    for index in bad_indices
+                ]
+                raise ValueError(
+                    'HungarianMatcher received non-finite pred_points '
+                    f'for batch indices {bad_indices}, images={bad_images}'
+                )
             img_h, img_w = outputs['img_shape']
             for batch_index in range(bs):
                 target = targets[batch_index]

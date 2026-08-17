@@ -1637,6 +1637,7 @@ MODEL_RECIPES['vgg_apglc_qnrf_direct_pml_scale_rifi'] = {
     'measure_pml_radius': 32.0,
     'measure_pml_chunk_size': 4096,
     'eval_count_source': 'measure',
+    'strict_model_checks': True,
     # Gradient accumulation does not accumulate BatchNorm statistics.  Freeze
     # ImageNet VGG-BN statistics because 512 crops fit only four images per
     # physical batch on the target 16 GB GPU.

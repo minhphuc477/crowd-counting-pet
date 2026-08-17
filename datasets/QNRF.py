@@ -380,13 +380,13 @@ class QNRF(Dataset):
         target = {
             'points': torch.as_tensor(points, dtype=torch.float32),
             'labels': torch.ones([points.shape[0]]).long(),
+            # Preserve provenance in training errors as well as evaluation.
+            # DataLoader's default collate keeps strings unchanged.
+            'image_path': img_path,
         }
 
         if self.train:
             target['density'] = self.compute_density(points)
-        else:
-            target['image_path'] = img_path
-
         return img, target
 
 

@@ -534,7 +534,14 @@ class BasePETCount(nn.Module):
         """
         Crowd prediction
         """
-        outputs_class = self.class_embed(hs)
+        # The matcher converts logits to FP32, but that is too late if the
+        # final FP16 GEMM has already overflowed.  Decoder hidden states can
+        # grow during long QNRF runs, so keep the small prediction heads in
+        # FP32 while leaving attention/backbone activations under AMP.
+        with _disable_autocast_for(hs):
+            hs_fp32 = hs.float()
+            outputs_class = self.class_embed(hs_fp32)
+            outputs_offsets = (self.coord_embed(hs_fp32).sigmoid() - 0.5) * 2.0
         context_feature = kwargs.get('large_context_feature')
         if self.large_context_score_adapter is not None:
             if context_feature is None:
@@ -552,9 +559,6 @@ class BasePETCount(nn.Module):
             else:
                 outputs_class = outputs_class.clone()
                 outputs_class[-1] = outputs_class[-1] + logit_delta
-        # normalize to 0~1
-        outputs_offsets = (self.coord_embed(hs).sigmoid() - 0.5) * 2.0
-
         # normalize point-query coordinates
         # Clone to avoid in-place mutation: predict() is called once for sparse
         # and once for dense; without clone the second call gets pre-normalized values.
@@ -1311,15 +1315,22 @@ class DirectPMLDensityHead(nn.Module):
         nn.init.zeros_(self.decoder[-2].bias)
 
     def forward(self, detail_4x, context_8x, detail_mask=None):
-        detail = self.detail(detail_4x.float())
-        context = self.context(context_8x.float())
-        context = F.interpolate(
-            context,
-            size=detail.shape[-2:],
-            mode='bilinear',
-            align_corners=False,
-        )
-        density = F.relu(self.decoder(self.fuse(torch.cat((detail, context), dim=1))))
+        # PML integrates every output cell. A single FP16 convolution overflow
+        # therefore contaminates both global count and the shared-feature
+        # gradient. Keep this compact head in FP32; the VGG/PET trunk remains
+        # under the selected AMP dtype.
+        with _disable_autocast_for(detail_4x):
+            detail = self.detail(detail_4x.float())
+            context = self.context(context_8x.float())
+            context = F.interpolate(
+                context,
+                size=detail.shape[-2:],
+                mode='bilinear',
+                align_corners=False,
+            )
+            density = F.relu(
+                self.decoder(self.fuse(torch.cat((detail, context), dim=1)))
+            )
         if detail_mask is not None:
             valid = ~F.interpolate(
                 detail_mask[:, None].float(),

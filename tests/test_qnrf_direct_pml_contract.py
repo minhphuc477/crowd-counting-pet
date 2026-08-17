@@ -48,6 +48,20 @@ def test_direct_pml_head_is_nonnegative_masked_and_differentiable():
     )
 
 
+def test_direct_pml_head_disables_autocast_for_density_integration():
+    head = DirectPMLDensityHead(24, 32, activation='relu')
+    detail = torch.randn(1, 24, 8, 10)
+    context = torch.randn(1, 24, 4, 5)
+
+    with torch.amp.autocast('cpu', dtype=torch.bfloat16):
+        density, count = head(detail, context)
+
+    assert density.dtype == torch.float32
+    assert count.dtype == torch.float32
+    assert torch.isfinite(density).all()
+    assert torch.isfinite(count).all()
+
+
 def test_direct_pml_batch_reduction_matches_published_sum_over_points():
     density = torch.tensor([[[0.8, 0.2, 0.4, 0.6]]], requires_grad=True)
     points = torch.tensor([[0.5, 0.5], [0.5, 3.5]])
