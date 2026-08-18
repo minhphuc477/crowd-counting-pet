@@ -94,6 +94,13 @@ ARCHITECTURE_OVERRIDE_KEYS = {
     'measure_head_variant',
     'measure_head_activation',
     'measure_pml_normalization',
+    'measure_loss_distribution_coef',
+    'measure_loss_count_coef',
+    'measure_loss_image_count_coef',
+    'measure_loss_relative_count_coef',
+    'measure_loss_zero_coef',
+    'measure_relative_count_power',
+    'measure_loss_transport_coef',
     'measure_pml_radius',
     'measure_pml_chunk_size',
     'foreground_loss_coef',
@@ -278,6 +285,10 @@ def get_args_parser():
     parser.add_argument('--measure_pml_normalization', default='points', choices=('points', 'batch'))
     parser.add_argument('--measure_loss_distribution_coef', default=1.0, type=float)
     parser.add_argument('--measure_loss_count_coef', default=0.25, type=float)
+    parser.add_argument('--measure_loss_image_count_coef', default=0.0, type=float)
+    parser.add_argument('--measure_loss_relative_count_coef', default=0.0, type=float)
+    parser.add_argument('--measure_loss_zero_coef', default=0.0, type=float)
+    parser.add_argument('--measure_relative_count_power', default=0.5, type=float)
     parser.add_argument('--measure_loss_transport_coef', default=0.0, type=float)
     parser.add_argument('--measure_loss_start_epoch', default=0, type=int)
     parser.add_argument('--measure_loss_end_epoch', default=-1, type=int)

@@ -2232,6 +2232,18 @@ class PET(nn.Module):
             raise ValueError('measure_pml_normalization must be one of "points" or "batch"')
         self.measure_loss_distribution_coef = float(getattr(args, 'measure_loss_distribution_coef', 1.0))
         self.measure_loss_count_coef = float(getattr(args, 'measure_loss_count_coef', 0.25))
+        self.measure_loss_image_count_coef = float(
+            getattr(args, 'measure_loss_image_count_coef', 0.0)
+        )
+        self.measure_loss_relative_count_coef = float(
+            getattr(args, 'measure_loss_relative_count_coef', 0.0)
+        )
+        self.measure_loss_zero_coef = float(
+            getattr(args, 'measure_loss_zero_coef', 0.0)
+        )
+        self.measure_relative_count_power = float(
+            getattr(args, 'measure_relative_count_power', 0.5)
+        )
         self.measure_loss_transport_coef = float(getattr(args, 'measure_loss_transport_coef', 0.0))
         self.measure_loss_start_epoch = int(getattr(args, 'measure_loss_start_epoch', 0))
         self.measure_loss_end_epoch = int(getattr(args, 'measure_loss_end_epoch', -1))
@@ -2250,8 +2262,17 @@ class PET(nn.Module):
         self.measure_loss_init_cells = float(getattr(args, 'measure_loss_init_cells', self.count_head_init_cells))
         if self.measure_loss_feature_grad_scale < 0.0:
             raise ValueError('measure_loss_feature_grad_scale must be non-negative')
-        if self.measure_loss_distribution_coef < 0.0 or self.measure_loss_count_coef < 0.0 or self.measure_loss_transport_coef < 0.0:
+        if any(coef < 0.0 for coef in (
+            self.measure_loss_distribution_coef,
+            self.measure_loss_count_coef,
+            self.measure_loss_image_count_coef,
+            self.measure_loss_relative_count_coef,
+            self.measure_loss_zero_coef,
+            self.measure_loss_transport_coef,
+        )):
             raise ValueError('measure loss component coefficients must be non-negative')
+        if not 0.0 <= self.measure_relative_count_power <= 1.0:
+            raise ValueError('measure_relative_count_power must be in [0, 1]')
         self.foreground_loss_coef = float(getattr(args, 'foreground_loss_coef', 0.0))
         self.foreground_sigma = max(1e-6, float(getattr(args, 'foreground_sigma', 8.0)))
         self.foreground_neg_shrink = max(1.0, float(getattr(args, 'foreground_neg_shrink', 16.0)))
@@ -3394,11 +3415,17 @@ class PET(nn.Module):
                     'loss_measure_dist': zero,
                     'loss_measure_count': zero,
                     'loss_measure_transport': zero,
+                    'loss_measure_image_count': zero,
+                    'loss_measure_relative_count': zero,
+                    'loss_measure_zero': zero,
                 }
             measure_weights = {
                 'loss_measure_dist': measure_weight * self.measure_loss_distribution_coef,
                 'loss_measure_count': measure_weight * self.measure_loss_count_coef,
                 'loss_measure_transport': measure_weight * self.measure_loss_transport_coef,
+                'loss_measure_image_count': measure_weight * self.measure_loss_image_count_coef,
+                'loss_measure_relative_count': measure_weight * self.measure_loss_relative_count_coef,
+                'loss_measure_zero': measure_weight * self.measure_loss_zero_coef,
             }
             loss_dict.update(measure_losses)
             weight_dict.update(measure_weights)
@@ -4982,24 +5009,61 @@ class PET(nn.Module):
 
     def compute_measure_loss(self, outputs, targets, samples):
         if self.measure_head is None or 'measure_density' not in outputs:
+            zero = outputs['split_map_raw'].sum() * 0.0
             return {
-                'loss_measure_dist': outputs['split_map_raw'].sum() * 0.0,
-                'loss_measure_count': outputs['split_map_raw'].sum() * 0.0,
-                'loss_measure_transport': outputs['split_map_raw'].sum() * 0.0,
+                'loss_measure_dist': zero,
+                'loss_measure_count': zero,
+                'loss_measure_transport': zero,
+                'loss_measure_image_count': zero,
+                'loss_measure_relative_count': zero,
+                'loss_measure_zero': zero,
             }
         # Keep density mass and per-Voronoi reductions in FP32 under AMP.  QNRF
         # crops can contain thousands of points, where FP16 summation no longer
         # has unit resolution.
         pred_density = outputs['measure_density'].float()
+        if samples.mask is None:
+            valid = torch.ones_like(pred_density, dtype=torch.bool)
+        else:
+            valid = ~F.interpolate(
+                samples.mask[:, None].float(),
+                size=pred_density.shape[-2:],
+                mode='nearest',
+            ).to(device=pred_density.device).squeeze(1).bool()
+
+        valid_density = pred_density * valid.to(dtype=pred_density.dtype)
+        pred_image_count = valid_density.flatten(1).sum(dim=1)
+        target_image_count = pred_image_count.new_tensor([
+            float(
+                torch.isfinite(target['points'][:, :2]).all(dim=1).sum().item()
+            )
+            for target in targets
+        ])
+        loss_image_count = F.smooth_l1_loss(
+            torch.log1p(pred_image_count),
+            torch.log1p(target_image_count),
+        )
+        positive = target_image_count > 0
+        if positive.any():
+            relative_scale = (target_image_count[positive] + 1.0).pow(
+                self.measure_relative_count_power
+            )
+            relative_error = (
+                pred_image_count[positive] - target_image_count[positive]
+            ) / relative_scale
+            loss_relative_count = F.smooth_l1_loss(
+                relative_error,
+                torch.zeros_like(relative_error),
+            )
+        else:
+            loss_relative_count = pred_image_count.sum() * 0.0
+        zero_images = target_image_count == 0
+        if zero_images.any():
+            loss_zero = torch.log1p(pred_image_count[zero_images]).mean()
+        else:
+            loss_zero = pred_image_count.sum() * 0.0
+
         if self.measure_loss_mode == 'pml':
-            if samples.mask is None:
-                valid = torch.ones_like(pred_density, dtype=torch.bool)
-            else:
-                valid = ~F.interpolate(
-                    samples.mask[:, None].float(),
-                    size=pred_density.shape[-2:],
-                    mode='nearest',
-                ).to(device=pred_density.device).squeeze(1).bool()
             proximal = proximal_mapping_measure_loss(
                 pred_density,
                 targets,
@@ -5013,6 +5077,9 @@ class PET(nn.Module):
                 'loss_measure_dist': proximal['spatial'],
                 'loss_measure_count': proximal['count'],
                 'loss_measure_transport': pred_density.sum() * 0.0,
+                'loss_measure_image_count': loss_image_count,
+                'loss_measure_relative_count': loss_relative_count,
+                'loss_measure_zero': loss_zero,
             }
 
         target_density, valid = self.build_measure_targets(outputs, targets, samples)
@@ -5040,6 +5107,9 @@ class PET(nn.Module):
             'loss_measure_dist': loss_dist,
             'loss_measure_count': loss_count,
             'loss_measure_transport': loss_transport,
+            'loss_measure_image_count': loss_image_count,
+            'loss_measure_relative_count': loss_relative_count,
+            'loss_measure_zero': loss_zero,
         }
 
     def build_foreground_targets(self, outputs, targets, samples):

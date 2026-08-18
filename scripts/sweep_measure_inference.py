@@ -179,16 +179,75 @@ def _tag(max_size: int, scales: tuple[float, ...], flip: bool) -> str:
     return f"max{max_size}_scales{scale_text}_{'flip' if flip else 'plain'}"
 
 
-def run_measure_view(args, max_size: int, scales: tuple[float, ...], flip: bool) -> tuple[str, Path]:
+def _has_localization_metrics(path: Path) -> bool:
+    if not path.is_file():
+        return False
+    try:
+        with path.open("r", encoding="utf-8") as handle:
+            result = json.load(handle)
+    except (OSError, json.JSONDecodeError):
+        return False
+    return "loc_f1_large" in result and "loc_f1_small" in result
+
+
+def _print_view_result(tag: str, path: Path, prefix: str) -> None:
+    try:
+        with path.open("r", encoding="utf-8") as handle:
+            result = json.load(handle)
+    except (OSError, json.JSONDecodeError) as error:
+        print(f"{prefix} {tag}: unable to read {path}: {error}", flush=True)
+        return
+    mae = result.get("eval_mae", result.get("test_mae"))
+    mse = result.get("eval_mse", result.get("test_mse"))
+    pred = result.get("pred_cnt")
+    gt = result.get("gt_cnt")
+    fields = [f"{prefix} {tag}"]
+    if mae is not None:
+        fields.append(f"MAE={float(mae):.4f}")
+    if mse is not None:
+        fields.append(f"MSE={float(mse):.4f}")
+    if pred is not None and gt is not None:
+        fields.append(f"bias={float(pred) - float(gt):.4f}")
+    if "loc_f1_large" in result:
+        fields.append(
+            "large(F1/P/R)="
+            f"{float(result['loc_f1_large']):.4f}/"
+            f"{float(result.get('loc_prec_large', 0.0)):.4f}/"
+            f"{float(result.get('loc_rec_large', 0.0)):.4f}"
+        )
+    if "loc_f1_small" in result:
+        fields.append(
+            "small(F1/P/R)="
+            f"{float(result['loc_f1_small']):.4f}/"
+            f"{float(result.get('loc_prec_small', 0.0)):.4f}/"
+            f"{float(result.get('loc_rec_small', 0.0)):.4f}"
+        )
+    print(" ".join(fields), flush=True)
+
+
+def run_measure_view(
+    args,
+    max_size: int,
+    scales: tuple[float, ...],
+    flip: bool,
+) -> tuple[str, Path, Path]:
     output_dir = Path(args.output_dir)
     tag = _tag(max_size, scales, flip)
     results_path = output_dir / "views" / f"{tag}.json"
     rows_path = output_dir / "views" / f"{tag}_per_image.json"
     log_path = output_dir / "views" / f"{tag}.log"
     results_path.parent.mkdir(parents=True, exist_ok=True)
-    if rows_path.is_file() and results_path.is_file() and not args.force:
-        print(f"reuse {tag}: {rows_path}")
-        return tag, rows_path
+    cache_has_required_metrics = (
+        args.no_localization_metrics or _has_localization_metrics(results_path)
+    )
+    if (
+        rows_path.is_file()
+        and results_path.is_file()
+        and cache_has_required_metrics
+        and not args.force
+    ):
+        _print_view_result(tag, results_path, "reuse")
+        return tag, rows_path, results_path
 
     cmd = [
         sys.executable,
@@ -204,12 +263,21 @@ def run_measure_view(args, max_size: int, scales: tuple[float, ...], flip: bool)
         "--tta_scales", ",".join(f"{scale:g}" for scale in scales),
         "--device", args.device,
         "--num_workers", str(args.num_workers),
-        "--no_localization_metrics",
         "--results_file", str(results_path),
         "--per_image_results_file", str(rows_path),
     ]
+    if args.no_localization_metrics:
+        cmd.append("--no_localization_metrics")
+    else:
+        cmd.extend([
+            "--localization_protocol", args.localization_protocol,
+            "--localization_large_threshold", str(args.localization_large_threshold),
+            "--localization_small_threshold", str(args.localization_small_threshold),
+            "--localization_large_scale", str(args.localization_large_scale),
+            "--localization_small_scale", str(args.localization_small_scale),
+        ])
     cmd.append("--tta_flip" if flip else "--no_tta_flip")
-    print(f"run {tag}: {' '.join(cmd)}")
+    print(f"run {tag}: {' '.join(cmd)}", flush=True)
     with log_path.open("w", encoding="utf-8") as log_handle:
         completed = subprocess.run(
             cmd,
@@ -222,10 +290,17 @@ def run_measure_view(args, max_size: int, scales: tuple[float, ...], flip: bool)
         )
     if completed.returncode != 0:
         raise RuntimeError(f"measure view {tag} failed; inspect {log_path}")
-    return tag, rows_path
+    _print_view_result(tag, results_path, "done")
+    return tag, rows_path, results_path
 
 
-def write_outputs(output_dir: Path, keys: list[str], targets: np.ndarray, search: dict) -> None:
+def write_outputs(
+    output_dir: Path,
+    keys: list[str],
+    targets: np.ndarray,
+    search: dict,
+    view_metrics: dict[str, dict],
+) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     with (output_dir / "sweep_results.csv").open("w", newline="", encoding="utf-8") as handle:
         fieldnames = [
@@ -239,9 +314,12 @@ def write_outputs(output_dir: Path, keys: list[str], targets: np.ndarray, search
     report = {
         "images": len(keys),
         "winners": search["winners"],
+        "view_metrics": view_metrics,
         "note": (
             "uncalibrated uses only measure TTA/resolution views; scale and affine "
-            "winners additionally fit scalar count calibration on this evaluation split"
+            "winners additionally fit scalar count calibration on this evaluation split. "
+            "Count-only TTA averages scalar counts; localization metrics use each view's "
+            "primary full-image point prediction and are not blended by count calibration."
         ),
     }
     with (output_dir / "summary.json").open("w", encoding="utf-8") as handle:
@@ -276,6 +354,16 @@ def get_args() -> argparse.Namespace:
         help="space-separated comma-delimited scale sets",
     )
     parser.add_argument("--flip_modes", nargs="+", choices=("plain", "flip"), default=["plain", "flip"])
+    parser.add_argument("--no_localization_metrics", action="store_true")
+    parser.add_argument(
+        "--localization_protocol",
+        default="fixed",
+        choices=("fixed", "target_sigma", "adaptive_nn"),
+    )
+    parser.add_argument("--localization_large_threshold", type=float, default=8.0)
+    parser.add_argument("--localization_small_threshold", type=float, default=4.0)
+    parser.add_argument("--localization_large_scale", type=float, default=1.0)
+    parser.add_argument("--localization_small_scale", type=float, default=0.5)
     parser.add_argument("--ensemble_alphas", nargs="+", type=float, default=[0.25, 0.5, 0.75])
     parser.add_argument("--calibration_scale_min", type=float, default=0.94)
     parser.add_argument("--calibration_scale_max", type=float, default=1.06)
@@ -306,9 +394,16 @@ def main() -> int:
     scale_sets = list(dict.fromkeys(parse_scale_set(value) for value in args.tta_scale_sets))
     flip_modes = list(dict.fromkeys(args.flip_modes))
     view_paths = {}
+    view_result_paths = {}
     for max_size, scales, flip_mode in itertools.product(args.eval_max_sizes, scale_sets, flip_modes):
-        name, path = run_measure_view(args, max_size, scales, flip_mode == "flip")
+        name, path, result_path = run_measure_view(
+            args,
+            max_size,
+            scales,
+            flip_mode == "flip",
+        )
         view_paths[name] = path
+        view_result_paths[name] = result_path
 
     keyed_views = {name: load_view_rows(path) for name, path in view_paths.items()}
     first_name = next(iter(keyed_views))
@@ -332,7 +427,22 @@ def main() -> int:
         inclusive_grid(args.calibration_bias_min, args.calibration_bias_max, args.calibration_bias_step),
     )
     output_dir = Path(args.output_dir)
-    write_outputs(output_dir, keys, targets, search)
+    metric_keys = (
+        "eval_mae", "eval_mse", "pred_cnt", "gt_cnt",
+        "loc_f1_large", "loc_prec_large", "loc_rec_large",
+        "loc_f1_small", "loc_prec_small", "loc_rec_small",
+        "loc_protocol", "loc_threshold_large", "loc_threshold_small",
+    )
+    view_metrics = {}
+    for name, result_path in view_result_paths.items():
+        with result_path.open("r", encoding="utf-8") as handle:
+            result = json.load(handle)
+        view_metrics[name] = {
+            key: result[key]
+            for key in metric_keys
+            if key in result
+        }
+    write_outputs(output_dir, keys, targets, search, view_metrics)
     for label, winner in search["winners"].items():
         print(
             f"{label}: MAE={winner['mae']:.4f} MSE={winner['mse']:.4f} "

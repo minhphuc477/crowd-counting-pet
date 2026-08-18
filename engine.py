@@ -137,6 +137,8 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
             head_model.count_head.train()
         if getattr(head_model, 'zip_count_head', None) is not None:
             head_model.zip_count_head.train()
+        if getattr(head_model, 'measure_head', None) is not None:
+            head_model.measure_head.train()
     elif freeze_bn:
         for module in model.modules():
             if isinstance(module, torch.nn.modules.batchnorm._BatchNorm):

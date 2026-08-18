@@ -2179,6 +2179,65 @@ MODEL_RECIPES['vgg_apglc_nwpu_tail_rifi'] = {
     **TRANSFERABLE_SCALE_RIFI_OVERRIDES,
 }
 
+# NWPU spatial Direct-PML recounting on the verified Tail-RIFI detector.
+#
+# This is deliberately a checkpoint-adaptation stage.  The PET detector and
+# localization path stay frozen while a stride-2 density decoder learns a
+# spatial count measure from the shared VGG-FPN 4x/8x features.  Unlike a
+# scalar count head, the density can be partitioned by ownership during tiled
+# inference.  Uniform/stratified image sampling retains NWPU negative scenes
+# while still exposing the rare dense tail.
+MODEL_RECIPES['vgg_apglc_nwpu_direct_pml_tail_rifi'] = {
+    **MODEL_RECIPES['vgg_apglc_nwpu_tail_rifi'],
+    'train_measure_head_only': True,
+    'measure_loss_coef': 1.0,
+    'measure_loss_mode': 'pml',
+    'measure_feature_source': 'detail4x',
+    'measure_head_variant': 'direct_fpn',
+    'measure_head_activation': 'relu',
+    'measure_pml_normalization': 'batch',
+    'measure_loss_distribution_coef': 0.25,
+    'measure_loss_count_coef': 1.0,
+    'measure_loss_image_count_coef': 2.0,
+    'measure_loss_relative_count_coef': 0.5,
+    'measure_loss_zero_coef': 0.25,
+    'measure_relative_count_power': 0.5,
+    'measure_loss_transport_coef': 0.0,
+    'measure_loss_start_epoch': 0,
+    'measure_loss_end_epoch': -1,
+    'measure_loss_warmup_epochs': 5,
+    'measure_loss_feature_grad_scale': 0.0,
+    'measure_loss_feature_grad_start_epoch': 0,
+    'measure_loss_feature_grad_warmup_epochs': 0,
+    'lr_measure_head': 3e-5,
+    'measure_pml_radius': 32.0,
+    'measure_pml_chunk_size': 4096,
+    'eval_count_source': 'measure',
+    # Freeze the already established hidden-test export policy. Do not select
+    # this switch from the new model's server score.
+    'eval_tile_trigger_area': 0,
+    'patch_size_choices': '512,768',
+    'crop_attempts': 1,
+    'min_crop_points': 0,
+    'nwpu_dense_crop_prob': 0.35,
+    'nwpu_dense_crop_attempts': 24,
+    'train_count_weight_power': 0.0,
+    'train_count_weight_max': 1.0,
+    'train_count_strata': '0,100,500,5000',
+    'train_count_strata_strength': 0.5,
+    'train_count_strata_max_weight': 4.0,
+    'train_sample_multiplier': 1.0,
+    'nwpu_eval_split': 'val',
+    'validation_protocol': 'official_val',
+    'freeze_bn': True,
+    'apg_loss_coef': 0.0,
+    'ifi_loss_coef': 0.0,
+    'scale_point_loss_coef': 0.0,
+    'epochs': 160,
+    'eval_start_epoch': 10,
+    'eval_freq': 5,
+}
+
 # NWPU large-head localization repair.
 #
 # This is a checkpoint fine-tuning recipe, not a replacement for the verified
@@ -2354,6 +2413,7 @@ EXPERIMENTAL_MODEL_RECIPES = {
     'vgg_apglc_density_routed_ifi',
     'vgg_apglc_density_routed_ifi_nwpu',
     'vgg_apglc_nwpu_tail_rifi',
+    'vgg_apglc_nwpu_direct_pml_tail_rifi',
     'vgg_apglc_nwpu_loc_repair_rifi',
     'vgg_apglc_nwpu_zip_recount',
     'vgg_apglc_rifi',
@@ -2520,6 +2580,10 @@ ARCHITECTURE_OVERRIDE_KEYS = {
     'measure_pml_normalization',
     'measure_loss_distribution_coef',
     'measure_loss_count_coef',
+    'measure_loss_image_count_coef',
+    'measure_loss_relative_count_coef',
+    'measure_loss_zero_coef',
+    'measure_relative_count_power',
     'measure_loss_transport_coef',
     'measure_loss_start_epoch',
     'measure_loss_end_epoch',
@@ -2985,6 +3049,14 @@ def get_args_parser():
                         help='normalized spatial-measure loss multiplier inside --measure_loss_coef')
     parser.add_argument('--measure_loss_count_coef', default=0.25, type=float,
                         help='log-count loss multiplier inside --measure_loss_coef')
+    parser.add_argument('--measure_loss_image_count_coef', default=0.0, type=float,
+                        help='global log-count consistency multiplier for a spatial measure head')
+    parser.add_argument('--measure_loss_relative_count_coef', default=0.0, type=float,
+                        help='count-error multiplier normalized by target count power')
+    parser.add_argument('--measure_loss_zero_coef', default=0.0, type=float,
+                        help='extra log-mass penalty on zero-person images')
+    parser.add_argument('--measure_relative_count_power', default=0.5, type=float,
+                        help='target-count power used by relative measure count loss')
     parser.add_argument('--measure_loss_transport_coef', default=0.0, type=float,
                         help='optional Sinkhorn transport multiplier inside --measure_loss_coef')
     parser.add_argument('--measure_loss_start_epoch', default=0, type=int,
@@ -3011,6 +3083,8 @@ def get_args_parser():
                         help='initial count prior for point-measure density head')
     parser.add_argument('--measure_loss_init_cells', default=1024.0, type=float,
                         help='reference cell count for --measure_loss_init_count')
+    parser.add_argument('--train_measure_head_only', action='store_true',
+                        help='freeze PET and train only the spatial Direct-PML measure head')
     parser.add_argument('--foreground_loss_coef', default=0.0, type=float,
                         help='spatial foreground heatmap auxiliary weight; 0 disables it')
     parser.add_argument('--foreground_sigma', default=8.0, type=float,
@@ -3445,6 +3519,12 @@ def get_args_parser():
                         help='sample training images with weight (count+1)^power; 0 keeps uniform sampling')
     parser.add_argument('--train_count_weight_max', default=8.0, type=float,
                         help='maximum per-image sampling weight when --train_count_weight_power is enabled')
+    parser.add_argument('--train_count_strata', default='',
+                        help='optional comma-separated count-stratum bounds; a leading 0 creates a separate negative-image stratum')
+    parser.add_argument('--train_count_strata_strength', default=0.0, type=float,
+                        help='mix between uniform and inverse-frequency count-stratum sampling')
+    parser.add_argument('--train_count_strata_max_weight', default=4.0, type=float,
+                        help='maximum relative weight for count-stratified sampling')
     parser.add_argument('--train_sample_multiplier', default=0.0, type=float,
                         help='non-distributed samples per epoch multiplier; 0 auto-compensates dense-loss sample dropping, 1 keeps dataset length')
 
@@ -3653,6 +3733,24 @@ def sanitize_unstable_training_args(args):
             'stage and requires a trained NWPU detector/localizer checkpoint '
             'via --resume and --resume_model_only.'
         )
+    if recipe_name == 'vgg_apglc_nwpu_direct_pml_tail_rifi':
+        if getattr(args, 'dataset_file', '') != 'NWPU':
+            raise ValueError(
+                'model_recipe=vgg_apglc_nwpu_direct_pml_tail_rifi is only '
+                'defined for NWPU-Crowd'
+            )
+        if fresh_train:
+            raise ValueError(
+                'model_recipe=vgg_apglc_nwpu_direct_pml_tail_rifi requires '
+                'a trained NWPU Tail-RIFI checkpoint via --resume and '
+                '--resume_model_only.'
+            )
+        if not bool(getattr(args, 'resume_model_only', False)):
+            raise ValueError(
+                'model_recipe=vgg_apglc_nwpu_direct_pml_tail_rifi must use '
+                '--resume_model_only because its Direct-PML head and optimizer '
+                'are new.'
+            )
     if recipe_name == 'vgg_apglc_qnrf_zip_recount_scale_rifi':
         if fresh_train:
             raise ValueError(
@@ -3960,7 +4058,9 @@ def merge_checkpoint_args(args, checkpoint):
         'qnrf_random_resized_crop',
         'qnrf_aug_brightness', 'qnrf_aug_contrast', 'qnrf_aug_saturation',
         'qnrf_aug_saltiness', 'qnrf_aug_spiciness',
-        'train_count_weight_power', 'train_count_weight_max', 'train_sample_multiplier',
+        'train_count_weight_power', 'train_count_weight_max',
+        'train_count_strata', 'train_count_strata_strength',
+        'train_count_strata_max_weight', 'train_sample_multiplier',
         'no_localization_metrics', 'localization_large_threshold', 'localization_small_threshold',
         'localization_protocol', 'localization_large_scale', 'localization_small_scale',
         'eval_count_source', 'eval_count_blend_alpha', 'eval_count_tail_threshold',
@@ -4034,7 +4134,9 @@ def merge_checkpoint_args(args, checkpoint):
             'measure_head_variant', 'measure_head_activation',
             'measure_pml_normalization',
             'measure_loss_distribution_coef',
-            'measure_loss_count_coef', 'measure_loss_transport_coef',
+            'measure_loss_count_coef', 'measure_loss_image_count_coef',
+            'measure_loss_relative_count_coef', 'measure_loss_zero_coef',
+            'measure_relative_count_power', 'measure_loss_transport_coef',
             'measure_loss_start_epoch', 'measure_loss_end_epoch',
             'measure_loss_warmup_epochs',
             'measure_loss_feature_grad_scale',
@@ -4043,6 +4145,7 @@ def merge_checkpoint_args(args, checkpoint):
             'measure_loss_sinkhorn_iters', 'measure_loss_sinkhorn_epsilon',
             'measure_pml_radius', 'measure_pml_chunk_size',
             'measure_loss_init_count', 'measure_loss_init_cells',
+            'train_measure_head_only',
             'zip_count_loss_coef', 'zip_count_block_size', 'zip_count_feature_source', 'zip_count_bin_centers',
             'zip_count_bin_ranges', 'zip_count_head_variant',
             'zip_count_zero_prior', 'zip_count_ce_coef', 'zip_count_count_coef',
@@ -4520,6 +4623,22 @@ def set_zip_count_head_only_trainability(model_without_ddp):
     return trainable, frozen
 
 
+def set_measure_head_only_trainability(model_without_ddp):
+    trainable, frozen = 0, 0
+    for name, param in model_without_ddp.named_parameters():
+        is_measure_head = name.startswith('measure_head.')
+        param.requires_grad_(is_measure_head)
+        if is_measure_head:
+            trainable += param.numel()
+        else:
+            frozen += param.numel()
+    if trainable == 0:
+        raise ValueError(
+            '--train_measure_head_only requires an enabled Direct-PML measure head'
+        )
+    return trainable, frozen
+
+
 def set_localization_repair_only_trainability(model_without_ddp):
     repair_prefixes = (
         'large_context_input_proj.',
@@ -4631,6 +4750,91 @@ def build_count_sampling_weights(counts, power, max_weight):
     if float(max_weight) > 0:
         weights = weights.clamp(max=float(max_weight))
     return weights
+
+
+def build_count_stratified_weights(counts, boundaries, strength, max_weight):
+    """Balance count ranges without dropping negative or dense-tail images."""
+    counts = torch.as_tensor(counts, dtype=torch.float64)
+    if counts.ndim != 1 or counts.numel() == 0:
+        raise ValueError('count-stratified sampling requires a non-empty 1D count list')
+    if not torch.isfinite(counts).all() or (counts < 0).any():
+        raise ValueError('sample counts must be finite and non-negative')
+    strength = float(strength)
+    if not 0.0 <= strength <= 1.0:
+        raise ValueError('--train_count_strata_strength must be in [0, 1]')
+
+    if isinstance(boundaries, str):
+        fields = [field.strip() for field in boundaries.split(',') if field.strip()]
+        try:
+            boundaries = [float(field) for field in fields]
+        except ValueError as exc:
+            raise ValueError('--train_count_strata must contain numeric bounds') from exc
+    else:
+        boundaries = [float(value) for value in boundaries]
+    if not boundaries:
+        raise ValueError('--train_count_strata must define at least one bound')
+    if any(value < 0 for value in boundaries) or any(
+        right <= left for left, right in zip(boundaries, boundaries[1:])
+    ):
+        raise ValueError('--train_count_strata bounds must be non-negative and strictly increasing')
+
+    separate_zero = boundaries[0] == 0.0
+    positive_bounds = boundaries[1:] if separate_zero else boundaries
+    if positive_bounds:
+        stratum = torch.bucketize(
+            counts,
+            torch.tensor(positive_bounds, dtype=counts.dtype),
+            right=False,
+        )
+    else:
+        stratum = torch.zeros_like(counts, dtype=torch.long)
+    if separate_zero:
+        stratum = stratum + 1
+        stratum[counts == 0] = 0
+
+    present, frequency = torch.unique(stratum, return_counts=True)
+    balanced = torch.ones_like(counts)
+    stratum_count = float(present.numel())
+    sample_count = float(counts.numel())
+    for stratum_id, count in zip(present.tolist(), frequency.tolist()):
+        balanced[stratum == stratum_id] = sample_count / (stratum_count * float(count))
+    weights = (1.0 - strength) + strength * balanced
+    if float(max_weight) > 0:
+        weights = weights.clamp(max=float(max_weight))
+    return weights
+
+
+def resolve_training_sampling_weights(dataset, args):
+    count_power = float(getattr(args, 'train_count_weight_power', 0.0))
+    strata_strength = float(getattr(args, 'train_count_strata_strength', 0.0))
+    if count_power > 0.0 and strata_strength > 0.0:
+        raise ValueError(
+            '--train_count_weight_power and --train_count_strata_strength '
+            'cannot be enabled together'
+        )
+    if count_power <= 0.0 and strata_strength <= 0.0:
+        return None, None
+    if not hasattr(dataset, 'get_sample_counts'):
+        raise ValueError('the selected dataset does not expose per-image sample counts')
+    counts = dataset.get_sample_counts()
+    if strata_strength > 0.0:
+        boundaries = getattr(args, 'train_count_strata', '')
+        max_weight = float(getattr(args, 'train_count_strata_max_weight', 0.0))
+        weights = build_count_stratified_weights(
+            counts,
+            boundaries,
+            strata_strength,
+            max_weight,
+        )
+        description = (
+            f'count-stratified bounds={boundaries} strength={strata_strength} '
+            f'max_weight={max_weight}'
+        )
+        return weights, description
+
+    max_weight = float(getattr(args, 'train_count_weight_max', 0.0))
+    weights = build_count_sampling_weights(counts, count_power, max_weight)
+    return weights, f'count-weighted power={count_power} max_weight={max_weight}'
 
 
 class DistributedReplacementSampler(torch.utils.data.Sampler):
@@ -4792,31 +4996,41 @@ def main(args):
         model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
 
     model_without_ddp = model
+    exclusive_adaptation_modes = {
+        '--train_count_head_only': bool(getattr(args, 'train_count_head_only', False)),
+        '--train_zip_count_head_only': bool(getattr(args, 'train_zip_count_head_only', False)),
+        '--train_measure_head_only': bool(getattr(args, 'train_measure_head_only', False)),
+        '--train_localization_repair_only': bool(
+            getattr(args, 'train_localization_repair_only', False)
+        ),
+    }
+    enabled_adaptation_modes = [
+        name for name, enabled in exclusive_adaptation_modes.items() if enabled
+    ]
+    if len(enabled_adaptation_modes) > 1:
+        raise ValueError(
+            'adaptation-only modes are mutually exclusive: '
+            + ', '.join(enabled_adaptation_modes)
+        )
     if getattr(args, 'train_count_head_only', False):
         trainable_count, frozen_count = set_count_head_only_trainability(model_without_ddp)
         if utils.is_main_process():
             print(f'count-head-only training: trainable_params={trainable_count} frozen_params={frozen_count}')
     if getattr(args, 'train_zip_count_head_only', False):
-        if getattr(args, 'train_count_head_only', False):
-            raise ValueError(
-                '--train_count_head_only and --train_zip_count_head_only '
-                'cannot be enabled together'
-            )
         trainable_count, frozen_count = set_zip_count_head_only_trainability(model_without_ddp)
         if utils.is_main_process():
             print(
                 'zip-count-head-only training: '
                 f'trainable_params={trainable_count} frozen_params={frozen_count}'
             )
-    if getattr(args, 'train_localization_repair_only', False):
-        if (
-            getattr(args, 'train_count_head_only', False)
-            or getattr(args, 'train_zip_count_head_only', False)
-        ):
-            raise ValueError(
-                'count-head-only and localization-repair-only training '
-                'cannot be enabled together'
+    if getattr(args, 'train_measure_head_only', False):
+        trainable_count, frozen_count = set_measure_head_only_trainability(model_without_ddp)
+        if utils.is_main_process():
+            print(
+                'measure-head-only training: '
+                f'trainable_params={trainable_count} frozen_params={frozen_count}'
             )
+    if getattr(args, 'train_localization_repair_only', False):
         trainable_count, frozen_count = set_localization_repair_only_trainability(model_without_ddp)
         if utils.is_main_process():
             print(
@@ -4941,18 +5155,10 @@ def main(args):
             )
         sample_multiplier = max(1.0, sample_multiplier)
         num_train_samples = max(1, int(math.ceil(len(dataset_train) * sample_multiplier)))
-        count_weight_power = float(getattr(args, 'train_count_weight_power', 0.0))
-        distributed_weights = None
-        if count_weight_power > 0:
-            if hasattr(dataset_train, 'get_sample_counts'):
-                max_weight = float(getattr(args, 'train_count_weight_max', 0.0))
-                distributed_weights = build_count_sampling_weights(
-                    dataset_train.get_sample_counts(),
-                    count_weight_power,
-                    max_weight,
-                )
-            elif utils.is_main_process():
-                print('WARNING: --train_count_weight_power requested but dataset has no get_sample_counts')
+        distributed_weights, sampling_description = resolve_training_sampling_weights(
+            dataset_train,
+            args,
+        )
         if distributed_weights is not None or sample_multiplier > 1.0:
             sampler_train = DistributedReplacementSampler(
                 dataset_train,
@@ -4963,9 +5169,7 @@ def main(args):
             if utils.is_main_process():
                 if distributed_weights is not None:
                     print(
-                        'distributed count-weighted sampler:',
-                        f'power={count_weight_power}',
-                        f'max_weight={float(getattr(args, "train_count_weight_max", 0.0))}',
+                        f'distributed {sampling_description} sampler:',
                         f'total_samples={sampler_train.total_size}',
                         f'per_rank_samples={len(sampler_train)}',
                         f'weight_range=[{float(distributed_weights.min()):.3f},{float(distributed_weights.max()):.3f}]',
@@ -4989,14 +5193,11 @@ def main(args):
             )
         sample_multiplier = max(1.0, sample_multiplier)
         num_train_samples = max(1, int(math.ceil(len(dataset_train) * sample_multiplier)))
-        count_weight_power = float(getattr(args, 'train_count_weight_power', 0.0))
-        if count_weight_power > 0 and hasattr(dataset_train, 'get_sample_counts'):
-            max_weight = float(getattr(args, 'train_count_weight_max', 0.0))
-            weights = build_count_sampling_weights(
-                dataset_train.get_sample_counts(),
-                count_weight_power,
-                max_weight,
-            )
+        weights, sampling_description = resolve_training_sampling_weights(
+            dataset_train,
+            args,
+        )
+        if weights is not None:
             sampler_train = torch.utils.data.WeightedRandomSampler(
                 weights,
                 num_samples=num_train_samples,
@@ -5005,9 +5206,7 @@ def main(args):
             )
             if utils.is_main_process():
                 print(
-                    'count-weighted sampler:',
-                    f'power={count_weight_power}',
-                    f'max_weight={max_weight}',
+                    f'{sampling_description} sampler:',
                     f'samples={num_train_samples}',
                     f'weight_range=[{float(weights.min()):.3f},{float(weights.max()):.3f}]',
                 )
@@ -5555,6 +5754,7 @@ def main(args):
             auxiliary_head_only=(
                 getattr(args, 'train_count_head_only', False)
                 or getattr(args, 'train_zip_count_head_only', False)
+                or getattr(args, 'train_measure_head_only', False)
             ),
             amp_enabled=amp_enabled,
             scaler=scaler,

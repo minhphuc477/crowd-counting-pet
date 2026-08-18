@@ -1,7 +1,11 @@
+import json
+
 import numpy as np
 
 from scripts.sweep_measure_inference import (
     count_metrics,
+    _has_localization_metrics,
+    _print_view_result,
     inclusive_grid,
     parse_scale_set,
     search_candidates,
@@ -52,3 +56,37 @@ def test_calibration_search_cannot_drop_the_identity_candidate():
         calibration_biases=[-10.0],
     )
     assert result["winners"]["affine_calibrated"]["mae"] <= 1.0
+
+
+def test_localization_cache_validation(tmp_path):
+    result_path = tmp_path / "result.json"
+    result_path.write_text(json.dumps({"loc_f1_large": 0.7}), encoding="utf-8")
+    assert not _has_localization_metrics(result_path)
+    result_path.write_text(
+        json.dumps({"loc_f1_large": 0.7, "loc_f1_small": 0.5}),
+        encoding="utf-8",
+    )
+    assert _has_localization_metrics(result_path)
+
+
+def test_print_view_result_reports_count_and_localization(tmp_path, capsys):
+    result_path = tmp_path / "result.json"
+    result_path.write_text(
+        json.dumps({
+            "eval_mae": 80.0,
+            "eval_mse": 140.0,
+            "pred_cnt": 700.0,
+            "gt_cnt": 720.0,
+            "loc_f1_large": 0.7,
+            "loc_prec_large": 0.75,
+            "loc_rec_large": 0.66,
+            "loc_f1_small": 0.5,
+            "loc_prec_small": 0.55,
+            "loc_rec_small": 0.46,
+        }),
+        encoding="utf-8",
+    )
+    _print_view_result("view", result_path, "done")
+    output = capsys.readouterr().out
+    assert "done view MAE=80.0000 MSE=140.0000 bias=-20.0000" in output
+    assert "large(F1/P/R)=0.7000/0.7500/0.6600" in output
