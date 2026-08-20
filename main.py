@@ -3693,7 +3693,7 @@ def is_safe_fresh_count_head(args):
     )
 
 
-def sanitize_unstable_training_args(args):
+def sanitize_unstable_training_args(args, checkpoint=None):
     """Disable known-unstable experimental auxiliaries unless explicitly allowed."""
     explicit_args = set(getattr(args, '_explicit_args', set()))
     recipe_name = getattr(args, 'model_recipe', 'none')
@@ -3745,11 +3745,13 @@ def sanitize_unstable_training_args(args):
                 'a trained NWPU Tail-RIFI checkpoint via --resume and '
                 '--resume_model_only.'
             )
-        if not bool(getattr(args, 'resume_model_only', False)):
+        checkpoint_recipe = checkpoint_arg(checkpoint, 'model_recipe')
+        same_recipe_resume = checkpoint_recipe == recipe_name
+        if not bool(getattr(args, 'resume_model_only', False)) and not same_recipe_resume:
             raise ValueError(
                 'model_recipe=vgg_apglc_nwpu_direct_pml_tail_rifi must use '
-                '--resume_model_only because its Direct-PML head and optimizer '
-                'are new.'
+                '--resume_model_only when transferring from a different recipe '
+                'because its Direct-PML head and optimizer are new.'
             )
     if recipe_name == 'vgg_apglc_qnrf_zip_recount_scale_rifi':
         if fresh_train:
@@ -4975,7 +4977,7 @@ def main(args):
     if getattr(args, 'auto_backbone_recipe', False):
         apply_backbone_recipe(args)
     apply_model_recipe(args)
-    args = sanitize_unstable_training_args(args)
+    args = sanitize_unstable_training_args(args, checkpoint=checkpoint)
     validate_partial_annotation_contract(args)
     print(args)
     device = torch.device(args.device)

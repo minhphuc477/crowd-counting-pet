@@ -41,7 +41,7 @@ def test_nwpu_direct_pml_recipe_is_an_isolated_spatial_recount_stage():
     assert args.validation_protocol == 'official_val'
 
 
-def test_nwpu_direct_pml_recipe_rejects_scratch_and_optimizer_resume():
+def test_nwpu_direct_pml_recipe_rejects_scratch_and_cross_recipe_optimizer_resume():
     base = argparse.Namespace(
         model_recipe='vgg_apglc_nwpu_direct_pml_tail_rifi',
         dataset_file='NWPU',
@@ -55,8 +55,30 @@ def test_nwpu_direct_pml_recipe_rejects_scratch_and_optimizer_resume():
         main.sanitize_unstable_training_args(base)
 
     base.resume = 'checkpoint.pth'
+    parent_checkpoint = {
+        'args': argparse.Namespace(model_recipe='vgg_apglc_nwpu_tail_rifi')
+    }
     with pytest.raises(ValueError, match='must use --resume_model_only'):
-        main.sanitize_unstable_training_args(base)
+        main.sanitize_unstable_training_args(base, checkpoint=parent_checkpoint)
+
+
+def test_nwpu_direct_pml_recipe_allows_full_same_recipe_resume():
+    args = argparse.Namespace(
+        model_recipe='vgg_apglc_nwpu_direct_pml_tail_rifi',
+        dataset_file='NWPU',
+        resume='direct_pml_checkpoint.pth',
+        resume_model_only=False,
+        density_map_loss_coef=0.0,
+        count_head_loss_coef=0.0,
+        _explicit_args=set(),
+    )
+    checkpoint = {
+        'args': argparse.Namespace(
+            model_recipe='vgg_apglc_nwpu_direct_pml_tail_rifi'
+        )
+    }
+
+    assert main.sanitize_unstable_training_args(args, checkpoint=checkpoint) is args
 
 
 def test_measure_head_only_trainability_freezes_every_inherited_parameter():
