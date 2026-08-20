@@ -8,6 +8,7 @@ from models import build_model
 
 
 RECIPE = 'vgg_apglc_jhu_direct_pml_scale_rifi'
+SCRATCH_RECIPE = 'vgg_apglc_jhu_direct_pml_scale_rifi_scratch'
 PARENT_RECIPE = 'vgg_apglc_jhu_tail_scale_rifi'
 
 
@@ -29,6 +30,36 @@ def test_jhu_direct_pml_recipe_preserves_detector_and_adds_balanced_measure():
     assert recipe['apg_loss_coef'] == 0.0
     assert recipe['ifi_loss_coef'] == 0.0
     assert recipe['scale_point_loss_coef'] == 0.0
+
+
+def test_jhu_direct_pml_scratch_recipe_keeps_detector_auxiliaries():
+    recipe = main.MODEL_RECIPES[SCRATCH_RECIPE]
+
+    assert recipe['backbone'] == 'vgg16_bn'
+    assert recipe['measure_head_variant'] == 'direct_fpn'
+    assert recipe['measure_pml_normalization'] == 'points'
+    assert recipe['measure_loss_feature_grad_start_epoch'] > 0
+    assert recipe['measure_loss_feature_grad_warmup_epochs'] > 0
+    assert recipe['apg_loss_coef'] > 0.0
+    assert recipe['ifi_loss_coef'] > 0.0
+    assert recipe['scale_point_loss_coef'] > 0.0
+    assert recipe['eval_count_source'] == 'measure_pet_blend'
+    assert recipe['validation_protocol'] == 'official_val'
+    assert recipe['epochs'] == 1500
+
+
+def test_jhu_direct_pml_scratch_recipe_allows_fresh_training():
+    args = argparse.Namespace(
+        model_recipe=SCRATCH_RECIPE,
+        dataset_file='JHU',
+        resume='',
+        resume_model_only=False,
+        density_map_loss_coef=0.0,
+        count_head_loss_coef=0.0,
+        _explicit_args=set(),
+    )
+
+    assert main.sanitize_unstable_training_args(args) is args
 
 
 def _guard_args(resume='', model_only=False, dataset='JHU'):
@@ -99,6 +130,38 @@ def test_jhu_direct_pml_eval_emits_pet_measure_blend():
 
     with torch.no_grad():
         output = model([torch.rand(3, 128, 160)], epoch=30)
+
+    pet_count = output['pred_points'].shape[1]
+    measure_count = output['measure_count']
+    expected = (
+        (1.0 - args.eval_count_blend_alpha) * pet_count
+        + args.eval_count_blend_alpha * measure_count
+    )
+    assert torch.allclose(output['count_for_mae'], expected)
+    assert torch.equal(output['count_density'], output['measure_density'])
+
+
+def test_jhu_direct_pml_scratch_builds_without_checkpoint_and_emits_blend():
+    argv = [
+        '--dataset_file', 'JHU',
+        '--data_path', 'unused',
+        '--model_recipe', SCRATCH_RECIPE,
+        '--allow_experimental_model_recipe',
+        '--no_pretrained_backbone',
+        '--hidden_dim', '64',
+        '--dim_feedforward', '128',
+        '--nheads', '8',
+        '--device', 'cpu',
+    ]
+    args = main.get_args_parser().parse_args(argv)
+    args._explicit_args = main.get_explicit_arg_names(argv)
+    main.apply_model_recipe(args)
+    args = main.sanitize_unstable_training_args(args)
+    model, _ = build_model(args)
+    model.eval()
+
+    with torch.no_grad():
+        output = model([torch.rand(3, 128, 160)], epoch=120)
 
     pet_count = output['pred_points'].shape[1]
     measure_count = output['measure_count']

@@ -1852,6 +1852,56 @@ MODEL_RECIPES['vgg_apglc_jhu_direct_pml_scale_rifi'] = {
     'eval_freq': 5,
 }
 
+# Scratch-trained JHU PET + Scale-RIFI + Direct-PML.
+#
+# Unlike the checkpoint-adaptation recipe above, this branch keeps APG, RIFI,
+# and scale-aware point supervision from the JHU detector recipe. The PML head
+# starts with a detached FPN and receives a slowly increasing shared-feature
+# gradient only after the point detector has established useful features.
+MODEL_RECIPES['vgg_apglc_jhu_direct_pml_scale_rifi_scratch'] = {
+    **MODEL_RECIPES['vgg_apglc_jhu_tail_scale_rifi'],
+    'measure_loss_coef': 1.0,
+    'measure_loss_mode': 'pml',
+    'measure_feature_source': 'detail4x',
+    'measure_head_variant': 'direct_fpn',
+    'measure_head_activation': 'relu',
+    'measure_pml_normalization': 'points',
+    'measure_loss_distribution_coef': 0.25,
+    'measure_loss_count_coef': 0.50,
+    'measure_loss_image_count_coef': 1.0,
+    'measure_loss_relative_count_coef': 0.25,
+    'measure_loss_zero_coef': 0.50,
+    'measure_relative_count_power': 0.5,
+    'measure_loss_transport_coef': 0.0,
+    'measure_loss_start_epoch': 0,
+    'measure_loss_end_epoch': -1,
+    'measure_loss_warmup_epochs': 20,
+    'measure_loss_feature_grad_scale': 0.10,
+    'measure_loss_feature_grad_start_epoch': 40,
+    'measure_loss_feature_grad_warmup_epochs': 80,
+    'lr_measure_head': 3e-5,
+    'measure_pml_radius': 32.0,
+    'measure_pml_chunk_size': 4096,
+    'eval_count_source': 'measure_pet_blend',
+    'eval_count_blend_alpha': 0.5,
+    'patch_size_choices': '512',
+    'crop_attempts': 1,
+    'min_crop_points': 0,
+    'train_count_weight_power': 0.0,
+    'train_count_weight_max': 1.0,
+    'train_count_strata': '0,100,500,2000',
+    'train_count_strata_strength': 0.25,
+    'train_count_strata_max_weight': 3.0,
+    'train_sample_multiplier': 1.0,
+    'freeze_bn': True,
+    'validation_protocol': 'official_val',
+    'jhu_eval_split': 'val',
+    'eval_max_size': 2048,
+    'epochs': 1500,
+    'eval_start_epoch': 20,
+    'eval_freq': 5,
+}
+
 # UCF-CC-50 is too small for tail-weighted sampling.  Keep the transferable
 # detector intact and leave model selection to the leakage-safe five-fold
 # driver rather than introducing a dataset-level count prior.
@@ -2487,6 +2537,7 @@ EXPERIMENTAL_MODEL_RECIPES = {
     'vgg_apglc_qnrf_sae_scale_rifi',
     'vgg_apglc_jhu_tail_scale_rifi',
     'vgg_apglc_jhu_direct_pml_scale_rifi',
+    'vgg_apglc_jhu_direct_pml_scale_rifi_scratch',
     'vgg_apglc_ucfcc50_scale_rifi',
     # showed catastrophic drift or failed to improve on the PET/APG+LC baselines.
     'vgg_apglc_cbme_late_countreg',
@@ -3828,6 +3879,12 @@ def sanitize_unstable_training_args(args, checkpoint=None):
                 'model_recipe=vgg_apglc_jhu_direct_pml_scale_rifi must use '
                 '--resume_model_only when transferring from a different recipe '
                 'because its Direct-PML head and optimizer are new.'
+            )
+    if recipe_name == 'vgg_apglc_jhu_direct_pml_scale_rifi_scratch':
+        if getattr(args, 'dataset_file', '') not in ('JHU', 'JHU_Crowd', 'JHU-Crowd++'):
+            raise ValueError(
+                'model_recipe=vgg_apglc_jhu_direct_pml_scale_rifi_scratch is '
+                'only defined for JHU-Crowd++'
             )
     if recipe_name == 'vgg_apglc_qnrf_zip_recount_scale_rifi':
         if fresh_train:
