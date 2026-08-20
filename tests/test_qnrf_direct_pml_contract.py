@@ -91,6 +91,28 @@ def test_direct_pml_batch_reduction_matches_published_sum_over_points():
     assert density.grad is not None and torch.isfinite(density.grad).all()
 
 
+def test_direct_pml_low_mass_keeps_spatial_supervision():
+    density = torch.tensor([[[0.05, 0.10, 0.20, 0.15]]], requires_grad=True)
+    targets = [{'points': torch.tensor([[0.5, 0.5]])}]
+    valid = torch.ones_like(density, dtype=torch.bool)
+
+    losses = proximal_mapping_measure_loss(
+        density,
+        targets,
+        valid,
+        image_size=(1, 4),
+        radius=1.0,
+        normalization='points',
+    )
+
+    assert density.detach().sum() < 1.0
+    assert losses['spatial'].abs() > 0
+    losses['spatial'].backward()
+    assert density.grad is not None
+    assert torch.isfinite(density.grad).all()
+    assert density.grad.abs().sum() > 0
+
+
 def test_direct_pml_recipe_is_a_primary_counter_not_selective_auxiliary():
     recipe = main.MODEL_RECIPES['vgg_apglc_qnrf_direct_pml_scale_rifi']
     assert recipe['backbone'] == 'vgg16_bn'

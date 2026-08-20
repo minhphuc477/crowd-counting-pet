@@ -798,6 +798,12 @@ def _predict_count_tiled(
                 alpha * owned_scalar_count + (1.0 - alpha) * point_count
                 if use_count_head else point_count
             )
+        elif (
+            has_owned_scalar_count
+            and getattr(model_config, 'eval_count_source', 'pet') == 'measure_pet_blend'
+        ):
+            alpha = float(getattr(model_config, 'eval_count_blend_alpha', 0.5))
+            count = alpha * owned_scalar_count + (1.0 - alpha) * point_count
         model_h, model_w = samples.tensors.shape[-2:]
         pts_norm = all_pts / all_pts.new_tensor([float(model_h), float(model_w)]) if all_pts.numel() > 0 \
             else torch.empty((0, 2), dtype=samples.tensors.dtype, device=samples.tensors.device)
@@ -817,6 +823,10 @@ def _predict_count_tiled(
                     has_owned_scalar_count
                     and getattr(model_config, 'eval_count_source', 'pet') == 'count_head_low_blend'
                     and point_count <= float(getattr(model_config, 'eval_count_tail_threshold', 1500.0))
+                ),
+                'measure_pet_blend_used': float(
+                    has_owned_scalar_count
+                    and getattr(model_config, 'eval_count_source', 'pet') == 'measure_pet_blend'
                 ),
             },
         }
@@ -1178,6 +1188,15 @@ def evaluate(
                     raw_count_head = float(raw_count_head.detach().float().reshape(-1)[0].item())
             if raw_count_head is not None:
                 row['count_head_pred_cnt'] = float(raw_count_head)
+            raw_measure_count = outputs.get('measure_count')
+            if float(eval_count_debug.get('tile_used', 0.0)) > 0.0:
+                raw_measure_count = eval_count_debug.get('tile_scalar_raw')
+            if torch.is_tensor(raw_measure_count):
+                raw_measure_count = float(
+                    raw_measure_count.detach().float().reshape(-1)[0].item()
+                )
+            if raw_measure_count is not None:
+                row['measure_pred_cnt'] = float(raw_measure_count)
             row.update({
                 f'dbg_{key}': float(value)
                 for key, value in eval_count_debug.items()

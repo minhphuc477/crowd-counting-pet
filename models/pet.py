@@ -1420,19 +1420,6 @@ def proximal_mapping_measure_loss(
             spatial_losses.append(predicted_mass)
             count_losses.append(predicted_mass)
             continue
-        if density.sum().detach() <= 1.0:
-            spatial_losses.append(density.sum() * 0.0)
-            low_mass_normalizer = (
-                float(max(points.shape[0], 1))
-                if normalization == 'points'
-                else 1.0
-            )
-            count_losses.append(
-                (density.sum() - float(points.shape[0])).abs()
-                / low_mass_normalizer
-            )
-            continue
-
         with torch.no_grad():
             nearest_dist_parts = []
             nearest_index_parts = []
@@ -1945,11 +1932,12 @@ class PET(nn.Module):
         if self.eval_count_source not in (
             'pet', 'count_head', 'count_head_low_blend',
             'zip', 'zip_pet_blend', 'zip_tail_blend', 'measure',
+            'measure_pet_blend',
         ):
             raise ValueError(
                 'eval_count_source must be one of "pet", "count_head", '
                 '"count_head_low_blend", "zip", "zip_pet_blend", or '
-                '"zip_tail_blend", or "measure"'
+                '"zip_tail_blend", "measure", or "measure_pet_blend"'
             )
         self.eval_count_blend_alpha = float(getattr(args, 'eval_count_blend_alpha', 0.5))
         if not 0.0 <= self.eval_count_blend_alpha <= 1.0:
@@ -2304,7 +2292,10 @@ class PET(nn.Module):
             GlobalCountHead(hidden_dim, init_count=self.count_head_init_count, init_cells=self.count_head_init_cells)
             if needs_count_head else None
         )
-        needs_measure_head = self.measure_loss_coef > 0 or self.eval_count_source == 'measure'
+        needs_measure_head = (
+            self.measure_loss_coef > 0
+            or self.eval_count_source in ('measure', 'measure_pet_blend')
+        )
         if needs_measure_head and self.measure_head_variant == 'direct_fpn':
             self.measure_head = DirectPMLDensityHead(
                 hidden_dim,
@@ -5814,7 +5805,8 @@ class PET(nn.Module):
             outputs['count_density'] = count_density
             outputs['count_pred'] = count_density.flatten(1).sum(dim=1)
         if self.measure_head is not None and (
-            'train' in kwargs or self.eval_count_source == 'measure'
+            'train' in kwargs
+            or self.eval_count_source in ('measure', 'measure_pet_blend')
         ):
             measure_epoch = int(kwargs.get('epoch', 0))
             if self.measure_head_variant == 'direct_fpn':
@@ -6158,8 +6150,19 @@ class PET(nn.Module):
         if 'measure_count' in outputs:
             div_out['measure_count'] = outputs['measure_count']
             div_out['measure_density'] = outputs['measure_density']
-            if self.eval_count_source == 'measure':
-                div_out['count_for_mae'] = outputs['measure_count']
+            if self.eval_count_source in ('measure', 'measure_pet_blend'):
+                if self.eval_count_source == 'measure_pet_blend':
+                    pet_count = outputs['measure_count'].new_full(
+                        outputs['measure_count'].shape,
+                        float(pred_logits.shape[0]),
+                    )
+                    alpha = self.eval_count_blend_alpha
+                    div_out['count_for_mae'] = (
+                        alpha * outputs['measure_count']
+                        + (1.0 - alpha) * pet_count
+                    )
+                else:
+                    div_out['count_for_mae'] = outputs['measure_count']
                 # Tiled evaluation partitions spatial count outputs by cell
                 # ownership.  Expose the actual stride-2 measure, not only its
                 # scalar integral, so overlap is never counted twice.
